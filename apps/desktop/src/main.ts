@@ -7,6 +7,7 @@ import * as Path from "node:path";
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   ipcMain,
   Menu,
@@ -44,6 +45,7 @@ import {
   reduceDesktopUpdateStateOnUpdateAvailable,
 } from "./updateMachine";
 import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runtimeArch";
+import { buildWebContentsContextMenuTemplate } from "./webContentsContextMenu";
 
 syncShellEnvironment();
 
@@ -1327,6 +1329,36 @@ function createWindow(): BrowserWindow {
     },
   });
 
+  const attachWindowContextMenu = (targetContents: Electron.WebContents) => {
+    targetContents.on("context-menu", (event, params) => {
+      event.preventDefault();
+
+      const linkUrl = getSafeExternalUrl(params.linkURL);
+      const menuTemplate = buildWebContentsContextMenuTemplate(
+        {
+          dictionarySuggestions: params.dictionarySuggestions,
+          editFlags: params.editFlags,
+          misspelledWord: params.misspelledWord,
+        },
+        {
+          ...(linkUrl
+            ? {
+                onCopyLink: () => clipboard.writeText(linkUrl),
+                onOpenLink: () => {
+                  void shell.openExternal(linkUrl);
+                },
+              }
+            : {}),
+          onReplaceMisspelling: (suggestion) => {
+            targetContents.replaceMisspelling(suggestion);
+          },
+        },
+      );
+
+      Menu.buildFromTemplate(menuTemplate).popup({ window });
+    });
+  };
+
   window.webContents.on("will-attach-webview", (event, webPreferences, params) => {
     const safeInitialUrl = getSafeExternalUrl(params.src);
     if (!safeInitialUrl) {
@@ -1350,35 +1382,10 @@ function createWindow(): BrowserWindow {
       }
       return { action: "deny" };
     });
+    attachWindowContextMenu(guestContents);
   });
 
-  window.webContents.on("context-menu", (event, params) => {
-    event.preventDefault();
-
-    const menuTemplate: MenuItemConstructorOptions[] = [];
-
-    if (params.misspelledWord) {
-      for (const suggestion of params.dictionarySuggestions.slice(0, 5)) {
-        menuTemplate.push({
-          label: suggestion,
-          click: () => window.webContents.replaceMisspelling(suggestion),
-        });
-      }
-      if (params.dictionarySuggestions.length === 0) {
-        menuTemplate.push({ label: "No suggestions", enabled: false });
-      }
-      menuTemplate.push({ type: "separator" });
-    }
-
-    menuTemplate.push(
-      { role: "cut", enabled: params.editFlags.canCut },
-      { role: "copy", enabled: params.editFlags.canCopy },
-      { role: "paste", enabled: params.editFlags.canPaste },
-      { role: "selectAll", enabled: params.editFlags.canSelectAll },
-    );
-
-    Menu.buildFromTemplate(menuTemplate).popup({ window });
-  });
+  attachWindowContextMenu(window.webContents);
 
   window.webContents.setWindowOpenHandler(({ url }) => {
     const externalUrl = getSafeExternalUrl(url);
