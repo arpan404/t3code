@@ -19,11 +19,18 @@ describe("terminalStateStore actions", () => {
     expect(terminalState).toEqual({
       terminalOpen: false,
       terminalHeight: 280,
+      terminalSidebarWidth: 236,
+      terminalSidebarDensity: "comfortable",
       terminalIds: ["default"],
       runningTerminalIds: [],
       activeTerminalId: "default",
       terminalGroups: [{ id: "group-default", terminalIds: ["default"] }],
       activeTerminalGroupId: "group-default",
+      customTerminalTitlesById: {},
+      autoTerminalTitlesById: {},
+      terminalIconsById: {},
+      terminalColorsById: {},
+      splitRatiosByGroupId: { "group-default": [1] },
     });
   });
 
@@ -42,6 +49,7 @@ describe("terminalStateStore actions", () => {
     expect(terminalState.terminalGroups).toEqual([
       { id: "group-default", terminalIds: ["default", "terminal-2"] },
     ]);
+    expect(terminalState.splitRatiosByGroupId["group-default"]).toEqual([0.5, 0.5]);
   });
 
   it("caps splits at four terminals per group", () => {
@@ -80,6 +88,10 @@ describe("terminalStateStore actions", () => {
       { id: "group-default", terminalIds: ["default"] },
       { id: "group-terminal-2", terminalIds: ["terminal-2"] },
     ]);
+    expect(terminalState.splitRatiosByGroupId).toEqual({
+      "group-default": [1],
+      "group-terminal-2": [1],
+    });
   });
 
   it("allows unlimited groups while keeping each group capped at four terminals", () => {
@@ -123,6 +135,113 @@ describe("terminalStateStore actions", () => {
       selectThreadTerminalState(useTerminalStateStore.getState().terminalStateByThreadId, THREAD_ID)
         .runningTerminalIds,
     ).toEqual([]);
+  });
+
+  it("persists custom and auto terminal titles", () => {
+    const store = useTerminalStateStore.getState();
+    store.splitTerminal(THREAD_ID, "terminal-2");
+    store.renameTerminal(THREAD_ID, "default", "Workspace shell");
+    store.setTerminalAutoTitle(THREAD_ID, "terminal-2", "bun dev");
+
+    const terminalState = selectThreadTerminalState(
+      useTerminalStateStore.getState().terminalStateByThreadId,
+      THREAD_ID,
+    );
+    expect(terminalState.customTerminalTitlesById).toEqual({ default: "Workspace shell" });
+    expect(terminalState.autoTerminalTitlesById).toEqual({ "terminal-2": "bun dev" });
+  });
+
+  it("persists terminal icon and color metadata", () => {
+    const store = useTerminalStateStore.getState();
+    store.splitTerminal(THREAD_ID, "terminal-2");
+    store.setTerminalIcon(THREAD_ID, "default", "server");
+    store.setTerminalColor(THREAD_ID, "terminal-2", "emerald");
+
+    const terminalState = selectThreadTerminalState(
+      useTerminalStateStore.getState().terminalStateByThreadId,
+      THREAD_ID,
+    );
+    expect(terminalState.terminalIconsById).toEqual({ default: "server" });
+    expect(terminalState.terminalColorsById).toEqual({ "terminal-2": "emerald" });
+  });
+
+  it("persists and clamps the terminal sidebar width", () => {
+    const store = useTerminalStateStore.getState();
+    store.setTerminalSidebarWidth(THREAD_ID, 412);
+
+    const terminalState = selectThreadTerminalState(
+      useTerminalStateStore.getState().terminalStateByThreadId,
+      THREAD_ID,
+    );
+    expect(terminalState.terminalSidebarWidth).toBe(360);
+  });
+
+  it("persists terminal sidebar density", () => {
+    const store = useTerminalStateStore.getState();
+    store.setTerminalSidebarDensity(THREAD_ID, "compact");
+
+    const terminalState = selectThreadTerminalState(
+      useTerminalStateStore.getState().terminalStateByThreadId,
+      THREAD_ID,
+    );
+    expect(terminalState.terminalSidebarDensity).toBe("compact");
+  });
+
+  it("reorders terminals within the active split group", () => {
+    const store = useTerminalStateStore.getState();
+    store.splitTerminal(THREAD_ID, "terminal-2");
+    store.splitTerminal(THREAD_ID, "terminal-3");
+
+    store.moveTerminal(THREAD_ID, "terminal-3", "group-default", 1);
+
+    const terminalState = selectThreadTerminalState(
+      useTerminalStateStore.getState().terminalStateByThreadId,
+      THREAD_ID,
+    );
+    expect(terminalState.terminalIds).toEqual(["default", "terminal-3", "terminal-2"]);
+    expect(terminalState.terminalGroups).toEqual([
+      { id: "group-default", terminalIds: ["default", "terminal-3", "terminal-2"] },
+    ]);
+  });
+
+  it("moves terminals across groups while keeping group state valid", () => {
+    const store = useTerminalStateStore.getState();
+    store.splitTerminal(THREAD_ID, "terminal-2");
+    store.newTerminal(THREAD_ID, "terminal-3");
+
+    store.moveTerminal(THREAD_ID, "terminal-2", "group-terminal-3", 1);
+
+    const terminalState = selectThreadTerminalState(
+      useTerminalStateStore.getState().terminalStateByThreadId,
+      THREAD_ID,
+    );
+    expect(terminalState.terminalIds).toEqual(["default", "terminal-3", "terminal-2"]);
+    expect(terminalState.terminalGroups).toEqual([
+      { id: "group-default", terminalIds: ["default"] },
+      { id: "group-terminal-3", terminalIds: ["terminal-3", "terminal-2"] },
+    ]);
+    expect(terminalState.splitRatiosByGroupId).toEqual({
+      "group-default": [1],
+      "group-terminal-3": [0.5, 0.5],
+    });
+  });
+
+  it("moves a terminal into its own new group", () => {
+    const store = useTerminalStateStore.getState();
+    store.splitTerminal(THREAD_ID, "terminal-2");
+    store.splitTerminal(THREAD_ID, "terminal-3");
+
+    store.moveTerminalToNewGroup(THREAD_ID, "terminal-2", 1);
+
+    const terminalState = selectThreadTerminalState(
+      useTerminalStateStore.getState().terminalStateByThreadId,
+      THREAD_ID,
+    );
+    expect(terminalState.terminalIds).toEqual(["default", "terminal-3", "terminal-2"]);
+    expect(terminalState.terminalGroups).toEqual([
+      { id: "group-default", terminalIds: ["default", "terminal-3"] },
+      { id: "group-terminal-2", terminalIds: ["terminal-2"] },
+    ]);
   });
 
   it("resets to default and clears persisted entry when closing the last terminal", () => {

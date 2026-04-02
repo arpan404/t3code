@@ -6,7 +6,7 @@ import {
 } from "@t3tools/contracts";
 import { memo } from "react";
 import GitActionsControl from "../GitActionsControl";
-import { DiffIcon, TerminalSquareIcon } from "lucide-react";
+import { DiffIcon, GlobeIcon, TerminalSquareIcon } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScriptsControl";
@@ -28,12 +28,17 @@ interface ChatHeaderProps {
   terminalOpen: boolean;
   terminalToggleShortcutLabel: string | null;
   diffToggleShortcutLabel: string | null;
+  browserToggleShortcutLabel: string | null;
+  browserAvailable: boolean;
+  browserOpen: boolean;
   gitCwd: string | null;
   diffOpen: boolean;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
   onDeleteProjectScript: (scriptId: string) => Promise<void>;
+  onOpenBrowser: () => void;
+  onCloseBrowser: () => void;
   onToggleTerminal: () => void;
   onToggleDiff: () => void;
 }
@@ -52,12 +57,17 @@ export const ChatHeader = memo(function ChatHeader({
   terminalOpen,
   terminalToggleShortcutLabel,
   diffToggleShortcutLabel,
+  browserToggleShortcutLabel,
+  browserAvailable,
+  browserOpen,
   gitCwd,
   diffOpen,
   onRunProjectScript,
   onAddProjectScript,
   onUpdateProjectScript,
   onDeleteProjectScript,
+  onOpenBrowser,
+  onCloseBrowser,
   onToggleTerminal,
   onToggleDiff,
 }: ChatHeaderProps) {
@@ -102,6 +112,38 @@ export const ChatHeader = memo(function ChatHeader({
           />
         )}
         {activeProjectName && <GitActionsControl gitCwd={gitCwd} activeThreadId={activeThreadId} />}
+        {browserAvailable && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Toggle
+                  className="shrink-0"
+                  pressed={browserOpen}
+                  onPressedChange={(pressed) => {
+                    if (!pressed) {
+                      onCloseBrowser();
+                    }
+                  }}
+                  onDoubleClick={onOpenBrowser}
+                  aria-label={browserOpen ? "Close in-app browser" : "Open in-app browser"}
+                  variant="outline"
+                  size="xs"
+                >
+                  <GlobeIcon className="size-3" />
+                </Toggle>
+              }
+            />
+            <TooltipPopup side="bottom">
+              {browserOpen
+                ? browserToggleShortcutLabel
+                  ? `Close in-app browser (${browserToggleShortcutLabel})`
+                  : "Close in-app browser"
+                : browserToggleShortcutLabel
+                  ? `Double-click to open in-app browser (${browserToggleShortcutLabel})`
+                  : "Double-click to open in-app browser"}
+            </TooltipPopup>
+          </Tooltip>
+        )}
         <Tooltip>
           <TooltipTrigger
             render={

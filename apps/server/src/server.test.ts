@@ -1283,6 +1283,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         threadId: "thread-1",
         terminalId: "default",
         cwd: "/tmp/project",
+        title: null,
         status: "running" as const,
         pid: 1234,
         history: "",

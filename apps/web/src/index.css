@@ -64,6 +64,12 @@
 :root {
   color-scheme: light;
   --radius: 0.625rem;
+  --font-ui:
+    "JetBrainsMono Nerd Font", "JetBrains Mono", "DM Sans", -apple-system, BlinkMacSystemFont,
+    "Segoe UI", system-ui, sans-serif;
+  --font-mono:
+    "JetBrainsMono Nerd Font", "JetBrainsMono Nerd Font Mono", "JetBrains Mono", "SF Mono",
+    "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
   --background: var(--color-white);
   --foreground: var(--color-neutral-800);
   --card: var(--color-white);
@@ -121,16 +127,22 @@
 }
 
 body {
-  font-family:
-    "DM Sans",
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    system-ui,
-    sans-serif;
+  font-family: var(--font-ui);
+  letter-spacing: -0.01em;
   margin: 0;
   padding: 0;
   min-height: 100vh;
+  background-image:
+    radial-gradient(
+      circle at top,
+      color-mix(in srgb, var(--primary) 7%, transparent),
+      transparent 48%
+    ),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--background) 96%, var(--color-neutral-950)),
+      var(--background) 22%
+    );
 }
 
 html,
@@ -160,7 +172,19 @@ pre,
 code,
 textarea,
 input {
-  font-family: "SF Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-family: var(--font-mono);
+}
+
+button,
+select,
+label {
+  font-family: inherit;
+}
+
+.thread-terminal-drawer,
+.thread-terminal-drawer button,
+.thread-terminal-drawer [role="button"] {
+  font-family: var(--font-mono);
 }
 
 /* Window drag region (frameless titlebar) */
@@ -215,6 +239,20 @@ input {
 /* Terminal drawer scrollbar parity with chat */
 .thread-terminal-drawer .xterm .xterm-scrollable-element > .scrollbar.vertical {
   width: 6px !important;
+}
+
+.thread-terminal-drawer {
+  background-image:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--background) 92%, transparent),
+      var(--background) 22%
+    ),
+    radial-gradient(
+      circle at top left,
+      color-mix(in srgb, var(--primary) 10%, transparent),
+      transparent 38%
+    );
 }
 
 .thread-terminal-drawer .xterm .xterm-scrollable-element > .scrollbar > .slider {

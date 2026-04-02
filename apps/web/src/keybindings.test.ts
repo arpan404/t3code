@@ -101,6 +101,26 @@ const DEFAULT_BINDINGS = compile([
     command: "diff.toggle",
     whenAst: whenNot(whenIdentifier("terminalFocus")),
   },
+  {
+    shortcut: modShortcut("b"),
+    command: "browser.toggle",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
+  {
+    shortcut: modShortcut("["),
+    command: "browser.back",
+    whenAst: whenAnd(whenIdentifier("browserOpen"), whenNot(whenIdentifier("terminalFocus"))),
+  },
+  {
+    shortcut: modShortcut("]"),
+    command: "browser.forward",
+    whenAst: whenAnd(whenIdentifier("browserOpen"), whenNot(whenIdentifier("terminalFocus"))),
+  },
+  {
+    shortcut: modShortcut("r"),
+    command: "browser.reload",
+    whenAst: whenAnd(whenIdentifier("browserOpen"), whenNot(whenIdentifier("terminalFocus"))),
+  },
   { shortcut: modShortcut("o", { shiftKey: true }), command: "chat.new" },
   { shortcut: modShortcut("n", { shiftKey: true }), command: "chat.newLocal" },
   { shortcut: modShortcut("o"), command: "editor.openFavorite" },
@@ -250,6 +270,10 @@ describe("shortcutLabelForCommand", () => {
     assert.strictEqual(shortcutLabelForCommand(DEFAULT_BINDINGS, "chat.new", "MacIntel"), "⇧⌘O");
     assert.strictEqual(shortcutLabelForCommand(DEFAULT_BINDINGS, "diff.toggle", "Linux"), "Ctrl+D");
     assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "browser.toggle", "Linux"),
+      "Ctrl+B",
+    );
+    assert.strictEqual(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "editor.openFavorite", "Linux"),
       "Ctrl+O",
     );
@@ -394,6 +418,37 @@ describe("chat/editor shortcuts", () => {
         platform: "MacIntel",
         context: { terminalFocus: true },
       }),
+    );
+  });
+
+  it("resolves browser shortcuts with browserOpen context", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "b", ctrlKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { browserOpen: false, terminalFocus: false },
+      }),
+      "browser.toggle",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "[", ctrlKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { browserOpen: true, terminalFocus: false },
+      }),
+      "browser.back",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "]", ctrlKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { browserOpen: true, terminalFocus: false },
+      }),
+      "browser.forward",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "r", ctrlKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { browserOpen: true, terminalFocus: false },
+      }),
+      "browser.reload",
     );
   });
 });

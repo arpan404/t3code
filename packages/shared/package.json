@@ -43,6 +43,10 @@
     "./String": {
       "types": "./src/String.ts",
       "import": "./src/String.ts"
+    },
+    "./terminalTitles": {
+      "types": "./src/terminalTitles.ts",
+      "import": "./src/terminalTitles.ts"
     }
   },
   "scripts": {

@@ -59,6 +59,7 @@ const UPDATE_DOWNLOAD_CHANNEL = "desktop:update-download";
 const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
 const UPDATE_CHECK_CHANNEL = "desktop:update-check";
 const GET_WS_URL_CHANNEL = "desktop:get-ws-url";
+const BROWSER_OPEN_URL_CHANNEL = "desktop:browser-open-url";
 const BASE_DIR = process.env.T3CODE_HOME?.trim() || Path.join(OS.homedir(), ".t3");
 const STATE_DIR = Path.join(BASE_DIR, "userdata");
 const DESKTOP_SCHEME = "t3";
@@ -80,6 +81,7 @@ const AUTO_UPDATE_STARTUP_DELAY_MS = 15_000;
 const AUTO_UPDATE_POLL_INTERVAL_MS = 4 * 60 * 60 * 1000;
 const DESKTOP_UPDATE_CHANNEL = "latest";
 const DESKTOP_UPDATE_ALLOW_PRERELEASE = false;
+const IN_APP_BROWSER_PARTITION = "persist:t3-browser";
 
 type DesktopUpdateErrorContext = DesktopUpdateState["errorContext"];
 type LinuxDesktopNamedApp = Electron.App & {
@@ -1321,7 +1323,33 @@ function createWindow(): BrowserWindow {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      webviewTag: true,
     },
+  });
+
+  window.webContents.on("will-attach-webview", (event, webPreferences, params) => {
+    const safeInitialUrl = getSafeExternalUrl(params.src);
+    if (!safeInitialUrl) {
+      event.preventDefault();
+      return;
+    }
+
+    delete webPreferences.preload;
+    webPreferences.nodeIntegration = false;
+    webPreferences.contextIsolation = true;
+    webPreferences.sandbox = true;
+    params.partition = IN_APP_BROWSER_PARTITION;
+    params.src = safeInitialUrl;
+  });
+
+  window.webContents.on("did-attach-webview", (_event, guestContents) => {
+    guestContents.setWindowOpenHandler(({ url }) => {
+      const externalUrl = getSafeExternalUrl(url);
+      if (externalUrl) {
+        window.webContents.send(BROWSER_OPEN_URL_CHANNEL, externalUrl);
+      }
+      return { action: "deny" };
+    });
   });
 
   window.webContents.on("context-menu", (event, params) => {

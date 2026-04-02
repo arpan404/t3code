@@ -165,12 +165,16 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
 
-  it.effect("ships configurable thread navigation defaults", () =>
+  it.effect("ships configurable browser and thread navigation defaults", () =>
     Effect.sync(() => {
       const defaultsByCommand = new Map(
         DEFAULT_KEYBINDINGS.map((binding) => [binding.command, binding.key] as const),
       );
 
+      assert.equal(defaultsByCommand.get("browser.toggle"), "mod+b");
+      assert.equal(defaultsByCommand.get("browser.back"), "mod+[");
+      assert.equal(defaultsByCommand.get("browser.forward"), "mod+]");
+      assert.equal(defaultsByCommand.get("browser.reload"), "mod+r");
       assert.equal(defaultsByCommand.get("thread.previous"), "mod+shift+[");
       assert.equal(defaultsByCommand.get("thread.next"), "mod+shift+]");
       assert.equal(defaultsByCommand.get("thread.jump.1"), "mod+1");

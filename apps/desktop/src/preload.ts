@@ -13,6 +13,7 @@ const UPDATE_CHECK_CHANNEL = "desktop:update-check";
 const UPDATE_DOWNLOAD_CHANNEL = "desktop:update-download";
 const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
 const GET_WS_URL_CHANNEL = "desktop:get-ws-url";
+const BROWSER_OPEN_URL_CHANNEL = "desktop:browser-open-url";
 
 contextBridge.exposeInMainWorld("desktopBridge", {
   getWsUrl: () => {
@@ -48,6 +49,17 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.on(UPDATE_STATE_CHANNEL, wrappedListener);
     return () => {
       ipcRenderer.removeListener(UPDATE_STATE_CHANNEL, wrappedListener);
+    };
+  },
+  onBrowserOpenUrl: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, url: unknown) => {
+      if (typeof url !== "string" || url.length === 0) return;
+      listener(url);
+    };
+
+    ipcRenderer.on(BROWSER_OPEN_URL_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(BROWSER_OPEN_URL_CHANNEL, wrappedListener);
     };
   },
 } satisfies DesktopBridge);

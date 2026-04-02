@@ -18,6 +18,9 @@ const TerminalEnvValueSchema = Schema.String.check(Schema.isMaxLength(8_192));
 const TerminalEnvSchema = Schema.Record(TerminalEnvKeySchema, TerminalEnvValueSchema).check(
   Schema.isMaxProperties(128),
 );
+const TerminalTitleSchema = Schema.NullOr(
+  TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(80)),
+);
 
 const TerminalIdWithDefaultSchema = TerminalIdSchema.pipe(
   Schema.withDecodingDefault(() => DEFAULT_TERMINAL_ID),
@@ -82,6 +85,7 @@ export const TerminalSessionSnapshot = Schema.Struct({
   threadId: Schema.String.check(Schema.isNonEmpty()),
   terminalId: Schema.String.check(Schema.isNonEmpty()),
   cwd: Schema.String.check(Schema.isNonEmpty()),
+  title: TerminalTitleSchema,
   status: TerminalSessionStatus,
   pid: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
   history: Schema.String,
@@ -107,6 +111,12 @@ const TerminalOutputEvent = Schema.Struct({
   ...TerminalEventBaseSchema.fields,
   type: Schema.Literal("output"),
   data: Schema.String,
+});
+
+const TerminalTitleEvent = Schema.Struct({
+  ...TerminalEventBaseSchema.fields,
+  type: Schema.Literal("title"),
+  title: TerminalTitleSchema,
 });
 
 const TerminalExitedEvent = Schema.Struct({
@@ -142,6 +152,7 @@ const TerminalActivityEvent = Schema.Struct({
 export const TerminalEvent = Schema.Union([
   TerminalStartedEvent,
   TerminalOutputEvent,
+  TerminalTitleEvent,
   TerminalExitedEvent,
   TerminalErrorEvent,
   TerminalClearedEvent,

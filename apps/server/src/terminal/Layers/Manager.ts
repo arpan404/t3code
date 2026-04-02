@@ -8,6 +8,11 @@ import {
 } from "@t3tools/contracts";
 import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker";
 import {
+  applyTerminalInputToBuffer,
+  deriveTerminalTitleFromCommand,
+  extractTerminalOscTitle,
+} from "@t3tools/shared/terminalTitles";
+import {
   Data,
   Effect,
   Encoding,
@@ -84,10 +89,12 @@ interface TerminalSessionState {
   threadId: string;
   terminalId: string;
   cwd: string;
+  title: string | null;
   status: TerminalSessionStatus;
   pid: number | null;
   history: string;
   pendingHistoryControlSequence: string;
+  pendingInputCommandBuffer: string;
   pendingProcessEvents: Array<PendingProcessEvent>;
   pendingProcessEventIndex: number;
   processEventDrainRunning: boolean;
@@ -118,6 +125,7 @@ type DrainProcessEventAction =
       terminalId: string;
       history: string | null;
       data: string;
+      title?: string | null;
     }
   | {
       type: "exit";
@@ -138,6 +146,7 @@ function snapshot(session: TerminalSessionState): TerminalSessionSnapshot {
     threadId: session.threadId,
     terminalId: session.terminalId,
     cwd: session.cwd,
+    title: session.title,
     status: session.status,
     pid: session.pid,
     history: session.history,
@@ -145,6 +154,13 @@ function snapshot(session: TerminalSessionState): TerminalSessionSnapshot {
     exitSignal: session.exitSignal,
     updatedAt: session.updatedAt,
   };
+}
+
+function normalizeSessionTitle(title: string | null | undefined): string | null {
+  if (typeof title !== "string") return null;
+  const normalized = title.trim().replace(/\s+/g, " ");
+  if (normalized.length === 0) return null;
+  return normalized.slice(0, 80);
 }
 
 function cleanupProcessHandles(session: TerminalSessionState): void {
@@ -1123,6 +1139,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
           }
 
           if (nextEvent.type === "output") {
+            const oscTitle = extractTerminalOscTitle(nextEvent.data);
             const sanitized = sanitizeTerminalHistoryChunk(
               session.pendingHistoryControlSequence,
               nextEvent.data,
@@ -1135,6 +1152,12 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
               );
             }
             session.updatedAt = new Date().toISOString();
+            const nextTitle = oscTitle === null ? undefined : normalizeSessionTitle(oscTitle);
+            const title =
+              nextTitle !== undefined && nextTitle !== session.title ? nextTitle : undefined;
+            if (title !== undefined) {
+              session.title = title;
+            }
 
             return {
               type: "output",
@@ -1142,6 +1165,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
               terminalId: session.terminalId,
               history: sanitized.visibleText.length > 0 ? session.history : null,
               data: nextEvent.data,
+              ...(title !== undefined ? { title } : {}),
             } as const;
           }
 
@@ -1180,6 +1204,16 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
         if (action.type === "output") {
           if (action.history !== null) {
             yield* queuePersist(action.threadId, action.terminalId, action.history);
+          }
+
+          if (action.title !== undefined) {
+            yield* publishEvent({
+              type: "title",
+              threadId: action.threadId,
+              terminalId: action.terminalId,
+              createdAt: new Date().toISOString(),
+              title: action.title,
+            });
           }
 
           yield* publishEvent({
@@ -1298,11 +1332,13 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
       yield* modifyManagerState((state) => {
         session.status = "starting";
         session.cwd = input.cwd;
+        session.title = null;
         session.cols = input.cols;
         session.rows = input.rows;
         session.exitCode = null;
         session.exitSignal = null;
         session.hasRunningSubprocess = false;
+        session.pendingInputCommandBuffer = "";
         session.pendingProcessEvents = [];
         session.pendingProcessEventIndex = 0;
         session.processEventDrainRunning = false;
@@ -1562,10 +1598,12 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
               threadId: input.threadId,
               terminalId,
               cwd: input.cwd,
+              title: null,
               status: "starting",
               pid: null,
               history,
               pendingHistoryControlSequence: "",
+              pendingInputCommandBuffer: "",
               pendingProcessEvents: [],
               pendingProcessEventIndex: 0,
               processEventDrainRunning: false,
@@ -1615,8 +1653,10 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
             yield* stopProcess(liveSession);
             liveSession.cwd = input.cwd;
             liveSession.runtimeEnv = nextRuntimeEnv;
+            liveSession.title = null;
             liveSession.history = "";
             liveSession.pendingHistoryControlSequence = "";
+            liveSession.pendingInputCommandBuffer = "";
             liveSession.pendingProcessEvents = [];
             liveSession.pendingProcessEventIndex = 0;
             liveSession.processEventDrainRunning = false;
@@ -1627,8 +1667,10 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
             );
           } else if (liveSession.status === "exited" || liveSession.status === "error") {
             liveSession.runtimeEnv = nextRuntimeEnv;
+            liveSession.title = null;
             liveSession.history = "";
             liveSession.pendingHistoryControlSequence = "";
+            liveSession.pendingInputCommandBuffer = "";
             liveSession.pendingProcessEvents = [];
             liveSession.pendingProcessEventIndex = 0;
             liveSession.processEventDrainRunning = false;
@@ -1677,6 +1719,27 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
           terminalId,
         });
       }
+
+      const nextInputState = applyTerminalInputToBuffer(
+        session.pendingInputCommandBuffer,
+        input.data,
+      );
+      session.pendingInputCommandBuffer = nextInputState.buffer;
+      const nextTitle = nextInputState.submittedCommand
+        ? normalizeSessionTitle(deriveTerminalTitleFromCommand(nextInputState.submittedCommand))
+        : undefined;
+      if (nextTitle !== undefined && nextTitle !== session.title) {
+        session.title = nextTitle;
+        session.updatedAt = new Date().toISOString();
+        yield* publishEvent({
+          type: "title",
+          threadId: input.threadId,
+          terminalId,
+          createdAt: new Date().toISOString(),
+          title: nextTitle,
+        });
+      }
+
       yield* Effect.sync(() => process.write(input.data));
     });
 
@@ -1703,7 +1766,9 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
           const terminalId = input.terminalId ?? DEFAULT_TERMINAL_ID;
           const session = yield* requireSession(input.threadId, terminalId);
           session.history = "";
+          session.title = null;
           session.pendingHistoryControlSequence = "";
+          session.pendingInputCommandBuffer = "";
           session.pendingProcessEvents = [];
           session.pendingProcessEventIndex = 0;
           session.processEventDrainRunning = false;
@@ -1735,10 +1800,12 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
               threadId: input.threadId,
               terminalId,
               cwd: input.cwd,
+              title: null,
               status: "starting",
               pid: null,
               history: "",
               pendingHistoryControlSequence: "",
+              pendingInputCommandBuffer: "",
               pendingProcessEvents: [],
               pendingProcessEventIndex: 0,
               processEventDrainRunning: false,
@@ -1771,7 +1838,9 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
           const rows = input.rows ?? session.rows;
 
           session.history = "";
+          session.title = null;
           session.pendingHistoryControlSequence = "";
+          session.pendingInputCommandBuffer = "";
           session.pendingProcessEvents = [];
           session.pendingProcessEventIndex = 0;
           session.processEventDrainRunning = false;

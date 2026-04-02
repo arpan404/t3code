@@ -37,10 +37,12 @@ export interface TerminalSessionState {
   threadId: string;
   terminalId: string;
   cwd: string;
+  title: string | null;
   status: TerminalSessionStatus;
   pid: number | null;
   history: string;
   pendingHistoryControlSequence: string;
+  pendingInputCommandBuffer: string;
   exitCode: number | null;
   exitSignal: number | null;
   updatedAt: string;
