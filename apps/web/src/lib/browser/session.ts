@@ -196,6 +196,119 @@ export function addBrowserTab(
   };
 }
 
+export function duplicateBrowserTab(
+  state: BrowserSessionStorage,
+  tabId: string,
+): BrowserSessionStorage {
+  const sourceIndex = state.tabs.findIndex((tab) => tab.id === tabId);
+  if (sourceIndex === -1) {
+    return state;
+  }
+
+  const sourceTab = state.tabs[sourceIndex]!;
+  const duplicatedTabBase = createBrowserTabState(sourceTab.url);
+  const duplicatedTab = {
+    ...duplicatedTabBase,
+    title: sourceTab.title,
+  };
+  const tabs = [...state.tabs];
+  tabs.splice(sourceIndex + 1, 0, duplicatedTab);
+  return {
+    ...state,
+    activeTabId: duplicatedTab.id,
+    tabs,
+  };
+}
+
+export function reorderBrowserTab(
+  state: BrowserSessionStorage,
+  draggedTabId: string,
+  targetTabId: string,
+): BrowserSessionStorage {
+  if (draggedTabId === targetTabId) {
+    return state;
+  }
+
+  const draggedIndex = state.tabs.findIndex((tab) => tab.id === draggedTabId);
+  const targetIndex = state.tabs.findIndex((tab) => tab.id === targetTabId);
+  if (draggedIndex === -1 || targetIndex === -1) {
+    return state;
+  }
+
+  const tabs = [...state.tabs];
+  const [draggedTab] = tabs.splice(draggedIndex, 1);
+  if (!draggedTab) {
+    return state;
+  }
+  tabs.splice(targetIndex, 0, draggedTab);
+  return {
+    ...state,
+    tabs,
+  };
+}
+
+export function moveBrowserTab(
+  state: BrowserSessionStorage,
+  tabId: string,
+  direction: -1 | 1,
+): BrowserSessionStorage {
+  const sourceIndex = state.tabs.findIndex((tab) => tab.id === tabId);
+  if (sourceIndex === -1) {
+    return state;
+  }
+
+  const targetIndex = sourceIndex + direction;
+  if (targetIndex < 0 || targetIndex >= state.tabs.length) {
+    return state;
+  }
+
+  return reorderBrowserTab(state, tabId, state.tabs[targetIndex]!.id);
+}
+
+export function closeOtherBrowserTabs(
+  state: BrowserSessionStorage,
+  tabId: string,
+  initialUrl = BROWSER_NEW_TAB_URL,
+): BrowserSessionStorage {
+  const tab = state.tabs.find((item) => item.id === tabId);
+  if (!tab) {
+    return state;
+  }
+
+  return normalizeBrowserSessionState(
+    {
+      ...state,
+      activeTabId: tab.id,
+      tabs: [tab],
+    },
+    initialUrl,
+  );
+}
+
+export function closeTabsToRight(
+  state: BrowserSessionStorage,
+  tabId: string,
+  initialUrl = BROWSER_NEW_TAB_URL,
+): BrowserSessionStorage {
+  const targetIndex = state.tabs.findIndex((tab) => tab.id === tabId);
+  if (targetIndex === -1 || targetIndex === state.tabs.length - 1) {
+    return state;
+  }
+
+  const tabs = state.tabs.slice(0, targetIndex + 1);
+  const nextActiveTabId = tabs.some((tab) => tab.id === state.activeTabId)
+    ? state.activeTabId
+    : tabId;
+  return normalizeBrowserSessionState(
+    {
+      ...state,
+      activeTabId: nextActiveTabId,
+      tabs,
+    },
+    initialUrl,
+  );
+}
+
 export function updateBrowserTab(
   state: BrowserSessionStorage,
   tabId: string,

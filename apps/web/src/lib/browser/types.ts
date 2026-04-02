@@ -67,6 +67,20 @@ export type BrowserWebviewContextMenuAction =
   | "open-external"
   | "reload";
 
+export type BrowserTabContextMenuAction =
+  | "close"
+  | "close-others"
+  | "close-right"
+  | "copy-address"
+  | "duplicate"
+  | "move-left"
+  | "move-right"
+  | "new-tab"
+  | "open-external"
+  | "pin-page"
+  | "reload"
+  | "unpin-page";
+
 export const DEFAULT_BROWSER_TAB_RUNTIME_STATE: BrowserTabRuntimeState = {
   canGoBack: false,
   canGoForward: false,

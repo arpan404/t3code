@@ -34,13 +34,18 @@ import {
   BROWSER_SESSION_STORAGE_KEY,
   BrowserSessionStorageSchema,
   addBrowserTab,
+  closeOtherBrowserTabs,
+  closeTabsToRight,
   closeBrowserTab,
   createBrowserSettingsTab,
   createBrowserSessionState,
+  duplicateBrowserTab,
   isBrowserInternalTabUrl,
   isBrowserNewTabUrl,
   isBrowserSettingsTabUrl,
+  moveBrowserTab,
   normalizeBrowserSessionState,
+  reorderBrowserTab,
   setActiveBrowserTab,
   updateBrowserTab,
 } from "~/lib/browser/session";
@@ -54,6 +59,7 @@ import {
 } from "~/lib/browser/shell";
 import {
   type BrowserTabHandle,
+  type BrowserTabContextMenuAction,
   type BrowserTabRuntimeState,
   type BrowserTabSnapshot,
   type BrowserWebviewContextMenuAction,
@@ -287,6 +293,41 @@ export function useInAppBrowserState(options: UseInAppBrowserStateOptions) {
     [updateBrowserSession],
   );
 
+  const duplicateTab = useCallback(
+    (tabId: string) => {
+      updateBrowserSession((current) => duplicateBrowserTab(current, tabId));
+    },
+    [updateBrowserSession],
+  );
+
+  const reorderTabs = useCallback(
+    (draggedTabId: string, targetTabId: string) => {
+      updateBrowserSession((current) => reorderBrowserTab(current, draggedTabId, targetTabId));
+    },
+    [updateBrowserSession],
+  );
+
+  const moveTab = useCallback(
+    (tabId: string, direction: -1 | 1) => {
+      updateBrowserSession((current) => moveBrowserTab(current, tabId, direction));
+    },
+    [updateBrowserSession],
+  );
+
+  const closeOtherTabs = useCallback(
+    (tabId: string) => {
+      updateBrowserSession((current) => closeOtherBrowserTabs(current, tabId, BROWSER_NEW_TAB_URL));
+    },
+    [updateBrowserSession],
+  );
+
+  const closeTabsRight = useCallback(
+    (tabId: string) => {
+      updateBrowserSession((current) => closeTabsToRight(current, tabId, BROWSER_NEW_TAB_URL));
+    },
+    [updateBrowserSession],
+  );
+
   const closeActiveTab = useCallback(() => {
     if (!activeTab) {
       return;
@@ -306,9 +347,19 @@ export function useInAppBrowserState(options: UseInAppBrowserStateOptions) {
         return;
       }
       updateBrowserSession((current) => updateBrowserTab(current, activeTab.id, { url: nextUrl }));
+      if (activeTabIsInternal) {
+        return;
+      }
       webviewHandlesRef.current.get(activeTab.id)?.navigate(nextUrl);
     },
-    [activeTab, activeTabIsSettings, browserSearchEngine, focusAddressBar, updateBrowserSession],
+    [
+      activeTab,
+      activeTabIsInternal,
+      activeTabIsSettings,
+      browserSearchEngine,
+      focusAddressBar,
+      updateBrowserSession,
+    ],
   );
 
   const applySuggestion = useCallback(
@@ -484,6 +535,119 @@ export function useInAppBrowserState(options: UseInAppBrowserStateOptions) {
       openUrl(url, { newTab: true });
     },
     [openUrl],
+  );
+
+  const openTabContextMenu = useCallback(
+    async (tabId: string, position: { x: number; y: number }) => {
+      const tab = browserSession.tabs.find((item) => item.id === tabId);
+      if (!tab) {
+        return;
+      }
+
+      const tabIndex = browserSession.tabs.findIndex((item) => item.id === tabId);
+      const canMoveLeft = tabIndex > 0;
+      const canMoveRight = tabIndex >= 0 && tabIndex < browserSession.tabs.length - 1;
+      const canCloseOthers = browserSession.tabs.length > 1;
+      const canCloseRight = canMoveRight;
+      const isInternalTab = isBrowserInternalTabUrl(tab.url);
+      const isPinned = !isInternalTab && isPinnedBrowserPage(pinnedPages, tab.url);
+      const runtime = tabRuntimeById[tabId] ?? DEFAULT_BROWSER_TAB_RUNTIME_STATE;
+
+      const items: ContextMenuItem<BrowserTabContextMenuAction>[] = [
+        { id: "new-tab", label: "New Tab" },
+        { id: "duplicate", label: `Duplicate ${tab.title}`, disabled: isInternalTab },
+        {
+          id: "reload",
+          label: runtime.loading ? `Stop Loading ${tab.title}` : `Reload ${tab.title}`,
+          disabled: isInternalTab,
+        },
+        {
+          id: isPinned ? "unpin-page" : "pin-page",
+          label: isPinned ? "Unpin Page" : "Pin Page",
+          disabled: isInternalTab,
+        },
+        { id: "copy-address", label: "Copy Address", disabled: isInternalTab },
+        { id: "open-external", label: "Open Externally", disabled: isInternalTab },
+        { id: "move-left", label: "Move Tab Left", disabled: !canMoveLeft },
+        { id: "move-right", label: "Move Tab Right", disabled: !canMoveRight },
+        { id: "close-others", label: "Close Other Tabs", disabled: !canCloseOthers },
+        { id: "close-right", label: "Close Tabs to the Right", disabled: !canCloseRight },
+        { id: "close", label: `Close ${tab.title}`, destructive: true },
+      ];
+
+      const clicked = await api?.contextMenu.show(items, position);
+      switch (clicked) {
+        case "new-tab":
+          openNewTab();
+          return;
+        case "duplicate":
+          duplicateTab(tabId);
+          return;
+        case "reload": {
+          const handle = webviewHandlesRef.current.get(tabId);
+          if (runtime.loading) {
+            handle?.stop();
+          } else {
+            handle?.reload();
+          }
+          return;
+        }
+        case "pin-page":
+        case "unpin-page":
+          if (!isInternalTab) {
+            setPinnedPages((current) =>
+              isPinnedBrowserPage(current, tab.url)
+                ? removePinnedBrowserPage(current, tab.url)
+                : addPinnedBrowserPage(current, {
+                    pinnedAt: Date.now(),
+                    title: tab.title,
+                    url: tab.url,
+                  }),
+            );
+          }
+          return;
+        case "copy-address":
+          if (!isInternalTab) {
+            await copyBrowserAddress(tab.url);
+          }
+          return;
+        case "open-external":
+          if (!isInternalTab) {
+            await api?.shell.openExternal(tab.url);
+          }
+          return;
+        case "move-left":
+          moveTab(tabId, -1);
+          return;
+        case "move-right":
+          moveTab(tabId, 1);
+          return;
+        case "close-others":
+          closeOtherTabs(tabId);
+          return;
+        case "close-right":
+          closeTabsRight(tabId);
+          return;
+        case "close":
+          closeTab(tabId);
+          return;
+        default:
+      }
+    },
+    [
+      api,
+      browserSession.tabs,
+      closeOtherTabs,
+      closeTab,
+      closeTabsRight,
+      copyBrowserAddress,
+      duplicateTab,
+      moveTab,
+      openNewTab,
+      pinnedPages,
+      setPinnedPages,
+      tabRuntimeById,
+    ],
   );
 
   const exportPinnedPages = useCallback(() => {
@@ -1103,7 +1267,10 @@ export function useInAppBrowserState(options: UseInAppBrowserStateOptions) {
     closeActiveTab,
     closeDevTools,
     closeTab,
+    closeOtherTabs,
+    closeTabsRight,
     draftUrl,
+    duplicateTab,
     exportPinnedPages,
     focusAddressBar,
     goBack,
@@ -1121,13 +1288,16 @@ export function useInAppBrowserState(options: UseInAppBrowserStateOptions) {
     importPinnedPages,
     isAddressBarFocused,
     isRepairingStorage,
+    moveTab,
     openActiveTabExternally,
     openBrowserSettingsTab,
     openDevTools,
     openNewTab,
     openPinnedPage,
+    openTabContextMenu,
     openUrl,
     pinnedPages,
+    reorderTabs,
     registerWebviewHandle,
     reload,
     removePinnedPage,

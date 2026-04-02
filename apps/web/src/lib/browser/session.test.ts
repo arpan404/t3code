@@ -7,13 +7,18 @@ import {
   DEFAULT_BROWSER_PANEL_HEIGHT,
   addBrowserTab,
   clampBrowserPanelHeight,
+  closeOtherBrowserTabs,
+  closeTabsToRight,
   closeBrowserTab,
   createBrowserNewTab,
   createBrowserSessionState,
+  duplicateBrowserTab,
   createBrowserSettingsTab,
   isBrowserNewTabUrl,
   isBrowserSettingsTabUrl,
   normalizeBrowserSessionState,
+  moveBrowserTab,
+  reorderBrowserTab,
   resolveBrowserTabTitle,
   updateBrowserTab,
 } from "./session";
@@ -66,6 +71,94 @@ describe("browser session", () => {
       title: "Docs",
       url: "https://example.com/docs",
     });
+  });
+
+  it("duplicates a tab next to the source", () => {
+    const initial = addBrowserTab(createBrowserSessionState("https://example.com/"), {
+      url: "https://openai.com/",
+    });
+    const sourceTabId = initial.tabs[1]!.id;
+
+    const duplicated = duplicateBrowserTab(initial, sourceTabId);
+
+    expect(duplicated.tabs).toHaveLength(3);
+    expect(duplicated.tabs[1]?.url).toBe("https://openai.com/");
+    expect(duplicated.tabs[2]?.url).toBe("https://openai.com/");
+    expect(duplicated.tabs[1]?.id).toBe(sourceTabId);
+    expect(duplicated.tabs[2]?.id).not.toBe(sourceTabId);
+    expect(duplicated.activeTabId).toBe(duplicated.tabs[2]?.id);
+  });
+
+  it("reorders tabs while preserving the active tab id", () => {
+    const state = addBrowserTab(
+      addBrowserTab(createBrowserSessionState("https://example.com/"), {
+        url: "https://openai.com/",
+      }),
+      { url: "https://github.com/" },
+    );
+
+    const reordered = reorderBrowserTab(state, state.tabs[2]!.id, state.tabs[0]!.id);
+
+    expect(reordered.tabs.map((tab) => tab.url)).toEqual([
+      "https://github.com/",
+      "https://example.com/",
+      "https://openai.com/",
+    ]);
+    expect(reordered.activeTabId).toBe(state.activeTabId);
+  });
+
+  it("moves tabs left and right", () => {
+    const state = addBrowserTab(
+      addBrowserTab(createBrowserSessionState("https://example.com/"), {
+        url: "https://openai.com/",
+      }),
+      { url: "https://github.com/" },
+    );
+
+    const movedLeft = moveBrowserTab(state, state.tabs[2]!.id, -1);
+    expect(movedLeft.tabs.map((tab) => tab.url)).toEqual([
+      "https://example.com/",
+      "https://github.com/",
+      "https://openai.com/",
+    ]);
+
+    const movedRight = moveBrowserTab(movedLeft, movedLeft.tabs[1]!.id, 1);
+    expect(movedRight.tabs.map((tab) => tab.url)).toEqual([
+      "https://example.com/",
+      "https://openai.com/",
+      "https://github.com/",
+    ]);
+  });
+
+  it("closes all tabs except the requested tab", () => {
+    const state = addBrowserTab(
+      addBrowserTab(createBrowserSessionState("https://example.com/"), {
+        url: "https://openai.com/",
+      }),
+      { url: "https://github.com/" },
+    );
+
+    const next = closeOtherBrowserTabs(state, state.tabs[1]!.id);
+
+    expect(next.tabs).toEqual([state.tabs[1]!]);
+    expect(next.activeTabId).toBe(state.tabs[1]!.id);
+  });
+
+  it("closes tabs to the right of the requested tab", () => {
+    const state = addBrowserTab(
+      addBrowserTab(createBrowserSessionState("https://example.com/"), {
+        url: "https://openai.com/",
+      }),
+      { url: "https://github.com/" },
+    );
+
+    const next = closeTabsToRight(state, state.tabs[1]!.id);
+
+    expect(next.tabs.map((tab) => tab.url)).toEqual([
+      "https://example.com/",
+      "https://openai.com/",
+    ]);
+    expect(next.activeTabId).toBe(state.tabs[1]!.id);
   });
 
   it("closes the active tab and selects the previous one", () => {

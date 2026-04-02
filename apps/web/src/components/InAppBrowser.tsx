@@ -1,4 +1,16 @@
 import {
+  closestCenter,
+  DndContext,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragCancelEvent,
+  type DragEndEvent,
+  type DragStartEvent,
+} from "@dnd-kit/core";
+import { SortableContext, horizontalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import {
   ArrowLeftIcon,
   ArrowRightIcon,
   BugIcon,
@@ -13,14 +25,24 @@ import {
   Settings2Icon,
   XIcon,
 } from "lucide-react";
-import { type FormEvent, type RefObject } from "react";
+import {
+  type FormEvent,
+  type MouseEvent as ReactMouseEvent,
+  type MutableRefObject,
+  type ReactNode,
+  type RefObject,
+  useCallback,
+  useRef,
+} from "react";
 import {
   useInAppBrowserState,
   type ActiveBrowserRuntimeState,
   type InAppBrowserController,
   type InAppBrowserMode,
 } from "~/hooks/useInAppBrowserState";
+import { isContextMenuPointerDown } from "~/lib/sidebar";
 import { cn } from "~/lib/utils";
+import type { BrowserTabState } from "~/lib/browser/session";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
@@ -41,6 +63,111 @@ export type {
   InAppBrowserController,
   InAppBrowserMode,
 } from "~/hooks/useInAppBrowserState";
+
+function SortableBrowserTab(props: {
+  active: boolean;
+  icon: ReactNode;
+  onActivate: (tabId: string) => void;
+  onClose: (tabId: string) => void;
+  onContextMenuRequest: (tabId: string, position: { x: number; y: number }) => void;
+  suppressClickAfterDragRef: MutableRefObject<boolean>;
+  suppressClickForContextMenuRef: MutableRefObject<boolean>;
+  tab: BrowserTabState;
+}) {
+  const {
+    active,
+    icon,
+    onActivate,
+    onClose,
+    onContextMenuRequest,
+    suppressClickAfterDragRef,
+    suppressClickForContextMenuRef,
+    tab,
+  } = props;
+  const {
+    attributes,
+    listeners,
+    setActivatorNodeRef,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+    isOver,
+  } = useSortable({ id: tab.id });
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Translate.toString(transform), transition }}
+      className={cn(
+        "group flex min-w-0 max-w-64 items-center gap-1 rounded-lg border px-2 py-1 text-xs transition-colors",
+        active
+          ? "border-input bg-background text-foreground shadow-xs/5"
+          : "border-transparent bg-background/35 text-muted-foreground hover:border-border/70 hover:bg-background/60",
+        isDragging && "z-20 opacity-80",
+        isOver && !isDragging && "ring-1 ring-primary/40",
+      )}
+    >
+      <button
+        ref={setActivatorNodeRef}
+        type="button"
+        className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden text-left"
+        onPointerDownCapture={(event) => {
+          suppressClickForContextMenuRef.current = false;
+          if (
+            isContextMenuPointerDown({
+              button: event.button,
+              ctrlKey: event.ctrlKey,
+              isMac: /mac/i.test(navigator.platform),
+            })
+          ) {
+            suppressClickForContextMenuRef.current = true;
+            event.stopPropagation();
+          }
+        }}
+        onClick={() => {
+          if (suppressClickAfterDragRef.current) {
+            suppressClickAfterDragRef.current = false;
+            return;
+          }
+          if (suppressClickForContextMenuRef.current) {
+            suppressClickForContextMenuRef.current = false;
+            return;
+          }
+          onActivate(tab.id);
+        }}
+        onAuxClick={(event: ReactMouseEvent<HTMLButtonElement>) => {
+          if (event.button !== 1) {
+            return;
+          }
+          event.preventDefault();
+          onClose(tab.id);
+        }}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          suppressClickForContextMenuRef.current = true;
+          onContextMenuRequest(tab.id, { x: event.clientX, y: event.clientY });
+        }}
+        title={tab.title}
+        {...attributes}
+        {...listeners}
+      >
+        {icon}
+        <span className="truncate">{tab.title}</span>
+      </button>
+      <button
+        type="button"
+        className="rounded-sm p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        aria-label={`Close ${tab.title}`}
+        onClick={() => {
+          onClose(tab.id);
+        }}
+      >
+        <XIcon className="size-3" />
+      </button>
+    </div>
+  );
+}
 
 interface InAppBrowserProps {
   open: boolean;
@@ -113,8 +240,10 @@ export function InAppBrowser(props: InAppBrowserProps) {
     openBrowserSettingsTab,
     openNewTab,
     openPinnedPage,
+    openTabContextMenu,
     openUrl,
     pinnedPages,
+    reorderTabs,
     registerWebviewHandle,
     reload,
     removePinnedPage,
@@ -146,6 +275,27 @@ export function InAppBrowser(props: InAppBrowserProps) {
   const devToolsButtonClassName = cn(
     activeRuntime.devToolsOpen &&
       "border-amber-500/60 bg-amber-500/14 text-amber-800 hover:bg-amber-500/18 dark:text-amber-200",
+  );
+  const tabDnDSensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 6 },
+    }),
+  );
+  const suppressTabClickAfterDragRef = useRef(false);
+  const suppressTabClickForContextMenuRef = useRef(false);
+  const handleTabDragStart = useCallback((_event: DragStartEvent) => {
+    suppressTabClickAfterDragRef.current = true;
+  }, []);
+  const handleTabDragCancel = useCallback((_event: DragCancelEvent) => {}, []);
+  const handleTabDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      const { active, over } = event;
+      if (!over || active.id === over.id) {
+        return;
+      }
+      reorderTabs(String(active.id), String(over.id));
+    },
+    [reorderTabs],
   );
 
   if (!open) {
@@ -292,55 +442,52 @@ export function InAppBrowser(props: InAppBrowserProps) {
         ) : (
           <>
             <div className="flex items-center gap-2 border-b border-border bg-card/72 px-3 py-2 sm:px-5">
-              <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto pb-0.5">
-                {browserSession.tabs.map((tab) => {
-                  const isActive = activeTab?.id === tab.id;
-                  return (
-                    <div
-                      key={tab.id}
-                      className={cn(
-                        "group flex min-w-0 max-w-64 items-center gap-1 rounded-lg border px-2 py-1 text-xs transition-colors",
-                        isActive
-                          ? "border-input bg-background text-foreground shadow-xs/5"
-                          : "border-transparent bg-background/35 text-muted-foreground hover:border-border/70 hover:bg-background/60",
-                      )}
-                    >
-                      <button
-                        type="button"
-                        className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden text-left"
-                        onClick={() => {
-                          activateTab(tab.id);
-                        }}
-                        title={tab.title}
-                      >
-                        {isBrowserSettingsTabUrl(tab.url) ? (
-                          <Settings2Icon className="size-3 text-muted-foreground" />
-                        ) : isBrowserNewTabUrl(tab.url) ? (
-                          <PlusIcon className="size-3 text-muted-foreground" />
-                        ) : (
-                          <BrowserFavicon
-                            url={tab.url}
-                            title={tab.title}
-                            className="size-3"
-                            fallbackClassName="size-3 text-muted-foreground"
-                          />
-                        )}
-                        <span className="truncate">{tab.title}</span>
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded-sm p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                        aria-label={`Close ${tab.title}`}
-                        onClick={() => {
-                          closeTab(tab.id);
-                        }}
-                      >
-                        <XIcon className="size-3" />
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
+              <DndContext
+                sensors={tabDnDSensors}
+                collisionDetection={closestCenter}
+                onDragStart={handleTabDragStart}
+                onDragEnd={handleTabDragEnd}
+                onDragCancel={handleTabDragCancel}
+              >
+                <SortableContext
+                  items={browserSession.tabs.map((tab) => tab.id)}
+                  strategy={horizontalListSortingStrategy}
+                >
+                  <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto pb-0.5">
+                    {browserSession.tabs.map((tab) => {
+                      const isActive = activeTab?.id === tab.id;
+                      const icon = isBrowserSettingsTabUrl(tab.url) ? (
+                        <Settings2Icon className="size-3 text-muted-foreground" />
+                      ) : isBrowserNewTabUrl(tab.url) ? (
+                        <PlusIcon className="size-3 text-muted-foreground" />
+                      ) : (
+                        <BrowserFavicon
+                          url={tab.url}
+                          title={tab.title}
+                          className="size-3"
+                          fallbackClassName="size-3 text-muted-foreground"
+                        />
+                      );
+
+                      return (
+                        <SortableBrowserTab
+                          key={tab.id}
+                          active={isActive}
+                          icon={icon}
+                          onActivate={activateTab}
+                          onClose={closeTab}
+                          onContextMenuRequest={(tabId, position) => {
+                            void openTabContextMenu(tabId, position);
+                          }}
+                          suppressClickAfterDragRef={suppressTabClickAfterDragRef}
+                          suppressClickForContextMenuRef={suppressTabClickForContextMenuRef}
+                          tab={tab}
+                        />
+                      );
+                    })}
+                  </div>
+                </SortableContext>
+              </DndContext>
               <Tooltip>
                 <TooltipTrigger
                   render={
