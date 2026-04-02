@@ -159,7 +159,7 @@ import {
   shouldForceCompactComposerFooterForFit,
   shouldUseCompactComposerPrimaryActions,
   shouldUseCompactComposerFooter,
-} from "./composerFooterLayout";
+} from "~/lib/composer/footerLayout";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
@@ -201,7 +201,7 @@ import {
   revokeUserMessagePreviewUrls,
   threadHasStarted,
   waitForStartedServerThread,
-} from "./ChatView.logic";
+} from "~/lib/chat/chatView";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import {
   useServerAvailableEditors,
@@ -1458,7 +1458,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const chatViewportRef = useRef<HTMLDivElement | null>(null);
   const browserSplitWidthRef = useRef(browserSplitWidth);
   const browserSplitResizePointerIdRef = useRef<number | null>(null);
-  const browserSplitResizeStateRef = useRef<{ startX: number; startWidth: number } | null>(null);
+  const browserSplitResizeStateRef = useRef<{
+    startX: number;
+    startWidth: number;
+  } | null>(null);
   const didResizeBrowserSplitDuringDragRef = useRef(false);
   const lastSyncedBrowserSplitWidthRef = useRef(browserSplitWidth);
   const browserOpen = browserMode !== "closed";
@@ -4005,7 +4008,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
           trigger.rangeStart,
           replacementRangeEnd,
           replacement,
-          { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
+          {
+            expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
+          },
         );
         if (applied) {
           setComposerHighlightedItemId(null);
@@ -4024,7 +4029,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
             trigger.rangeStart,
             replacementRangeEnd,
             replacement,
-            { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
+            {
+              expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
+            },
           );
           if (applied) {
             setComposerHighlightedItemId(null);
@@ -4782,7 +4789,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
               )}
               style={
                 browserMode === "split"
-                  ? { width: `${browserSplitWidth}px`, minWidth: `${browserSplitWidth}px` }
+                  ? {
+                      width: `${browserSplitWidth}px`,
+                      minWidth: `${browserSplitWidth}px`,
+                    }
                   : undefined
               }
             >

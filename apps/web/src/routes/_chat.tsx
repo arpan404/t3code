@@ -6,7 +6,7 @@ import { isTerminalFocused } from "../lib/terminalFocus";
 import { resolveShortcutCommand } from "../keybindings";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
-import { resolveSidebarNewThreadEnvMode } from "~/components/Sidebar.logic";
+import { resolveSidebarNewThreadEnvMode } from "~/lib/sidebar";
 import { useSettings } from "~/hooks/useSettings";
 import { useServerKeybindings } from "~/rpc/serverState";
 

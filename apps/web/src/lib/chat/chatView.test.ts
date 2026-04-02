@@ -1,6 +1,6 @@
 import { ProjectId, ThreadId, TurnId } from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { useStore } from "../store";
+import { useStore } from "../../store";
 
 import {
   buildExpiredTerminalContextToastCopy,
@@ -8,7 +8,7 @@ import {
   deriveComposerSendState,
   hasServerAcknowledgedLocalDispatch,
   waitForStartedServerThread,
-} from "./ChatView.logic";
+} from "./chatView";
 
 describe("deriveComposerSendState", () => {
   it("treats expired terminal pills as non-sendable content", () => {

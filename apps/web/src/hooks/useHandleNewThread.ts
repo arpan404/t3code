@@ -8,7 +8,7 @@ import {
   useComposerDraftStore,
 } from "../composerDraftStore";
 import { newThreadId } from "../lib/utils";
-import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
+import { orderItemsByPreferredIds } from "../lib/sidebar";
 import { useStore } from "../store";
 import { useThreadById } from "../storeSelectors";
 import { useUiStateStore } from "../uiStateStore";

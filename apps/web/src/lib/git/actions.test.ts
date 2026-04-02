@@ -9,7 +9,7 @@ import {
   resolveLiveThreadBranchUpdate,
   resolveQuickAction,
   resolveThreadBranchUpdate,
-} from "./GitActionsControl.logic";
+} from "./actions";
 
 function status(overrides: Partial<GitStatusResult> = {}): GitStatusResult {
   return {

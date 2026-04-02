@@ -7,7 +7,7 @@ import {
   resolveDraftEnvModeAfterBranchChange,
   resolveBranchToolbarValue,
   shouldIncludeBranchPickerItem,
-} from "./BranchToolbar.logic";
+} from "./branchToolbar";
 
 describe("resolveDraftEnvModeAfterBranchChange", () => {
   it("switches to local mode when returning from an existing worktree to the main worktree", () => {

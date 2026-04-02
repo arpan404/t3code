@@ -29,7 +29,7 @@ import {
   resolveBranchSelectionTarget,
   resolveBranchToolbarValue,
   shouldIncludeBranchPickerItem,
-} from "./BranchToolbar.logic";
+} from "../lib/git/branchToolbar";
 import { Button } from "./ui/button";
 import {
   Combobox,

@@ -9,7 +9,7 @@ import {
   shouldForceCompactComposerFooterForFit,
   shouldUseCompactComposerPrimaryActions,
   shouldUseCompactComposerFooter,
-} from "./composerFooterLayout";
+} from "./footerLayout";
 
 describe("shouldUseCompactComposerFooter", () => {
   it("stays expanded without a measured width", () => {

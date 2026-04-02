@@ -10,7 +10,7 @@ import {
   EnvMode,
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
-} from "./BranchToolbar.logic";
+} from "../lib/git/branchToolbar";
 import { BranchToolbarBranchSelector } from "./BranchToolbarBranchSelector";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 

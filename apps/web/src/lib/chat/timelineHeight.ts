@@ -1,5 +1,5 @@
-import { deriveDisplayedUserMessageState } from "../lib/terminalContext";
-import { buildInlineTerminalContextText } from "./chat/userMessageTerminalContexts";
+import { deriveDisplayedUserMessageState } from "~/lib/terminalContext";
+import { buildInlineTerminalContextText } from "~/lib/chat/userMessageTerminalContexts";
 
 const ASSISTANT_CHARS_PER_LINE_FALLBACK = 72;
 const USER_CHARS_PER_LINE_FALLBACK = 56;
@@ -7,7 +7,6 @@ const LINE_HEIGHT_PX = 22;
 const ASSISTANT_BASE_HEIGHT_PX = 78;
 const USER_BASE_HEIGHT_PX = 96;
 const ATTACHMENTS_PER_ROW = 2;
-// Attachment thumbnails render with `max-h-[220px]` plus ~8px row gap.
 const USER_ATTACHMENT_ROW_HEIGHT_PX = 228;
 const USER_BUBBLE_WIDTH_RATIO = 0.8;
 const USER_BUBBLE_HORIZONTAL_PADDING_PX = 32;
@@ -30,7 +29,6 @@ interface TimelineHeightEstimateLayout {
 function estimateWrappedLineCount(text: string, charsPerLine: number): number {
   if (text.length === 0) return 1;
 
-  // Avoid allocating via split for long logs; iterate once and count wrapped lines.
   let lines = 0;
   let currentLineLength = 0;
   for (let index = 0; index < text.length; index += 1) {
@@ -95,8 +93,6 @@ export function estimateTimelineMessageHeight(
     return USER_BASE_HEIGHT_PX + estimatedLines * LINE_HEIGHT_PX + attachmentHeight;
   }
 
-  // `system` messages are not rendered in the chat timeline, but keep a stable
-  // explicit branch in case they are present in timeline data.
   const charsPerLine = estimateCharsPerLineForAssistant(layout.timelineWidthPx);
   const estimatedLines = estimateWrappedLineCount(message.text, charsPerLine);
   return ASSISTANT_BASE_HEIGHT_PX + estimatedLines * LINE_HEIGHT_PX;

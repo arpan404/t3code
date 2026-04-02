@@ -19,7 +19,7 @@ import {
   sortProjectsForSidebar,
   sortThreadsForSidebar,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
-} from "./Sidebar.logic";
+} from "./sidebar";
 import { OrchestrationLatestTurn, ProjectId, ThreadId } from "@t3tools/contracts";
 import {
   DEFAULT_INTERACTION_MODE,

@@ -12,7 +12,7 @@ import {
   shouldShowArm64IntelBuildWarning,
   shouldShowDesktopUpdateButton,
   shouldToastDesktopUpdateActionResult,
-} from "./desktopUpdate.logic";
+} from "./desktopUpdate";
 
 const baseState: DesktopUpdateState = {
   enabled: true,

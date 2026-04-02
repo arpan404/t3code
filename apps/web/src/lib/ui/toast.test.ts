@@ -1,5 +1,5 @@
 import { assert, describe, it } from "vitest";
-import { buildVisibleToastLayout, shouldHideCollapsedToastContent } from "./toast.logic";
+import { buildVisibleToastLayout, shouldHideCollapsedToastContent } from "./toast";
 
 describe("shouldHideCollapsedToastContent", () => {
   it("keeps a single visible toast readable", () => {

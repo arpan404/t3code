@@ -87,7 +87,7 @@ import {
   resolveDesktopUpdateButtonAction,
   shouldShowArm64IntelBuildWarning,
   shouldToastDesktopUpdateActionResult,
-} from "./desktopUpdate.logic";
+} from "../lib/desktopUpdate";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "./ui/alert";
 import { Button } from "./ui/button";
 import { Menu, MenuGroup, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "./ui/menu";
@@ -124,7 +124,7 @@ import {
   sortProjectsForSidebar,
   sortThreadsForSidebar,
   useThreadJumpHintVisibility,
-} from "./Sidebar.logic";
+} from "../lib/sidebar";
 import { SidebarUpdatePill } from "./sidebar/SidebarUpdatePill";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useSettings, useUpdateSettings } from "~/hooks/useSettings";

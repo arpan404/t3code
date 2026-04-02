@@ -1,11 +1,11 @@
 import { TerminalIcon } from "lucide-react";
 
-import { cn } from "~/lib/utils";
 import {
   COMPOSER_INLINE_CHIP_CLASS_NAME,
   COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
   COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME,
-} from "../composerInlineChip";
+} from "~/lib/composer/inlineChip";
+import { cn } from "~/lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 interface TerminalContextInlineChipProps {

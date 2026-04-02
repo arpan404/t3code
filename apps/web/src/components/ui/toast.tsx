@@ -17,7 +17,7 @@ import {
 import { cn } from "~/lib/utils";
 import { buttonVariants } from "~/components/ui/button";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
-import { buildVisibleToastLayout, shouldHideCollapsedToastContent } from "./toast.logic";
+import { buildVisibleToastLayout, shouldHideCollapsedToastContent } from "~/lib/ui/toast";
 
 type ThreadToastData = {
   threadId?: ThreadId | null;

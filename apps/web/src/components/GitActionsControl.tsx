@@ -21,7 +21,7 @@ import {
   resolveLiveThreadBranchUpdate,
   resolveQuickAction,
   resolveThreadBranchUpdate,
-} from "./GitActionsControl.logic";
+} from "../lib/git/actions";
 import { Button } from "~/components/ui/button";
 import { Checkbox } from "~/components/ui/checkbox";
 import {
