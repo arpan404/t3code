@@ -194,12 +194,19 @@ function resolveBrowserShortcutAction(input: Electron.Input): BrowserShortcutAct
   }
 
   const usesMod = process.platform === "darwin" ? input.meta === true : input.control === true;
-  if (!usesMod || input.alt === true) {
+  if (!usesMod) {
     return null;
   }
 
   const key = input.key.toLowerCase();
+  if (input.alt === true) {
+    if (key === "[") return "move-tab-left";
+    if (key === "]") return "move-tab-right";
+    return null;
+  }
+
   if (input.shift === true) {
+    if (key === "d") return "duplicate-tab";
     if (key === "i") return "devtools";
     if (key === "[") return "previous-tab";
     if (key === "]") return "next-tab";

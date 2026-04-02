@@ -126,6 +126,21 @@ const DEFAULT_BINDINGS = compile([
     command: "browser.devtools",
     whenAst: whenAnd(whenIdentifier("browserOpen"), whenNot(whenIdentifier("terminalFocus"))),
   },
+  {
+    shortcut: modShortcut("d", { shiftKey: true }),
+    command: "browser.duplicateTab",
+    whenAst: whenAnd(whenIdentifier("browserOpen"), whenNot(whenIdentifier("terminalFocus"))),
+  },
+  {
+    shortcut: modShortcut("[", { altKey: true }),
+    command: "browser.moveTabLeft",
+    whenAst: whenAnd(whenIdentifier("browserOpen"), whenNot(whenIdentifier("terminalFocus"))),
+  },
+  {
+    shortcut: modShortcut("]", { altKey: true }),
+    command: "browser.moveTabRight",
+    whenAst: whenAnd(whenIdentifier("browserOpen"), whenNot(whenIdentifier("terminalFocus"))),
+  },
   { shortcut: modShortcut("o", { shiftKey: true }), command: "chat.new" },
   { shortcut: modShortcut("n", { shiftKey: true }), command: "chat.newLocal" },
   { shortcut: modShortcut("o"), command: "editor.openFavorite" },
@@ -284,6 +299,27 @@ describe("shortcutLabelForCommand", () => {
         context: { browserOpen: true, terminalFocus: false },
       }),
       "⇧⌘I",
+    );
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "browser.duplicateTab", {
+        platform: "MacIntel",
+        context: { browserOpen: true, terminalFocus: false },
+      }),
+      "⇧⌘D",
+    );
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "browser.moveTabLeft", {
+        platform: "MacIntel",
+        context: { browserOpen: true, terminalFocus: false },
+      }),
+      "⌥⌘[",
+    );
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "browser.moveTabRight", {
+        platform: "MacIntel",
+        context: { browserOpen: true, terminalFocus: false },
+      }),
+      "⌥⌘]",
     );
     assert.strictEqual(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "editor.openFavorite", "Linux"),
@@ -468,6 +504,27 @@ describe("chat/editor shortcuts", () => {
         context: { browserOpen: true, terminalFocus: false },
       }),
       "browser.devtools",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "d", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { browserOpen: true, terminalFocus: false },
+      }),
+      "browser.duplicateTab",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "[", ctrlKey: true, altKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { browserOpen: true, terminalFocus: false },
+      }),
+      "browser.moveTabLeft",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "]", ctrlKey: true, altKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { browserOpen: true, terminalFocus: false },
+      }),
+      "browser.moveTabRight",
     );
   });
 });

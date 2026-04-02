@@ -2915,6 +2915,27 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return;
       }
 
+      if (command === "browser.duplicateTab") {
+        event.preventDefault();
+        event.stopPropagation();
+        browserControllerRef.current?.duplicateActiveTab();
+        return;
+      }
+
+      if (command === "browser.moveTabLeft") {
+        event.preventDefault();
+        event.stopPropagation();
+        browserControllerRef.current?.moveActiveTabLeft();
+        return;
+      }
+
+      if (command === "browser.moveTabRight") {
+        event.preventDefault();
+        event.stopPropagation();
+        browserControllerRef.current?.moveActiveTabRight();
+        return;
+      }
+
       if (command === "chat.togglePlanMode") {
         event.preventDefault();
         event.stopPropagation();

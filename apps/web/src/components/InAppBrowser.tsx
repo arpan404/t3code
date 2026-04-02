@@ -32,7 +32,9 @@ import {
   type ReactNode,
   type RefObject,
   useCallback,
+  useEffect,
   useRef,
+  useState,
 } from "react";
 import {
   useInAppBrowserState,
@@ -70,6 +72,7 @@ function SortableBrowserTab(props: {
   onActivate: (tabId: string) => void;
   onClose: (tabId: string) => void;
   onContextMenuRequest: (tabId: string, position: { x: number; y: number }) => void;
+  onTabNodeChange?: (tabId: string, node: HTMLDivElement | null) => void;
   suppressClickAfterDragRef: MutableRefObject<boolean>;
   suppressClickForContextMenuRef: MutableRefObject<boolean>;
   tab: BrowserTabState;
@@ -80,6 +83,7 @@ function SortableBrowserTab(props: {
     onActivate,
     onClose,
     onContextMenuRequest,
+    onTabNodeChange,
     suppressClickAfterDragRef,
     suppressClickForContextMenuRef,
     tab,
@@ -94,10 +98,17 @@ function SortableBrowserTab(props: {
     isDragging,
     isOver,
   } = useSortable({ id: tab.id });
+  const setTabNodeRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      setNodeRef(node);
+      onTabNodeChange?.(tab.id, node);
+    },
+    [onTabNodeChange, setNodeRef, tab.id],
+  );
 
   return (
     <div
-      ref={setNodeRef}
+      ref={setTabNodeRef}
       style={{ transform: CSS.Translate.toString(transform), transition }}
       className={cn(
         "group flex min-w-0 max-w-64 items-center gap-1 rounded-lg border px-2 py-1 text-xs transition-colors",
@@ -283,6 +294,10 @@ export function InAppBrowser(props: InAppBrowserProps) {
   );
   const suppressTabClickAfterDragRef = useRef(false);
   const suppressTabClickForContextMenuRef = useRef(false);
+  const tabStripRef = useRef<HTMLDivElement | null>(null);
+  const tabNodeMapRef = useRef(new Map<string, HTMLDivElement>());
+  const [canScrollTabsLeft, setCanScrollTabsLeft] = useState(false);
+  const [canScrollTabsRight, setCanScrollTabsRight] = useState(false);
   const handleTabDragStart = useCallback((_event: DragStartEvent) => {
     suppressTabClickAfterDragRef.current = true;
   }, []);
@@ -297,6 +312,82 @@ export function InAppBrowser(props: InAppBrowserProps) {
     },
     [reorderTabs],
   );
+  const registerTabNode = useCallback((tabId: string, node: HTMLDivElement | null) => {
+    if (node) {
+      tabNodeMapRef.current.set(tabId, node);
+      return;
+    }
+    tabNodeMapRef.current.delete(tabId);
+  }, []);
+  const syncTabStripOverflow = useCallback(() => {
+    const tabStrip = tabStripRef.current;
+    if (!tabStrip) {
+      setCanScrollTabsLeft(false);
+      setCanScrollTabsRight(false);
+      return;
+    }
+
+    const maxScrollLeft = Math.max(0, tabStrip.scrollWidth - tabStrip.clientWidth);
+    setCanScrollTabsLeft(tabStrip.scrollLeft > 1);
+    setCanScrollTabsRight(maxScrollLeft - tabStrip.scrollLeft > 1);
+  }, []);
+  const scrollTabsBy = useCallback((direction: -1 | 1) => {
+    const tabStrip = tabStripRef.current;
+    if (!tabStrip) {
+      return;
+    }
+
+    const delta = Math.max(tabStrip.clientWidth * 0.65, 180) * direction;
+    tabStrip.scrollBy({ left: delta, behavior: "smooth" });
+  }, []);
+
+  useEffect(() => {
+    syncTabStripOverflow();
+    const tabStrip = tabStripRef.current;
+    if (!tabStrip) {
+      return;
+    }
+
+    const handleScroll = () => {
+      syncTabStripOverflow();
+    };
+    tabStrip.addEventListener("scroll", handleScroll, { passive: true });
+    const resizeObserver =
+      typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(() => {
+            syncTabStripOverflow();
+          })
+        : null;
+    resizeObserver?.observe(tabStrip);
+
+    return () => {
+      tabStrip.removeEventListener("scroll", handleScroll);
+      resizeObserver?.disconnect();
+    };
+  }, [syncTabStripOverflow]);
+
+  useEffect(() => {
+    syncTabStripOverflow();
+  }, [browserSession.tabs, syncTabStripOverflow]);
+
+  useEffect(() => {
+    if (!activeTab) {
+      return;
+    }
+
+    tabNodeMapRef.current.get(activeTab.id)?.scrollIntoView({
+      behavior: "smooth",
+      block: "nearest",
+      inline: "nearest",
+    });
+
+    const animationFrame = window.requestAnimationFrame(() => {
+      syncTabStripOverflow();
+    });
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+    };
+  }, [activeTab, syncTabStripOverflow]);
 
   if (!open) {
     return null;
@@ -442,52 +533,89 @@ export function InAppBrowser(props: InAppBrowserProps) {
         ) : (
           <>
             <div className="flex items-center gap-2 border-b border-border bg-card/72 px-3 py-2 sm:px-5">
-              <DndContext
-                sensors={tabDnDSensors}
-                collisionDetection={closestCenter}
-                onDragStart={handleTabDragStart}
-                onDragEnd={handleTabDragEnd}
-                onDragCancel={handleTabDragCancel}
-              >
-                <SortableContext
-                  items={browserSession.tabs.map((tab) => tab.id)}
-                  strategy={horizontalListSortingStrategy}
+              <div className="relative flex min-w-0 flex-1 items-center">
+                {canScrollTabsLeft ? (
+                  <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-8 bg-linear-to-r from-card/95 to-transparent" />
+                ) : null}
+                {canScrollTabsRight ? (
+                  <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-8 bg-linear-to-l from-card/95 to-transparent" />
+                ) : null}
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  className={cn(
+                    "absolute left-0 z-20 rounded-full border border-border/70 bg-background/88 shadow-xs transition-opacity",
+                    canScrollTabsLeft ? "opacity-100" : "pointer-events-none opacity-0",
+                  )}
+                  onClick={() => scrollTabsBy(-1)}
+                  aria-label="Scroll tabs left"
                 >
-                  <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto pb-0.5">
-                    {browserSession.tabs.map((tab) => {
-                      const isActive = activeTab?.id === tab.id;
-                      const icon = isBrowserSettingsTabUrl(tab.url) ? (
-                        <Settings2Icon className="size-3 text-muted-foreground" />
-                      ) : isBrowserNewTabUrl(tab.url) ? (
-                        <PlusIcon className="size-3 text-muted-foreground" />
-                      ) : (
-                        <BrowserFavicon
-                          url={tab.url}
-                          title={tab.title}
-                          className="size-3"
-                          fallbackClassName="size-3 text-muted-foreground"
-                        />
-                      );
+                  <ArrowLeftIcon className="size-3.5" />
+                </Button>
+                <DndContext
+                  sensors={tabDnDSensors}
+                  collisionDetection={closestCenter}
+                  onDragStart={handleTabDragStart}
+                  onDragEnd={handleTabDragEnd}
+                  onDragCancel={handleTabDragCancel}
+                >
+                  <SortableContext
+                    items={browserSession.tabs.map((tab) => tab.id)}
+                    strategy={horizontalListSortingStrategy}
+                  >
+                    <div
+                      ref={tabStripRef}
+                      className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto px-8 pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                      data-testid="browser-tab-strip"
+                    >
+                      {browserSession.tabs.map((tab) => {
+                        const isActive = activeTab?.id === tab.id;
+                        const icon = isBrowserSettingsTabUrl(tab.url) ? (
+                          <Settings2Icon className="size-3 text-muted-foreground" />
+                        ) : isBrowserNewTabUrl(tab.url) ? (
+                          <PlusIcon className="size-3 text-muted-foreground" />
+                        ) : (
+                          <BrowserFavicon
+                            url={tab.url}
+                            title={tab.title}
+                            className="size-3"
+                            fallbackClassName="size-3 text-muted-foreground"
+                          />
+                        );
 
-                      return (
-                        <SortableBrowserTab
-                          key={tab.id}
-                          active={isActive}
-                          icon={icon}
-                          onActivate={activateTab}
-                          onClose={closeTab}
-                          onContextMenuRequest={(tabId, position) => {
-                            void openTabContextMenu(tabId, position);
-                          }}
-                          suppressClickAfterDragRef={suppressTabClickAfterDragRef}
-                          suppressClickForContextMenuRef={suppressTabClickForContextMenuRef}
-                          tab={tab}
-                        />
-                      );
-                    })}
-                  </div>
-                </SortableContext>
-              </DndContext>
+                        return (
+                          <SortableBrowserTab
+                            key={tab.id}
+                            active={isActive}
+                            icon={icon}
+                            onActivate={activateTab}
+                            onClose={closeTab}
+                            onContextMenuRequest={(tabId, position) => {
+                              void openTabContextMenu(tabId, position);
+                            }}
+                            onTabNodeChange={registerTabNode}
+                            suppressClickAfterDragRef={suppressTabClickAfterDragRef}
+                            suppressClickForContextMenuRef={suppressTabClickForContextMenuRef}
+                            tab={tab}
+                          />
+                        );
+                      })}
+                    </div>
+                  </SortableContext>
+                </DndContext>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  className={cn(
+                    "absolute right-0 z-20 rounded-full border border-border/70 bg-background/88 shadow-xs transition-opacity",
+                    canScrollTabsRight ? "opacity-100" : "pointer-events-none opacity-0",
+                  )}
+                  onClick={() => scrollTabsBy(1)}
+                  aria-label="Scroll tabs right"
+                >
+                  <ArrowRightIcon className="size-3.5" />
+                </Button>
+              </div>
               <Tooltip>
                 <TooltipTrigger
                   render={

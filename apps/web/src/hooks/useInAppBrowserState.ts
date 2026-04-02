@@ -53,7 +53,6 @@ import {
   type BrowserPipBounds,
   clampPipBounds,
   createDefaultPipBounds,
-  isBrowserModifierPressed,
   resolveViewportHeight,
   resolveViewportRect,
 } from "~/lib/browser/shell";
@@ -72,9 +71,12 @@ import { toastManager } from "~/components/ui/toast";
 export interface InAppBrowserController {
   closeActiveTab: () => void;
   closeDevTools: () => void;
+  duplicateActiveTab: () => void;
   focusAddressBar: () => void;
   goBack: () => void;
   goForward: () => void;
+  moveActiveTabLeft: () => void;
+  moveActiveTabRight: () => void;
   goToNextTab: () => void;
   goToPreviousTab: () => void;
   openNewTab: () => void;
@@ -335,6 +337,27 @@ export function useInAppBrowserState(options: UseInAppBrowserStateOptions) {
     closeTab(activeTab.id);
     focusAddressBar();
   }, [activeTab, closeTab, focusAddressBar]);
+
+  const duplicateActiveTab = useCallback(() => {
+    if (!activeTab) {
+      return;
+    }
+    duplicateTab(activeTab.id);
+  }, [activeTab, duplicateTab]);
+
+  const moveActiveTabLeft = useCallback(() => {
+    if (!activeTab) {
+      return;
+    }
+    moveTab(activeTab.id, -1);
+  }, [activeTab, moveTab]);
+
+  const moveActiveTabRight = useCallback(() => {
+    if (!activeTab) {
+      return;
+    }
+    moveTab(activeTab.id, 1);
+  }, [activeTab, moveTab]);
 
   const openUrl = useCallback(
     (rawUrl: string, options?: { newTab?: boolean }) => {
@@ -830,13 +853,32 @@ export function useInAppBrowserState(options: UseInAppBrowserStateOptions) {
 
   const handleBrowserKeyDownCapture = useCallback(
     (event: ReactKeyboardEvent<HTMLElement>) => {
-      if (!isBrowserModifierPressed(event)) {
+      const isMac = typeof navigator !== "undefined" && /mac/i.test(navigator.platform);
+      const usesMod = isMac ? event.metaKey : event.ctrlKey;
+      if (!usesMod) {
         return;
       }
 
       const key = event.key.toLowerCase();
-      if (event.shiftKey) {
+      if (event.altKey) {
         if (key === "[") {
+          event.preventDefault();
+          event.stopPropagation();
+          moveActiveTabLeft();
+        } else if (key === "]") {
+          event.preventDefault();
+          event.stopPropagation();
+          moveActiveTabRight();
+        }
+        return;
+      }
+
+      if (event.shiftKey) {
+        if (key === "d") {
+          event.preventDefault();
+          event.stopPropagation();
+          duplicateActiveTab();
+        } else if (key === "[") {
           event.preventDefault();
           event.stopPropagation();
           moveTabSelection(-1);
@@ -898,9 +940,12 @@ export function useInAppBrowserState(options: UseInAppBrowserStateOptions) {
     },
     [
       closeActiveTab,
+      duplicateActiveTab,
       focusAddressBar,
       goBack,
       goForward,
+      moveActiveTabLeft,
+      moveActiveTabRight,
       moveTabSelection,
       openNewTab,
       reload,
@@ -1112,11 +1157,20 @@ export function useInAppBrowserState(options: UseInAppBrowserStateOptions) {
         case "devtools":
           toggleDevTools();
           return;
+        case "duplicate-tab":
+          duplicateActiveTab();
+          return;
         case "focus-address-bar":
           focusAddressBar();
           return;
         case "forward":
           goForward();
+          return;
+        case "move-tab-left":
+          moveActiveTabLeft();
+          return;
+        case "move-tab-right":
+          moveActiveTabRight();
           return;
         case "new-tab":
           openNewTab();
@@ -1141,9 +1195,12 @@ export function useInAppBrowserState(options: UseInAppBrowserStateOptions) {
     });
   }, [
     closeActiveTab,
+    duplicateActiveTab,
     focusAddressBar,
     goBack,
     goForward,
+    moveActiveTabLeft,
+    moveActiveTabRight,
     moveTabSelection,
     open,
     openNewTab,
@@ -1214,9 +1271,12 @@ export function useInAppBrowserState(options: UseInAppBrowserStateOptions) {
     const controller: InAppBrowserController = {
       closeActiveTab,
       closeDevTools,
+      duplicateActiveTab,
       focusAddressBar,
       goBack,
       goForward,
+      moveActiveTabLeft,
+      moveActiveTabRight,
       goToNextTab: () => moveTabSelection(1),
       goToPreviousTab: () => moveTabSelection(-1),
       openNewTab,
@@ -1233,9 +1293,12 @@ export function useInAppBrowserState(options: UseInAppBrowserStateOptions) {
   }, [
     closeActiveTab,
     closeDevTools,
+    duplicateActiveTab,
     focusAddressBar,
     goBack,
     goForward,
+    moveActiveTabLeft,
+    moveActiveTabRight,
     moveTabSelection,
     onControllerChange,
     openNewTab,

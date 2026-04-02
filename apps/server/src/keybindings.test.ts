@@ -176,6 +176,9 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       assert.equal(defaultsByCommand.get("browser.forward"), "mod+]");
       assert.equal(defaultsByCommand.get("browser.reload"), "mod+r");
       assert.equal(defaultsByCommand.get("browser.devtools"), "mod+shift+i");
+      assert.equal(defaultsByCommand.get("browser.duplicateTab"), "mod+shift+d");
+      assert.equal(defaultsByCommand.get("browser.moveTabLeft"), "mod+alt+[");
+      assert.equal(defaultsByCommand.get("browser.moveTabRight"), "mod+alt+]");
       assert.equal(defaultsByCommand.get("thread.previous"), "mod+shift+[");
       assert.equal(defaultsByCommand.get("thread.next"), "mod+shift+]");
       assert.equal(defaultsByCommand.get("thread.jump.1"), "mod+1");
