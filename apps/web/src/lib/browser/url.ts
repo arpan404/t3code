@@ -30,6 +30,23 @@ const LOCAL_HOST_PATTERN =
 
 export { DEFAULT_BROWSER_HOME_URL };
 
+export function normalizeBrowserHttpUrl(rawValue: string): string | null {
+  const value = rawValue.trim();
+  if (value.length === 0) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return null;
+    }
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
 export function resolveBrowserHomeUrl(searchEngine: BrowserSearchEngine): string {
   return SEARCH_ENGINE_CONFIG[searchEngine].homeUrl;
 }
@@ -53,18 +70,11 @@ export function resolveBrowserInputTarget(
   }
 
   if (HTTP_SCHEME_PATTERN.test(value)) {
-    try {
-      const parsed = new URL(value);
-      if (parsed.protocol === "http:" || parsed.protocol === "https:") {
-        return {
-          intent: "navigate",
-          url: parsed.toString(),
-        };
-      }
-    } catch {
+    const normalizedUrl = normalizeBrowserHttpUrl(value);
+    if (normalizedUrl) {
       return {
-        intent: "search",
-        url: resolveBrowserSearchUrl(searchEngine, value),
+        intent: "navigate",
+        url: normalizedUrl,
       };
     }
 

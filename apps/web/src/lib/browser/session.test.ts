@@ -66,15 +66,57 @@ describe("browser session", () => {
       {
         activeTabId: "missing",
         panelHeight: 9999,
-        tabs: [duplicated.tabs[0]!, duplicated.tabs[0]!, { id: "", title: "", url: "" }],
+        tabs: [
+          duplicated.tabs[0]!,
+          duplicated.tabs[0]!,
+          { id: "error", title: "Broken", url: "chrome-error://chromewebdata/" },
+          { id: "", title: "", url: "" },
+        ],
       },
       "https://example.com/",
       800,
     );
 
-    expect(normalized.tabs).toHaveLength(1);
+    expect(normalized.tabs).toHaveLength(2);
     expect(normalized.activeTabId).toBe(normalized.tabs[0]?.id);
     expect(normalized.panelHeight).toBe(clampBrowserPanelHeight(9999, 800));
+    expect(normalized.tabs[1]?.url).toBe("https://example.com/");
+  });
+
+  it("preserves the settings tab while repairing invalid stored URLs", () => {
+    const normalized = normalizeBrowserSessionState(
+      {
+        activeTabId: "settings-tab",
+        panelHeight: DEFAULT_BROWSER_PANEL_HEIGHT,
+        tabs: [
+          {
+            id: "settings-tab",
+            title: "Broken title",
+            url: BROWSER_SETTINGS_TAB_URL,
+          },
+          {
+            id: "bad-tab",
+            title: "Error page",
+            url: "chrome-error://chromewebdata/",
+          },
+        ],
+      },
+      "https://example.com/",
+    );
+
+    expect(normalized.activeTabId).toBe("settings-tab");
+    expect(normalized.tabs).toEqual([
+      {
+        id: "settings-tab",
+        title: "Browser settings",
+        url: BROWSER_SETTINGS_TAB_URL,
+      },
+      {
+        id: "bad-tab",
+        title: "Error page",
+        url: "https://example.com/",
+      },
+    ]);
   });
 
   it("creates a dedicated browser settings tab", () => {

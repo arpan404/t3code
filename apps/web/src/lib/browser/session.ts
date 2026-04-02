@@ -2,7 +2,7 @@ import * as Schema from "effect/Schema";
 
 import { getLocalStorageItem } from "~/hooks/useLocalStorage";
 import { randomUUID } from "~/lib/utils";
-import { DEFAULT_BROWSER_HOME_URL } from "~/lib/browser/url";
+import { DEFAULT_BROWSER_HOME_URL, normalizeBrowserHttpUrl } from "~/lib/browser/url";
 
 export const BROWSER_SESSION_STORAGE_KEY = "t3code:browser:session:v1";
 export const LEGACY_BROWSER_LAST_URL_STORAGE_KEY = "t3code:browser:last-url";
@@ -87,12 +87,20 @@ export function createBrowserTabState(
   url = DEFAULT_BROWSER_HOME_URL,
   id = randomUUID(),
 ): BrowserTabState {
-  const normalizedUrl = url.trim().length > 0 ? url : DEFAULT_BROWSER_HOME_URL;
+  const normalizedUrl = normalizeStoredBrowserTabUrl(url, DEFAULT_BROWSER_HOME_URL);
   return {
     id,
     url: normalizedUrl,
     title: resolveBrowserTabTitle(normalizedUrl),
   };
+}
+
+function normalizeStoredBrowserTabUrl(url: string, fallbackUrl: string): string {
+  if (isBrowserSettingsTabUrl(url)) {
+    return url;
+  }
+
+  return normalizeBrowserHttpUrl(url) ?? fallbackUrl;
 }
 
 export function createBrowserSessionState(
@@ -123,7 +131,7 @@ export function normalizeBrowserSessionState(
     if (typeof tab.id !== "string" || tab.id.trim().length === 0) {
       continue;
     }
-    const normalizedUrl = tab.url.trim().length > 0 ? tab.url : initialUrl;
+    const normalizedUrl = normalizeStoredBrowserTabUrl(tab.url, initialUrl);
     uniqueTabs.set(tab.id, {
       id: tab.id,
       url: normalizedUrl,
@@ -179,7 +187,7 @@ export function updateBrowserTab(
       return tab;
     }
     const nextUrl =
-      typeof patch.url === "string" && patch.url.trim().length > 0 ? patch.url : tab.url;
+      typeof patch.url === "string" ? normalizeStoredBrowserTabUrl(patch.url, tab.url) : tab.url;
     const nextTitle = resolveBrowserTabTitle(nextUrl, patch.title ?? tab.title);
     if (tab.url === nextUrl && tab.title === nextTitle) {
       return tab;

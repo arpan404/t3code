@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_BROWSER_HOME_URL,
   normalizeBrowserInput,
+  normalizeBrowserHttpUrl,
   resolveBrowserHomeUrl,
   resolveBrowserInputTarget,
 } from "./url";
@@ -58,5 +59,11 @@ describe("browser url", () => {
       intent: "navigate",
       url: "https://example.com/",
     });
+  });
+
+  it("normalizes only http and https URLs for webview navigation", () => {
+    expect(normalizeBrowserHttpUrl(" https://example.com/docs ")).toBe("https://example.com/docs");
+    expect(normalizeBrowserHttpUrl("chrome-error://chromewebdata/")).toBeNull();
+    expect(normalizeBrowserHttpUrl("about:blank")).toBeNull();
   });
 });

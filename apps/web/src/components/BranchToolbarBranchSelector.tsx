@@ -200,7 +200,10 @@ export function BranchToolbarBranchSelector({
     runBranchAction(async () => {
       setOptimisticBranch(selectedBranchName);
       try {
-        await api.git.checkout({ cwd: selectionTarget.checkoutCwd, branch: branch.name });
+        await api.git.checkout({
+          cwd: selectionTarget.checkoutCwd,
+          branch: branch.name,
+        });
         await invalidateGitQueries(queryClient);
       } catch (error) {
         toastManager.add({
@@ -416,7 +419,9 @@ export function BranchToolbarBranchSelector({
       virtualized={shouldVirtualizeBranchList}
       onItemHighlighted={(_value, eventDetails) => {
         if (!isBranchMenuOpen || eventDetails.index < 0) return;
-        branchListVirtualizer.scrollToIndex(eventDetails.index, { align: "auto" });
+        branchListVirtualizer.scrollToIndex(eventDetails.index, {
+          align: "auto",
+        });
       }}
       onOpenChange={handleOpenChange}
       open={isBranchMenuOpen}

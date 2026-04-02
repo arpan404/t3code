@@ -1,5 +1,5 @@
 import { GlobeIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
 import { cn } from "~/lib/utils";
 import { type BrowserTabState, resolveBrowserTabTitle } from "~/lib/browser/session";
@@ -9,6 +9,7 @@ import {
   type BrowserWebview,
   IN_APP_BROWSER_PARTITION,
 } from "~/lib/browser/types";
+import { normalizeBrowserHttpUrl } from "~/lib/browser/url";
 
 function resolveBrowserFaviconSources(url: string): string[] {
   try {
@@ -78,15 +79,26 @@ export function BrowserTabWebview(props: {
   const readyRef = useRef(false);
   const pendingUrlRef = useRef<string | null>(null);
   const requestedUrlRef = useRef(tab.url);
+  const emitTabSnapshotChange = useEffectEvent((snapshot: BrowserTabSnapshot) => {
+    onSnapshotChange(tab.id, snapshot);
+  });
+  const requestContextMenuFallback = useEffectEvent(
+    (position: { x: number; y: number }, requestedAt: number) => {
+      onContextMenuFallbackRequest(tab.id, position, requestedAt);
+    },
+  );
+
+  const resolveSnapshotUrl = useCallback((currentUrl: string) => {
+    return normalizeBrowserHttpUrl(currentUrl) ?? requestedUrlRef.current;
+  }, []);
 
   const emitSnapshot = useCallback(() => {
     const webview = webviewRef.current;
     if (!webview || !readyRef.current) {
       return;
     }
-    const currentUrl = webview.getURL();
-    const resolvedUrl = currentUrl.trim().length > 0 ? currentUrl : requestedUrlRef.current;
-    onSnapshotChange(tab.id, {
+    const resolvedUrl = resolveSnapshotUrl(webview.getURL());
+    emitTabSnapshotChange({
       canGoBack: webview.canGoBack(),
       canGoForward: webview.canGoForward(),
       devToolsOpen: webview.isDevToolsOpened(),
@@ -94,7 +106,7 @@ export function BrowserTabWebview(props: {
       title: resolveBrowserTabTitle(resolvedUrl, webview.getTitle()),
       url: resolvedUrl,
     });
-  }, [onSnapshotChange, tab.id]);
+  }, [resolveSnapshotUrl]);
 
   const navigate = useCallback(
     (url: string) => {
@@ -174,7 +186,7 @@ export function BrowserTabWebview(props: {
       emitSnapshot();
     };
     const handleLoadStart = () => {
-      onSnapshotChange(tab.id, {
+      emitTabSnapshotChange({
         canGoBack: readyRef.current ? webview.canGoBack() : false,
         canGoForward: readyRef.current ? webview.canGoForward() : false,
         devToolsOpen: readyRef.current ? webview.isDevToolsOpened() : false,
@@ -191,12 +203,19 @@ export function BrowserTabWebview(props: {
       if (detail.errorCode === -3) {
         return;
       }
-      emitSnapshot();
+      const resolvedUrl = resolveSnapshotUrl(webview.getURL());
+      emitTabSnapshotChange({
+        canGoBack: readyRef.current ? webview.canGoBack() : false,
+        canGoForward: readyRef.current ? webview.canGoForward() : false,
+        devToolsOpen: readyRef.current ? webview.isDevToolsOpened() : false,
+        loading: false,
+        title: resolveBrowserTabTitle(resolvedUrl, webview.getTitle()),
+        url: resolvedUrl,
+      });
     };
     const handleContextMenu = (event: Event) => {
       const mouseEvent = event as MouseEvent;
-      onContextMenuFallbackRequest(
-        tab.id,
+      requestContextMenuFallback(
         { x: mouseEvent.clientX, y: mouseEvent.clientY },
         performance.now(),
       );
@@ -231,7 +250,7 @@ export function BrowserTabWebview(props: {
       webviewRef.current = null;
       readyRef.current = false;
     };
-  }, [emitSnapshot, onContextMenuFallbackRequest, onSnapshotChange, tab.id]);
+  }, [emitSnapshot, resolveSnapshotUrl]);
 
   useEffect(() => {
     navigate(tab.url);
@@ -240,12 +259,7 @@ export function BrowserTabWebview(props: {
   return (
     <div
       aria-hidden={!active}
-      className={cn(
-        "absolute inset-0 min-h-0 [&_webview]:size-full",
-        active
-          ? "pointer-events-auto visible opacity-100"
-          : "pointer-events-none invisible opacity-0",
-      )}
+      className={cn("absolute inset-0 min-h-0 [&_webview]:size-full", active ? "block" : "hidden")}
     >
       <div ref={hostRef} className="size-full min-h-0" />
     </div>

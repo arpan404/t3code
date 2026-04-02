@@ -403,7 +403,10 @@ function AboutVersionSection() {
       ? !canCheckForUpdate(updateState)
       : isDesktopUpdateButtonDisabled(updateState);
 
-  const actionLabel: Record<string, string> = { download: "Download", install: "Install" };
+  const actionLabel: Record<string, string> = {
+    download: "Download",
+    install: "Install",
+  };
   const statusLabel: Record<string, string> = {
     checking: "Checking…",
     downloading: "Downloading…",
