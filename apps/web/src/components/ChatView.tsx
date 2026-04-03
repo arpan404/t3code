@@ -90,6 +90,7 @@ import {
   DEFAULT_THREAD_TERMINAL_ID,
   MAX_TERMINALS_PER_GROUP,
   type ChatMessage,
+  type QueuedComposerImageAttachment,
   type SessionPhase,
   type Thread,
   type TurnDiffSummary,
@@ -177,10 +178,7 @@ import { ComposerCommandItem, ComposerCommandMenu } from "./chat/ComposerCommand
 import { ComposerPendingApprovalActions } from "./chat/ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./chat/CompactComposerControlsMenu";
 import { ComposerPrimaryActions } from "./chat/ComposerPrimaryActions";
-import {
-  ComposerQueuedMessages,
-  type ComposerQueuedMessageItem,
-} from "./chat/ComposerQueuedMessages";
+import { ComposerQueuedMessages } from "./chat/ComposerQueuedMessages";
 import { ComposerPendingApprovalPanel } from "./chat/ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./chat/ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./chat/ComposerPlanFollowUpBanner";
@@ -199,6 +197,7 @@ import {
   collectUserMessageBlobPreviewUrls,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
+  queuedComposerImageToDraftAttachment,
   revokeComposerImagePreviewUrls,
   hasServerAcknowledgedLocalDispatch,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
@@ -226,21 +225,11 @@ const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
+const EMPTY_QUEUED_COMPOSER_MESSAGES: Thread["queuedComposerMessages"] = [];
 
 type ThreadPlanCatalogEntry = Pick<Thread, "id" | "proposedPlans">;
 
-interface QueuedComposerMessage extends ComposerQueuedMessageItem {
-  runtimeMode: RuntimeMode;
-  interactionMode: ProviderInteractionMode;
-  threadId: ThreadId;
-}
-
-interface QueuedSteerRequest {
-  messageId: MessageId;
-  threadId: ThreadId;
-  baselineWorkLogEntryCount: number;
-  interruptRequested: boolean;
-}
+type QueuedComposerMessage = Thread["queuedComposerMessages"][number];
 
 const MAX_THREAD_PLAN_CATALOG_CACHE_ENTRIES = 500;
 const MAX_THREAD_PLAN_CATALOG_CACHE_MEMORY_BYTES = 512 * 1024;
@@ -452,6 +441,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const serverThread = useThreadById(threadId);
   const setStoreThreadError = useStore((store) => store.setError);
   const setStoreThreadBranch = useStore((store) => store.setThreadBranch);
+  const setStoreThreadQueueState = useStore((store) => store.setThreadQueueState);
   const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
   const activeThreadLastVisitedAt = useUiStateStore(
     (store) => store.threadLastVisitedAtById[threadId],
@@ -473,6 +463,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const prompt = composerDraft.prompt;
   const composerImages = composerDraft.images;
   const composerTerminalContexts = composerDraft.terminalContexts;
+  const persistedComposerAttachments = composerDraft.persistedAttachments;
   const composerSendState = useMemo(
     () =>
       deriveComposerSendState({
@@ -528,12 +519,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
-  const [queuedComposerMessages, setQueuedComposerMessages] = useState<QueuedComposerMessage[]>([]);
-  const [queuedSteerRequest, setQueuedSteerRequest] = useState<QueuedSteerRequest | null>(null);
   const optimisticUserMessagesRef = useRef(optimisticUserMessages);
   optimisticUserMessagesRef.current = optimisticUserMessages;
-  const queuedComposerMessagesRef = useRef(queuedComposerMessages);
-  queuedComposerMessagesRef.current = queuedComposerMessages;
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>(composerTerminalContexts);
   const [localDraftErrorsByThreadId, setLocalDraftErrorsByThreadId] = useState<
     Record<ThreadId, string | null>
@@ -735,6 +722,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
   const activeProject = useProjectById(activeThread?.projectId);
+  const queuedComposerMessages =
+    serverThread?.queuedComposerMessages ?? EMPTY_QUEUED_COMPOSER_MESSAGES;
+  const queuedSteerRequest = serverThread?.queuedSteerRequest ?? null;
+  const queuedComposerMessagesRef = useRef(queuedComposerMessages);
+  queuedComposerMessagesRef.current = queuedComposerMessages;
 
   const openPullRequestDialog = useCallback(
     (reference?: string) => {
@@ -1080,9 +1072,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
       clearAttachmentPreviewHandoffs();
       for (const message of optimisticUserMessagesRef.current) {
         revokeUserMessagePreviewUrls(message);
-      }
-      for (const message of queuedComposerMessagesRef.current) {
-        revokeComposerImagePreviewUrls(message.images);
       }
     };
   }, [clearAttachmentPreviewHandoffs]);
@@ -1548,28 +1537,127 @@ export default function ChatView({ threadId }: ChatViewProps) {
       focusComposer();
     });
   }, [focusComposer]);
-  const removeQueuedComposerMessage = useCallback(
-    (messageId: MessageId) => {
-      if (queuedSteerRequest?.messageId === messageId) {
-        setQueuedSteerRequest(null);
+  const persistQueuedComposerState = useCallback(
+    async (
+      nextMessages: Thread["queuedComposerMessages"],
+      nextSteerRequest: Thread["queuedSteerRequest"],
+      previousMessages: Thread["queuedComposerMessages"],
+      previousSteerRequest: Thread["queuedSteerRequest"],
+    ) => {
+      if (!serverThread) {
+        return false;
       }
-      setQueuedComposerMessages((existing) => {
-        const nextMessage = existing.find((message) => message.id === messageId) ?? null;
-        if (!nextMessage) {
-          return existing;
+      const api = readNativeApi();
+      if (!api) {
+        return false;
+      }
+      setStoreThreadQueueState(serverThread.id, nextMessages, nextSteerRequest);
+      try {
+        await api.orchestration.dispatchCommand({
+          type: "thread.meta.update",
+          commandId: newCommandId(),
+          threadId: serverThread.id,
+          queuedComposerMessages: nextMessages.map((message) => ({
+            id: message.id,
+            prompt: message.prompt,
+            images: message.images.map((image) => ({
+              type: "image" as const,
+              id: image.id,
+              name: image.name,
+              mimeType: image.mimeType,
+              sizeBytes: image.sizeBytes,
+              dataUrl: image.dataUrl,
+            })),
+            terminalContexts: message.terminalContexts.map((context) => ({ ...context })),
+            modelSelection: message.modelSelection,
+            runtimeMode: message.runtimeMode,
+            interactionMode: message.interactionMode,
+          })),
+          queuedSteerRequest: nextSteerRequest,
+        });
+        return true;
+      } catch (error) {
+        const currentThread = useStore
+          .getState()
+          .threads.find((thread) => thread.id === serverThread.id);
+        if (
+          currentThread &&
+          currentThread.queuedComposerMessages === nextMessages &&
+          currentThread.queuedSteerRequest === nextSteerRequest
+        ) {
+          setStoreThreadQueueState(serverThread.id, previousMessages, previousSteerRequest);
         }
-        revokeComposerImagePreviewUrls(nextMessage.images);
-        return existing.filter((message) => message.id !== messageId);
-      });
+        setThreadError(
+          serverThread.id,
+          error instanceof Error ? error.message : "Failed to persist queued messages.",
+        );
+        return false;
+      }
     },
-    [queuedSteerRequest?.messageId],
+    [serverThread, setStoreThreadQueueState, setThreadError],
+  );
+  const buildQueuedComposerImages = useCallback(
+    async (
+      images: ReadonlyArray<ComposerImageAttachment>,
+    ): Promise<QueuedComposerImageAttachment[]> => {
+      const persistedAttachmentById = new Map(
+        persistedComposerAttachments.map((attachment) => [attachment.id, attachment] as const),
+      );
+      return await Promise.all(
+        images.map(async (image) => {
+          const persistedAttachment = persistedAttachmentById.get(image.id);
+          const dataUrl = persistedAttachment?.dataUrl ?? (await readFileAsDataUrl(image.file));
+          return {
+            type: "image" as const,
+            id: image.id,
+            name: image.name,
+            mimeType: image.mimeType,
+            sizeBytes: image.sizeBytes,
+            dataUrl,
+            previewUrl: image.previewUrl || dataUrl,
+            file: image.file,
+          };
+        }),
+      );
+    },
+    [persistedComposerAttachments],
+  );
+  const removeQueuedComposerMessage = useCallback(
+    async (messageId: MessageId) => {
+      if (!serverThread) {
+        return;
+      }
+      const removedMessage =
+        queuedComposerMessages.find((message) => message.id === messageId) ?? null;
+      if (!removedMessage) {
+        return;
+      }
+      const nextMessages = queuedComposerMessages.filter((message) => message.id !== messageId);
+      const nextSteerRequest =
+        queuedSteerRequest?.messageId === messageId ? null : queuedSteerRequest;
+      if (
+        !(await persistQueuedComposerState(
+          nextMessages,
+          nextSteerRequest,
+          queuedComposerMessages,
+          queuedSteerRequest,
+        ))
+      ) {
+        return;
+      }
+      revokeComposerImagePreviewUrls(removedMessage.images);
+    },
+    [persistQueuedComposerState, queuedComposerMessages, queuedSteerRequest, serverThread],
   );
   const restoreQueuedComposerMessageToDraft = useCallback(
-    (message: QueuedComposerMessage) => {
+    (message: QueuedComposerMessage, restoredImages: ReadonlyArray<ComposerImageAttachment>) => {
       promptRef.current = message.prompt;
       setPrompt(message.prompt);
-      addComposerImagesToDraft([...message.images]);
-      setComposerDraftTerminalContexts(threadId, [...message.terminalContexts]);
+      addComposerImagesToDraft([...restoredImages]);
+      setComposerDraftTerminalContexts(
+        threadId,
+        message.terminalContexts.map((context) => ({ ...context, threadId })),
+      );
       setComposerDraftModelSelection(threadId, message.modelSelection);
       setComposerDraftRuntimeMode(threadId, message.runtimeMode);
       setComposerDraftInteractionMode(threadId, message.interactionMode);
@@ -1599,34 +1687,52 @@ export default function ChatView({ threadId }: ChatViewProps) {
     ],
   );
   const onEditQueuedComposerMessage = useCallback(
-    (messageId: MessageId) => {
+    async (messageId: MessageId) => {
       const nextMessage = queuedComposerMessagesRef.current.find(
         (message) => message.id === messageId,
       );
       if (!nextMessage) {
         return;
       }
-      if (nextMessage.threadId !== threadId) {
-        removeQueuedComposerMessage(messageId);
+      let restoredImages: ComposerImageAttachment[];
+      try {
+        restoredImages = await Promise.all(
+          nextMessage.images.map((image) => queuedComposerImageToDraftAttachment(image)),
+        );
+      } catch (error) {
+        setThreadError(
+          threadId,
+          error instanceof Error ? error.message : "Failed to restore queued images.",
+        );
         return;
       }
-      if (queuedSteerRequest?.messageId === messageId) {
-        setQueuedSteerRequest(null);
-      }
-      setQueuedComposerMessages((existing) =>
-        existing.filter((message) => message.id !== messageId),
+      const nextMessages = queuedComposerMessagesRef.current.filter(
+        (message) => message.id !== messageId,
       );
-      restoreQueuedComposerMessageToDraft(nextMessage);
+      const nextSteerRequest =
+        queuedSteerRequest?.messageId === messageId ? null : queuedSteerRequest;
+      if (
+        !(await persistQueuedComposerState(
+          nextMessages,
+          nextSteerRequest,
+          queuedComposerMessagesRef.current,
+          queuedSteerRequest,
+        ))
+      ) {
+        return;
+      }
+      restoreQueuedComposerMessageToDraft(nextMessage, restoredImages);
     },
     [
-      queuedSteerRequest?.messageId,
-      removeQueuedComposerMessage,
+      persistQueuedComposerState,
+      queuedSteerRequest,
+      setThreadError,
       restoreQueuedComposerMessageToDraft,
       threadId,
     ],
   );
   const queueCurrentComposerMessage = useCallback(
-    (mode: "queue" | "steer" = "queue") => {
+    async (mode: "queue" | "steer" = "queue") => {
       const { sendableTerminalContexts, expiredTerminalContextCount, hasSendableContent } =
         deriveComposerSendState({
           prompt: promptRef.current,
@@ -1648,26 +1754,54 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return false;
       }
 
+      let queuedImages: QueuedComposerImageAttachment[];
+      try {
+        queuedImages = await buildQueuedComposerImages(composerImages);
+      } catch (error) {
+        setThreadError(
+          threadId,
+          error instanceof Error ? error.message : "Failed to queue message attachments.",
+        );
+        return false;
+      }
       const queuedMessage: QueuedComposerMessage = {
         id: newMessageId(),
         prompt: promptRef.current,
-        images: [...composerImages],
-        terminalContexts: [...sendableTerminalContexts],
+        images: queuedImages,
+        terminalContexts: sendableTerminalContexts.map((context) => ({
+          id: context.id,
+          createdAt: context.createdAt,
+          terminalId: context.terminalId,
+          terminalLabel: context.terminalLabel,
+          lineStart: context.lineStart,
+          lineEnd: context.lineEnd,
+          text: context.text,
+        })),
         modelSelection: selectedModelSelection,
         runtimeMode,
         interactionMode,
-        threadId,
       };
-      setQueuedComposerMessages((existing) =>
-        mode === "steer" ? [queuedMessage, ...existing] : [...existing, queuedMessage],
-      );
-      if (mode === "steer") {
-        setQueuedSteerRequest({
-          messageId: queuedMessage.id,
-          threadId,
-          baselineWorkLogEntryCount: workLogEntries.length,
-          interruptRequested: false,
-        });
+      const nextMessages =
+        mode === "steer"
+          ? [queuedMessage, ...queuedComposerMessages]
+          : [...queuedComposerMessages, queuedMessage];
+      const nextSteerRequest: Thread["queuedSteerRequest"] =
+        mode === "steer"
+          ? {
+              messageId: queuedMessage.id,
+              baselineWorkLogEntryCount: workLogEntries.length,
+              interruptRequested: false,
+            }
+          : queuedSteerRequest;
+      if (
+        !(await persistQueuedComposerState(
+          nextMessages,
+          nextSteerRequest,
+          queuedComposerMessages,
+          queuedSteerRequest,
+        ))
+      ) {
+        return false;
       }
 
       if (expiredTerminalContextCount > 0) {
@@ -1690,49 +1824,59 @@ export default function ChatView({ threadId }: ChatViewProps) {
       return true;
     },
     [
+      buildQueuedComposerImages,
       clearComposerDraftContent,
       composerImages,
       composerTerminalContexts,
       interactionMode,
+      persistQueuedComposerState,
+      queuedComposerMessages,
+      queuedSteerRequest,
       runtimeMode,
       selectedModelSelection,
+      setThreadError,
       workLogEntries.length,
       threadId,
     ],
   );
   const onSteerQueuedComposerMessage = useCallback(
-    (messageId: MessageId) => {
+    async (messageId: MessageId) => {
       const nextMessage = queuedComposerMessagesRef.current.find(
         (message) => message.id === messageId,
       );
       if (!nextMessage) {
         return;
       }
-      if (nextMessage.threadId !== threadId) {
-        removeQueuedComposerMessage(messageId);
+      const nextIndex = queuedComposerMessagesRef.current.findIndex(
+        (message) => message.id === messageId,
+      );
+      if (nextIndex < 0) {
         return;
       }
-      setQueuedComposerMessages((existing) => {
-        const nextIndex = existing.findIndex((message) => message.id === messageId);
-        if (nextIndex <= 0) {
-          return existing;
-        }
-        const next = [...existing];
-        const [promoted] = next.splice(nextIndex, 1);
-        if (!promoted) {
-          return existing;
-        }
-        next.unshift(promoted);
-        return next;
-      });
-      setQueuedSteerRequest({
-        messageId,
-        threadId,
-        baselineWorkLogEntryCount: workLogEntries.length,
-        interruptRequested: false,
-      });
+      const nextMessages =
+        nextIndex === 0
+          ? queuedComposerMessagesRef.current
+          : (() => {
+              const next = [...queuedComposerMessagesRef.current];
+              const [promoted] = next.splice(nextIndex, 1);
+              if (!promoted) {
+                return queuedComposerMessagesRef.current;
+              }
+              next.unshift(promoted);
+              return next;
+            })();
+      await persistQueuedComposerState(
+        nextMessages,
+        {
+          messageId,
+          baselineWorkLogEntryCount: workLogEntries.length,
+          interruptRequested: false,
+        },
+        queuedComposerMessagesRef.current,
+        queuedSteerRequest,
+      );
     },
-    [removeQueuedComposerMessage, threadId, workLogEntries.length],
+    [persistQueuedComposerState, queuedSteerRequest, workLogEntries.length],
   );
   const addTerminalContextToDraft = useCallback(
     (selection: TerminalContextSelection) => {
@@ -2876,13 +3020,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
       return [];
     });
-    setQueuedComposerMessages((existing) => {
-      for (const message of existing) {
-        revokeComposerImagePreviewUrls(message.images);
-      }
-      return [];
-    });
-    setQueuedSteerRequest(null);
     resetLocalDispatch();
     setComposerHighlightedItemId(null);
     setComposerCursor(collapseExpandedComposerCursor(promptRef.current, promptRef.current.length));
@@ -3348,7 +3485,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     async (
       submission: {
         prompt: string;
-        images: ComposerImageAttachment[];
+        images: Array<ComposerImageAttachment | QueuedComposerImageAttachment>;
         terminalContexts: TerminalContextDraft[];
         modelSelection: ModelSelection;
         runtimeMode: RuntimeMode;
@@ -3418,7 +3555,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           name: image.name,
           mimeType: image.mimeType,
           sizeBytes: image.sizeBytes,
-          dataUrl: await readFileAsDataUrl(image.file),
+          dataUrl: "dataUrl" in image ? image.dataUrl : await readFileAsDataUrl(image.file),
         })),
       );
       const optimisticAttachments = composerImagesSnapshot.map((image) => ({
@@ -3606,7 +3743,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
           promptRef.current = promptForSend;
           setPrompt(promptForSend);
           setComposerCursor(collapseExpandedComposerCursor(promptForSend, promptForSend.length));
-          addComposerImagesToDraft(composerImagesSnapshot.map(cloneComposerImageForRetry));
+          addComposerImagesToDraft(
+            composerImagesSnapshot.flatMap((image) =>
+              "dataUrl" in image ? [] : [cloneComposerImageForRetry(image)],
+            ),
+          );
           addComposerTerminalContextsToDraft(composerTerminalContextsSnapshot);
           setComposerTrigger(detectComposerTrigger(promptForSend, promptForSend.length));
         } else {
@@ -3653,7 +3794,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       return;
     }
     if (phase === "running" || isSendBusy || isConnecting) {
-      queueCurrentComposerMessage();
+      await queueCurrentComposerMessage();
       return;
     }
     const promptForSend = promptRef.current;
@@ -3757,34 +3898,46 @@ export default function ChatView({ threadId }: ChatViewProps) {
     if (!nextQueuedMessage) {
       return;
     }
-    if (nextQueuedMessage.threadId !== threadId || nextQueuedMessage.threadId !== activeThread.id) {
-      revokeComposerImagePreviewUrls(nextQueuedMessage.images);
-      if (queuedSteerRequest?.messageId === nextQueuedMessage.id) {
-        setQueuedSteerRequest(null);
+    const previousMessages = queuedComposerMessages;
+    const previousSteerRequest = queuedSteerRequest;
+    const nextMessages = queuedComposerMessages.slice(1);
+    const nextSteerRequest =
+      queuedSteerRequest?.messageId === nextQueuedMessage.id ? null : queuedSteerRequest;
+    void (async () => {
+      if (
+        !(await persistQueuedComposerState(
+          nextMessages,
+          nextSteerRequest,
+          previousMessages,
+          previousSteerRequest,
+        ))
+      ) {
+        return;
       }
-      setQueuedComposerMessages((existing) => existing.slice(1));
-      return;
-    }
-
-    if (queuedSteerRequest?.messageId === nextQueuedMessage.id) {
-      setQueuedSteerRequest(null);
-    }
-    setQueuedComposerMessages((existing) => existing.slice(1));
-    void dispatchComposerMessage(
-      {
-        prompt: nextQueuedMessage.prompt,
-        images: [...nextQueuedMessage.images],
-        terminalContexts: [...nextQueuedMessage.terminalContexts],
-        modelSelection: nextQueuedMessage.modelSelection,
-        runtimeMode: nextQueuedMessage.runtimeMode,
-        interactionMode: nextQueuedMessage.interactionMode,
-      },
-      {
-        onFailure: () => {
-          setQueuedComposerMessages((existing) => [nextQueuedMessage, ...existing]);
+      void dispatchComposerMessage(
+        {
+          prompt: nextQueuedMessage.prompt,
+          images: [...nextQueuedMessage.images],
+          terminalContexts: nextQueuedMessage.terminalContexts.map((context) => ({
+            ...context,
+            threadId,
+          })),
+          modelSelection: nextQueuedMessage.modelSelection,
+          runtimeMode: nextQueuedMessage.runtimeMode,
+          interactionMode: nextQueuedMessage.interactionMode,
         },
-      },
-    );
+        {
+          onFailure: () => {
+            void persistQueuedComposerState(
+              [nextQueuedMessage, ...nextMessages],
+              previousSteerRequest,
+              nextMessages,
+              nextSteerRequest,
+            );
+          },
+        },
+      );
+    })();
   }, [
     activePendingApproval,
     activePendingProgress,
@@ -3793,6 +3946,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     isConnecting,
     isSendBusy,
     phase,
+    persistQueuedComposerState,
     queuedSteerRequest,
     queuedComposerMessages,
     threadId,
@@ -3802,12 +3956,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
     if (!queuedSteerRequest) {
       return;
     }
-    if (queuedSteerRequest.threadId !== threadId) {
-      setQueuedSteerRequest(null);
-      return;
-    }
     if (!queuedComposerMessages.some((message) => message.id === queuedSteerRequest.messageId)) {
-      setQueuedSteerRequest(null);
+      void persistQueuedComposerState(
+        queuedComposerMessages,
+        null,
+        queuedComposerMessages,
+        queuedSteerRequest,
+      );
       return;
     }
     if (phase !== "running" || isConnecting || queuedSteerRequest.interruptRequested) {
@@ -3817,28 +3972,38 @@ export default function ChatView({ threadId }: ChatViewProps) {
       return;
     }
 
-    setQueuedSteerRequest((existing) =>
-      existing && existing.messageId === queuedSteerRequest.messageId
-        ? { ...existing, interruptRequested: true }
-        : existing,
-    );
     const api = readNativeApi();
     if (!api || !activeThread) {
       return;
     }
-    void api.orchestration.dispatchCommand({
-      type: "thread.turn.interrupt",
-      commandId: newCommandId(),
-      threadId: activeThread.id,
-      createdAt: new Date().toISOString(),
-    });
+    void (async () => {
+      if (
+        !(await persistQueuedComposerState(
+          queuedComposerMessages,
+          {
+            ...queuedSteerRequest,
+            interruptRequested: true,
+          },
+          queuedComposerMessages,
+          queuedSteerRequest,
+        ))
+      ) {
+        return;
+      }
+      void api.orchestration.dispatchCommand({
+        type: "thread.turn.interrupt",
+        commandId: newCommandId(),
+        threadId: activeThread.id,
+        createdAt: new Date().toISOString(),
+      });
+    })();
   }, [
     activeThread,
     isConnecting,
     phase,
+    persistQueuedComposerState,
     queuedComposerMessages,
     queuedSteerRequest,
-    threadId,
     workLogEntries.length,
   ]);
 

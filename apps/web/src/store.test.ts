@@ -42,6 +42,8 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     latestTurn: null,
     branch: null,
     worktreePath: null,
+    queuedComposerMessages: [],
+    queuedSteerRequest: null,
     ...overrides,
   };
 }
@@ -118,6 +120,8 @@ function makeReadModelThread(overrides: Partial<OrchestrationReadModel["threads"
     messages: [],
     activities: [],
     proposedPlans: [],
+    queuedComposerMessages: [],
+    queuedSteerRequest: null,
     checkpoints: [],
     session: null,
     ...overrides,
@@ -246,6 +250,75 @@ describe("store read model sync", () => {
     );
 
     expect(next.threads[0]?.archivedAt).toBe(archivedAt);
+  });
+
+  it("maps queued composer state from the read model", () => {
+    const initialState = makeState(makeThread());
+    const next = syncServerReadModel(
+      initialState,
+      makeReadModel(
+        makeReadModelThread({
+          queuedComposerMessages: [
+            {
+              id: MessageId.makeUnsafe("queued-message-1"),
+              prompt: "Follow up after the current run",
+              images: [
+                {
+                  type: "image",
+                  id: "queued-image-1" as never,
+                  name: "diagram.png",
+                  mimeType: "image/png",
+                  sizeBytes: 12,
+                  dataUrl: "data:image/png;base64,AA==",
+                },
+              ],
+              terminalContexts: [],
+              modelSelection: {
+                provider: "codex",
+                model: "gpt-5.3-codex",
+              },
+              runtimeMode: "full-access",
+              interactionMode: "default",
+            },
+          ],
+          queuedSteerRequest: {
+            messageId: MessageId.makeUnsafe("queued-message-1"),
+            baselineWorkLogEntryCount: 4,
+            interruptRequested: false,
+          },
+        }),
+      ),
+    );
+
+    expect(next.threads[0]?.queuedComposerMessages).toEqual([
+      {
+        id: MessageId.makeUnsafe("queued-message-1"),
+        prompt: "Follow up after the current run",
+        images: [
+          {
+            type: "image",
+            id: "queued-image-1",
+            name: "diagram.png",
+            mimeType: "image/png",
+            sizeBytes: 12,
+            dataUrl: "data:image/png;base64,AA==",
+            previewUrl: "data:image/png;base64,AA==",
+          },
+        ],
+        terminalContexts: [],
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5.3-codex",
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      },
+    ]);
+    expect(next.threads[0]?.queuedSteerRequest).toEqual({
+      messageId: MessageId.makeUnsafe("queued-message-1"),
+      baselineWorkLogEntryCount: 4,
+      interruptRequested: false,
+    });
   });
 
   it("replaces projects using snapshot order during recovery", () => {
@@ -497,6 +570,45 @@ describe("incremental orchestration updates", () => {
     expect(next.threads[0]?.messages[0]?.text).toBe("hello world");
     expect(next.threads[0]?.latestTurn?.state).toBe("running");
     expect(next.threads[1]).toBe(thread2);
+  });
+
+  it("orders appended activities by createdAt when legacy entries are missing sequence", () => {
+    const thread = makeThread({
+      activities: [
+        {
+          id: EventId.makeUnsafe("legacy-activity"),
+          tone: "tool",
+          kind: "tool.completed",
+          summary: "Legacy activity",
+          payload: {},
+          turnId: null,
+          createdAt: "2026-02-27T00:00:02.000Z",
+        },
+      ],
+    });
+    const state = makeState(thread);
+
+    const next = applyOrchestrationEvent(
+      state,
+      makeEvent("thread.activity-appended", {
+        threadId: thread.id,
+        activity: {
+          id: EventId.makeUnsafe("sequenced-activity"),
+          tone: "tool",
+          kind: "tool.started",
+          summary: "Sequenced activity",
+          payload: {},
+          turnId: null,
+          sequence: 1,
+          createdAt: "2026-02-27T00:00:01.000Z",
+        },
+      }),
+    );
+
+    expect(next.threads[0]?.activities.map((activity) => activity.id)).toEqual([
+      "sequenced-activity",
+      "legacy-activity",
+    ]);
   });
 
   it("applies replay batches in sequence and updates session state", () => {

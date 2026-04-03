@@ -1123,6 +1123,31 @@ describe("deriveTimelineEntries", () => {
     });
   });
 
+  it("keeps work entries in activity sequence order when timestamps drift", () => {
+    const entries = deriveTimelineEntries(
+      [],
+      [],
+      [
+        {
+          id: "work-2",
+          createdAt: "2026-02-23T00:00:03.000Z",
+          sequence: 2,
+          label: "Run command",
+          tone: "tool",
+        },
+        {
+          id: "work-1",
+          createdAt: "2026-02-23T00:00:04.000Z",
+          sequence: 1,
+          label: "Read file",
+          tone: "tool",
+        },
+      ],
+    );
+
+    expect(entries.map((entry) => entry.id)).toEqual(["work-1", "work-2"]);
+  });
+
   it("lifts report_intent out of the work log and attaches it to the next tool entry", () => {
     const entries = deriveTimelineEntries(
       [],

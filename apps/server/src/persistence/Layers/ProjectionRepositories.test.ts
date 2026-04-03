@@ -84,6 +84,34 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         interactionMode: "default",
         branch: null,
         worktreePath: null,
+        queuedComposerMessages: [
+          {
+            id: "queued-message-1" as never,
+            prompt: "Follow up after current run",
+            images: [
+              {
+                type: "image",
+                id: "queued-image-1" as never,
+                name: "diagram.png",
+                mimeType: "image/png",
+                sizeBytes: 12,
+                dataUrl: "data:image/png;base64,AA==",
+              },
+            ],
+            terminalContexts: [],
+            modelSelection: {
+              provider: "claudeAgent",
+              model: "claude-opus-4-6",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+          },
+        ],
+        queuedSteerRequest: {
+          messageId: "queued-message-1" as never,
+          baselineWorkLogEntryCount: 3,
+          interruptRequested: false,
+        },
         latestTurnId: null,
         createdAt: "2026-03-24T00:00:00.000Z",
         updatedAt: "2026-03-24T00:00:00.000Z",
@@ -93,8 +121,13 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
 
       const rows = yield* sql<{
         readonly modelSelection: string | null;
+        readonly queuedComposerMessages: string | null;
+        readonly queuedSteerRequest: string | null;
       }>`
-        SELECT model_selection_json AS "modelSelection"
+        SELECT
+          model_selection_json AS "modelSelection",
+          queued_composer_messages_json AS "queuedComposerMessages",
+          queued_steer_request_json AS "queuedSteerRequest"
         FROM projection_threads
         WHERE thread_id = 'thread-null-options'
       `;
@@ -110,6 +143,40 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
           model: "claude-opus-4-6",
         }),
       );
+      assert.strictEqual(
+        row.queuedComposerMessages,
+        JSON.stringify([
+          {
+            id: "queued-message-1",
+            prompt: "Follow up after current run",
+            images: [
+              {
+                type: "image",
+                id: "queued-image-1",
+                name: "diagram.png",
+                mimeType: "image/png",
+                sizeBytes: 12,
+                dataUrl: "data:image/png;base64,AA==",
+              },
+            ],
+            terminalContexts: [],
+            modelSelection: {
+              provider: "claudeAgent",
+              model: "claude-opus-4-6",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+          },
+        ]),
+      );
+      assert.strictEqual(
+        row.queuedSteerRequest,
+        JSON.stringify({
+          messageId: "queued-message-1",
+          baselineWorkLogEntryCount: 3,
+          interruptRequested: false,
+        }),
+      );
 
       const persisted = yield* threads.getById({
         threadId: ThreadId.makeUnsafe("thread-null-options"),
@@ -117,6 +184,34 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
       assert.deepStrictEqual(Option.getOrNull(persisted)?.modelSelection, {
         provider: "claudeAgent",
         model: "claude-opus-4-6",
+      });
+      assert.deepStrictEqual(Option.getOrNull(persisted)?.queuedComposerMessages, [
+        {
+          id: "queued-message-1" as never,
+          prompt: "Follow up after current run",
+          images: [
+            {
+              type: "image",
+              id: "queued-image-1" as never,
+              name: "diagram.png",
+              mimeType: "image/png",
+              sizeBytes: 12,
+              dataUrl: "data:image/png;base64,AA==",
+            },
+          ],
+          terminalContexts: [],
+          modelSelection: {
+            provider: "claudeAgent",
+            model: "claude-opus-4-6",
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        },
+      ]);
+      assert.deepStrictEqual(Option.getOrNull(persisted)?.queuedSteerRequest, {
+        messageId: "queued-message-1" as never,
+        baselineWorkLogEntryCount: 3,
+        interruptRequested: false,
       });
     }),
   );

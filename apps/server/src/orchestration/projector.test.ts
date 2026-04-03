@@ -93,6 +93,8 @@ describe("orchestration projector", () => {
         proposedPlans: [],
         activities: [],
         checkpoints: [],
+        queuedComposerMessages: [],
+        queuedSteerRequest: null,
         session: null,
       },
     ]);

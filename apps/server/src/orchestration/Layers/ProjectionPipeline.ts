@@ -446,6 +446,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             interactionMode: event.payload.interactionMode,
             branch: event.payload.branch,
             worktreePath: event.payload.worktreePath,
+            queuedComposerMessages: [],
+            queuedSteerRequest: null,
             latestTurnId: null,
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
@@ -500,6 +502,12 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...(event.payload.branch !== undefined ? { branch: event.payload.branch } : {}),
             ...(event.payload.worktreePath !== undefined
               ? { worktreePath: event.payload.worktreePath }
+              : {}),
+            ...(event.payload.queuedComposerMessages !== undefined
+              ? { queuedComposerMessages: event.payload.queuedComposerMessages }
+              : {}),
+            ...(event.payload.queuedSteerRequest !== undefined
+              ? { queuedSteerRequest: event.payload.queuedSteerRequest }
               : {}),
             updatedAt: event.payload.updatedAt,
           });

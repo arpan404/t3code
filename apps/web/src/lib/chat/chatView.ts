@@ -9,6 +9,7 @@ import {
   stripInlineTerminalContextPlaceholders,
   type TerminalContextDraft,
 } from "../terminalContext";
+import { type QueuedComposerImageAttachment } from "../../types";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 const WORKTREE_BRANCH_PREFIX = "t3code";
@@ -37,6 +38,8 @@ export function buildLocalDraftThread(
     latestTurn: null,
     branch: draftThread.branch,
     worktreePath: draftThread.worktreePath,
+    queuedComposerMessages: [],
+    queuedSteerRequest: null,
     turnDiffSummaries: [],
     activities: [],
     proposedPlans: [],
@@ -51,7 +54,7 @@ export function revokeBlobPreviewUrl(previewUrl: string | undefined): void {
 }
 
 export function revokeComposerImagePreviewUrls(
-  images: ReadonlyArray<ComposerImageAttachment>,
+  images: ReadonlyArray<{ previewUrl?: string }>,
 ): void {
   for (const image of images) {
     revokeBlobPreviewUrl(image.previewUrl);
@@ -125,6 +128,29 @@ export function cloneComposerImageForRetry(
   } catch {
     return image;
   }
+}
+
+export async function queuedComposerImageToDraftAttachment(
+  image: QueuedComposerImageAttachment,
+): Promise<ComposerImageAttachment> {
+  const file: File =
+    image.file ??
+    (await fetch(image.dataUrl)
+      .then((response) => response.blob())
+      .then((blob) => new File([blob], image.name, { type: image.mimeType })));
+  const previewUrl =
+    image.previewUrl.startsWith("blob:") || image.previewUrl.startsWith("data:")
+      ? image.previewUrl
+      : image.dataUrl;
+  return {
+    type: "image",
+    id: image.id,
+    name: image.name,
+    mimeType: image.mimeType,
+    sizeBytes: image.sizeBytes,
+    previewUrl,
+    file,
+  };
 }
 
 export function deriveComposerSendState(options: {

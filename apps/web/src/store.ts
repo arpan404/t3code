@@ -19,6 +19,7 @@ import {
   derivePendingApprovals,
   derivePendingUserInputs,
 } from "./session-logic";
+import { compareActivityLifecycleRank, compareSequenceThenCreatedAt } from "./lib/activityOrder";
 import { type ChatMessage, type Project, type SidebarThreadSummary, type Thread } from "./types";
 
 // ── State ────────────────────────────────────────────────────────────
@@ -127,6 +128,28 @@ function mapMessage(message: OrchestrationMessage): ChatMessage {
   };
 }
 
+function mapQueuedComposerMessage(
+  message: OrchestrationThread["queuedComposerMessages"][number],
+): Thread["queuedComposerMessages"][number] {
+  return {
+    id: message.id,
+    prompt: message.prompt,
+    images: message.images.map((image) => ({
+      type: "image",
+      id: image.id,
+      name: image.name,
+      mimeType: image.mimeType,
+      sizeBytes: image.sizeBytes,
+      dataUrl: image.dataUrl,
+      previewUrl: image.dataUrl,
+    })),
+    terminalContexts: message.terminalContexts.map((context) => ({ ...context })),
+    modelSelection: normalizeModelSelection(message.modelSelection),
+    runtimeMode: message.runtimeMode,
+    interactionMode: message.interactionMode,
+  };
+}
+
 function mapProposedPlan(proposedPlan: OrchestrationProposedPlan): Thread["proposedPlans"][number] {
   return {
     id: proposedPlan.id,
@@ -173,6 +196,8 @@ function mapThread(thread: OrchestrationThread): Thread {
     pendingSourceProposedPlan: thread.latestTurn?.sourceProposedPlan,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
+    queuedComposerMessages: thread.queuedComposerMessages.map(mapQueuedComposerMessage),
+    queuedSteerRequest: thread.queuedSteerRequest ? { ...thread.queuedSteerRequest } : null,
     turnDiffSummaries: thread.checkpoints.map(mapTurnDiffSummary),
     activities: thread.activities.map((activity) => ({ ...activity })),
   };
@@ -327,17 +352,11 @@ function compareActivities(
   left: Thread["activities"][number],
   right: Thread["activities"][number],
 ): number {
-  if (left.sequence !== undefined && right.sequence !== undefined) {
-    if (left.sequence !== right.sequence) {
-      return left.sequence - right.sequence;
-    }
-  } else if (left.sequence !== undefined) {
-    return 1;
-  } else if (right.sequence !== undefined) {
-    return -1;
-  }
-
-  return left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id);
+  return (
+    compareSequenceThenCreatedAt(left, right) ||
+    compareActivityLifecycleRank(left.kind) - compareActivityLifecycleRank(right.kind) ||
+    left.id.localeCompare(right.id)
+  );
 }
 
 function buildLatestTurn(params: {
@@ -656,6 +675,8 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
         interactionMode: event.payload.interactionMode,
         branch: event.payload.branch,
         worktreePath: event.payload.worktreePath,
+        queuedComposerMessages: [],
+        queuedSteerRequest: null,
         latestTurn: null,
         createdAt: event.payload.createdAt,
         updatedAt: event.payload.updatedAt,
@@ -744,6 +765,15 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
         ...(event.payload.branch !== undefined ? { branch: event.payload.branch } : {}),
         ...(event.payload.worktreePath !== undefined
           ? { worktreePath: event.payload.worktreePath }
+          : {}),
+        ...(event.payload.queuedComposerMessages !== undefined
+          ? {
+              queuedComposerMessages:
+                event.payload.queuedComposerMessages.map(mapQueuedComposerMessage),
+            }
+          : {}),
+        ...(event.payload.queuedSteerRequest !== undefined
+          ? { queuedSteerRequest: event.payload.queuedSteerRequest }
           : {}),
         updatedAt: event.payload.updatedAt,
       }));
@@ -1143,6 +1173,27 @@ export function setThreadBranch(
   });
 }
 
+export function setThreadQueueState(
+  state: AppState,
+  threadId: ThreadId,
+  queuedComposerMessages: Thread["queuedComposerMessages"],
+  queuedSteerRequest: Thread["queuedSteerRequest"],
+): AppState {
+  return updateThreadState(state, threadId, (thread) => {
+    if (
+      thread.queuedComposerMessages === queuedComposerMessages &&
+      thread.queuedSteerRequest === queuedSteerRequest
+    ) {
+      return thread;
+    }
+    return {
+      ...thread,
+      queuedComposerMessages,
+      queuedSteerRequest,
+    };
+  });
+}
+
 // ── Zustand store ────────────────────────────────────────────────────
 
 interface AppStore extends AppState {
@@ -1151,6 +1202,11 @@ interface AppStore extends AppState {
   applyOrchestrationEvents: (events: ReadonlyArray<OrchestrationEvent>) => void;
   setError: (threadId: ThreadId, error: string | null) => void;
   setThreadBranch: (threadId: ThreadId, branch: string | null, worktreePath: string | null) => void;
+  setThreadQueueState: (
+    threadId: ThreadId,
+    queuedComposerMessages: Thread["queuedComposerMessages"],
+    queuedSteerRequest: Thread["queuedSteerRequest"],
+  ) => void;
 }
 
 export const useStore = create<AppStore>((set) => ({
@@ -1161,4 +1217,8 @@ export const useStore = create<AppStore>((set) => ({
   setError: (threadId, error) => set((state) => setError(state, threadId, error)),
   setThreadBranch: (threadId, branch, worktreePath) =>
     set((state) => setThreadBranch(state, threadId, branch, worktreePath)),
+  setThreadQueueState: (threadId, queuedComposerMessages, queuedSteerRequest) =>
+    set((state) =>
+      setThreadQueueState(state, threadId, queuedComposerMessages, queuedSteerRequest),
+    ),
 }));

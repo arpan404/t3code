@@ -129,6 +129,66 @@ export type ChatAttachment = typeof ChatAttachment.Type;
 const UploadChatAttachment = Schema.Union([UploadChatImageAttachment]);
 export type UploadChatAttachment = typeof UploadChatAttachment.Type;
 
+const QUEUED_TERMINAL_CONTEXT_ID_MAX_CHARS = 128;
+const QUEUED_TERMINAL_LABEL_MAX_CHARS = 255;
+const QueuedTerminalContextId = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(QUEUED_TERMINAL_CONTEXT_ID_MAX_CHARS),
+);
+const QueuedTerminalLabel = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(QUEUED_TERMINAL_LABEL_MAX_CHARS),
+);
+
+export const QueuedComposerImageAttachment = Schema.Struct({
+  type: Schema.Literal("image"),
+  id: ChatAttachmentId,
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(100), Schema.isPattern(/^image\//i)),
+  sizeBytes: NonNegativeInt.check(Schema.isLessThanOrEqualTo(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES)),
+  dataUrl: TrimmedNonEmptyString.check(
+    Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_IMAGE_DATA_URL_CHARS),
+  ),
+});
+export type QueuedComposerImageAttachment = typeof QueuedComposerImageAttachment.Type;
+
+export const QueuedComposerTerminalContext = Schema.Struct({
+  id: QueuedTerminalContextId,
+  createdAt: IsoDateTime,
+  terminalId: TrimmedNonEmptyString,
+  terminalLabel: QueuedTerminalLabel,
+  lineStart: NonNegativeInt,
+  lineEnd: NonNegativeInt,
+  text: Schema.String,
+}).check(
+  Schema.makeFilter(
+    (input) =>
+      input.lineEnd >= input.lineStart ||
+      new SchemaIssue.InvalidValue(Option.some(input.lineEnd), {
+        message: "lineEnd must be greater than or equal to lineStart",
+      }),
+  ),
+);
+export type QueuedComposerTerminalContext = typeof QueuedComposerTerminalContext.Type;
+
+export const QueuedComposerMessage = Schema.Struct({
+  id: MessageId,
+  prompt: Schema.String,
+  images: Schema.Array(QueuedComposerImageAttachment),
+  terminalContexts: Schema.Array(QueuedComposerTerminalContext),
+  modelSelection: ModelSelection,
+  runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(() => DEFAULT_RUNTIME_MODE)),
+  interactionMode: ProviderInteractionMode.pipe(
+    Schema.withDecodingDefault(() => DEFAULT_PROVIDER_INTERACTION_MODE),
+  ),
+});
+export type QueuedComposerMessage = typeof QueuedComposerMessage.Type;
+
+export const QueuedSteerRequest = Schema.Struct({
+  messageId: MessageId,
+  baselineWorkLogEntryCount: NonNegativeInt,
+  interruptRequested: Schema.Boolean,
+});
+export type QueuedSteerRequest = typeof QueuedSteerRequest.Type;
+
 export const ProjectScriptIcon = Schema.Literals([
   "play",
   "test",
@@ -295,6 +355,12 @@ export const OrchestrationThread = Schema.Struct({
   deletedAt: Schema.NullOr(IsoDateTime),
   messages: Schema.Array(OrchestrationMessage),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(Schema.withDecodingDefault(() => [])),
+  queuedComposerMessages: Schema.Array(QueuedComposerMessage).pipe(
+    Schema.withDecodingDefault(() => []),
+  ),
+  queuedSteerRequest: Schema.NullOr(QueuedSteerRequest).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
   activities: Schema.Array(OrchestrationThreadActivity),
   checkpoints: Schema.Array(OrchestrationCheckpointSummary),
   session: Schema.NullOr(OrchestrationSession),
@@ -377,6 +443,8 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  queuedComposerMessages: Schema.optional(Schema.Array(QueuedComposerMessage)),
+  queuedSteerRequest: Schema.optional(Schema.NullOr(QueuedSteerRequest)),
 });
 
 const ThreadRuntimeModeSetCommand = Schema.Struct({
@@ -688,6 +756,8 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  queuedComposerMessages: Schema.optional(Schema.Array(QueuedComposerMessage)),
+  queuedSteerRequest: Schema.optional(Schema.NullOr(QueuedSteerRequest)),
   updatedAt: IsoDateTime,
 });
 

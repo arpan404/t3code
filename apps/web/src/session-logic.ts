@@ -19,6 +19,7 @@ import type {
   ThreadSession,
   TurnDiffSummary,
 } from "./types";
+import { compareActivityLifecycleRank, compareSequenceThenCreatedAt } from "./lib/activityOrder";
 
 export type ProviderPickerKind = ProviderKind | "cursor";
 
@@ -36,6 +37,7 @@ export const PROVIDER_OPTIONS: Array<{
 export interface WorkLogEntry {
   id: string;
   createdAt: string;
+  sequence?: number;
   label: string;
   detail?: string;
   command?: string;
@@ -502,6 +504,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   const entry: DerivedWorkLogEntry = {
     id: activity.id,
     createdAt: activity.createdAt,
+    ...(activity.sequence !== undefined ? { sequence: activity.sequence } : {}),
     label: sanitizeWorkLogText(activity.summary),
     tone:
       activity.kind === "task.progress" ||
@@ -598,6 +601,9 @@ function mergeDerivedWorkLogEntries(
     ...previous,
     ...next,
     createdAt: previous.createdAt,
+    ...(previous.sequence !== undefined || next.sequence !== undefined
+      ? { sequence: previous.sequence ?? next.sequence }
+      : {}),
     ...(detail ? { detail } : {}),
     ...(command ? { command } : {}),
     ...(changedFiles.length > 0 ? { changedFiles } : {}),
@@ -868,17 +874,7 @@ function compareActivitiesByOrder(
   left: OrchestrationThreadActivity,
   right: OrchestrationThreadActivity,
 ): number {
-  if (left.sequence !== undefined && right.sequence !== undefined) {
-    if (left.sequence !== right.sequence) {
-      return left.sequence - right.sequence;
-    }
-  } else if (left.sequence !== undefined) {
-    return 1;
-  } else if (right.sequence !== undefined) {
-    return -1;
-  }
-
-  const createdAtComparison = left.createdAt.localeCompare(right.createdAt);
+  const createdAtComparison = compareSequenceThenCreatedAt(left, right);
   if (createdAtComparison !== 0) {
     return createdAtComparison;
   }
@@ -890,19 +886,6 @@ function compareActivitiesByOrder(
   }
 
   return left.id.localeCompare(right.id);
-}
-
-function compareActivityLifecycleRank(kind: string): number {
-  if (kind.endsWith(".started") || kind === "tool.started") {
-    return 0;
-  }
-  if (kind.endsWith(".progress") || kind.endsWith(".updated")) {
-    return 1;
-  }
-  if (kind.endsWith(".completed") || kind.endsWith(".resolved")) {
-    return 2;
-  }
-  return 1;
 }
 
 export function hasToolActivityForTurn(
@@ -918,32 +901,42 @@ export function deriveTimelineEntries(
   proposedPlans: ProposedPlan[],
   workEntries: WorkLogEntry[],
 ): TimelineEntry[] {
-  const rawEntries: TimelineEntry[] = [
+  const rawEntriesBase = [
     ...messages.map((message) => ({
-      id: message.id,
-      kind: "message" as const,
-      createdAt: message.createdAt,
-      message,
+      timelineEntry: {
+        id: message.id,
+        kind: "message" as const,
+        createdAt: message.createdAt,
+        message,
+      },
     })),
     ...proposedPlans.map((proposedPlan) => ({
-      id: proposedPlan.id,
-      kind: "proposed-plan" as const,
-      createdAt: proposedPlan.createdAt,
-      proposedPlan,
+      timelineEntry: {
+        id: proposedPlan.id,
+        kind: "proposed-plan" as const,
+        createdAt: proposedPlan.createdAt,
+        proposedPlan,
+      },
     })),
     ...workEntries.map((entry) => ({
-      id: entry.id,
-      kind: "work" as const,
-      createdAt: entry.createdAt,
-      entry,
+      timelineEntry: {
+        id: entry.id,
+        kind: "work" as const,
+        createdAt: entry.createdAt,
+        entry,
+      },
+      sequence: entry.sequence,
     })),
-  ].toSorted((a, b) => a.createdAt.localeCompare(b.createdAt));
+  ];
+  const rawEntries = rawEntriesBase
+    .map((entry, sourceIndex) => Object.assign(entry, { sourceIndex }))
+    .toSorted(compareTimelineEntriesByOrder);
 
   const normalizedEntries: TimelineEntry[] = [];
   let pendingIntentText: string | null = null;
   let previousIntentFingerprint: string | null = null;
 
-  for (const entry of rawEntries) {
+  for (const { timelineEntry: entry } of rawEntries) {
     if (entry.kind === "work" && isReportIntentWorkEntry(entry.entry)) {
       const intentText = extractReportIntentText(entry.entry);
       if (intentText) {
@@ -985,6 +978,47 @@ export function deriveTimelineEntries(
   }
 
   return mergeShortIntentPreamblesIntoAssistantMessages(normalizedEntries);
+}
+
+function compareTimelineEntriesByOrder(
+  left: {
+    timelineEntry: TimelineEntry;
+    sourceIndex: number;
+    sequence?: number | undefined;
+  },
+  right: {
+    timelineEntry: TimelineEntry;
+    sourceIndex: number;
+    sequence?: number | undefined;
+  },
+): number {
+  if (left.timelineEntry.kind === "work" && right.timelineEntry.kind === "work") {
+    const workComparison = compareSequenceThenCreatedAt(
+      {
+        createdAt: left.timelineEntry.createdAt,
+        sequence: left.sequence,
+      },
+      {
+        createdAt: right.timelineEntry.createdAt,
+        sequence: right.sequence,
+      },
+    );
+    if (workComparison !== 0) {
+      return workComparison;
+    }
+  }
+
+  const createdAtComparison = left.timelineEntry.createdAt.localeCompare(
+    right.timelineEntry.createdAt,
+  );
+  if (createdAtComparison !== 0) {
+    return createdAtComparison;
+  }
+
+  return (
+    left.sourceIndex - right.sourceIndex ||
+    left.timelineEntry.id.localeCompare(right.timelineEntry.id)
+  );
 }
 
 function mergeShortIntentPreamblesIntoAssistantMessages(entries: TimelineEntry[]): TimelineEntry[] {

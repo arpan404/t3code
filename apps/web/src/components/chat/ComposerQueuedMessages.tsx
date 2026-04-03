@@ -1,8 +1,6 @@
 import { BotIcon, ImageIcon, PencilLineIcon, TerminalSquareIcon, Trash2Icon } from "lucide-react";
 import { PROVIDER_DISPLAY_NAMES, type MessageId, type ModelSelection } from "@t3tools/contracts";
 
-import { type ComposerImageAttachment } from "../../composerDraftStore";
-import { type TerminalContextDraft } from "../../lib/terminalContext";
 import { formatQueuedComposerMessagePreview } from "../../lib/chat/chatView";
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
@@ -10,8 +8,8 @@ import { Button } from "../ui/button";
 export interface ComposerQueuedMessageItem {
   id: MessageId;
   prompt: string;
-  images: ReadonlyArray<ComposerImageAttachment>;
-  terminalContexts: ReadonlyArray<TerminalContextDraft>;
+  images: ReadonlyArray<{ id: string }>;
+  terminalContexts: ReadonlyArray<{ id: string }>;
   modelSelection: ModelSelection;
 }
 

@@ -9,6 +9,7 @@ import {
   OpenError,
   TerminalNotRunningError,
   type OrchestrationEvent,
+  type OrchestrationReadModel,
   ORCHESTRATION_WS_METHODS,
   ProjectId,
   ResolvedKeybindingRule,
@@ -64,7 +65,7 @@ const defaultModelSelection = {
   model: "gpt-5-codex",
 } as const;
 
-const makeDefaultOrchestrationReadModel = () => {
+const makeDefaultOrchestrationReadModel = (): OrchestrationReadModel => {
   const now = new Date().toISOString();
   return {
     snapshotSequence: 0,
@@ -99,6 +100,8 @@ const makeDefaultOrchestrationReadModel = () => {
         session: null,
         activities: [],
         proposedPlans: [],
+        queuedComposerMessages: [],
+        queuedSteerRequest: null,
         checkpoints: [],
         deletedAt: null,
       },
@@ -1104,6 +1107,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             session: null,
             activities: [],
             proposedPlans: [],
+            queuedComposerMessages: [],
+            queuedSteerRequest: null,
             checkpoints: [],
             deletedAt: null,
           },

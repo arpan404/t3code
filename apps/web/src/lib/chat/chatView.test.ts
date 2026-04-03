@@ -130,6 +130,8 @@ const makeThread = (input?: {
     : null,
   branch: null,
   worktreePath: null,
+  queuedComposerMessages: [],
+  queuedSteerRequest: null,
   turnDiffSummaries: [],
   activities: [],
 });
@@ -283,6 +285,8 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       latestTurn: previousLatestTurn,
       branch: null,
       worktreePath: null,
+      queuedComposerMessages: [],
+      queuedSteerRequest: null,
       turnDiffSummaries: [],
       activities: [],
     });
@@ -319,6 +323,8 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       latestTurn: previousLatestTurn,
       branch: null,
       worktreePath: null,
+      queuedComposerMessages: [],
+      queuedSteerRequest: null,
       turnDiffSummaries: [],
       activities: [],
     });
@@ -364,6 +370,8 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       latestTurn: previousLatestTurn,
       branch: null,
       worktreePath: null,
+      queuedComposerMessages: [],
+      queuedSteerRequest: null,
       turnDiffSummaries: [],
       activities: [],
     });

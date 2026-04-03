@@ -426,11 +426,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         data-intent-disclosure-open={
           row.kind === "intent-work"
             ? String(
-                Object.prototype.hasOwnProperty.call(
-                  expandedWorkGroups,
-                  workGroupId(row.workCreatedAt),
-                )
-                  ? Boolean(expandedWorkGroups[workGroupId(row.workCreatedAt)])
+                Object.prototype.hasOwnProperty.call(expandedWorkGroups, workGroupId(row.id))
+                  ? Boolean(expandedWorkGroups[workGroupId(row.id)])
                   : row.id === lastExpandableWorkRowId,
               )
             : undefined
@@ -439,7 +436,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         {row.kind === "work" &&
           (() => {
             const groupedEntries = row.groupedEntries;
-            const groupId = workGroupId(row.createdAt);
+            const groupId = workGroupId(row.id);
             const isLiveWorkGroup = activeTurnInProgress && row.id === lastExpandableWorkRowId;
             const onlyToolEntries = groupedEntries.every((entry) => entry.tone === "tool");
             const onlyThinkingEntries = groupedEntries.every((entry) => entry.tone === "thinking");
@@ -554,7 +551,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         {row.kind === "intent-work" &&
           (() => {
             const groupedEntries = row.groupedEntries;
-            const groupId = workGroupId(row.workCreatedAt);
+            const groupId = workGroupId(row.id);
             const hasExplicitExpandedState = Object.prototype.hasOwnProperty.call(
               expandedWorkGroups,
               groupId,
@@ -994,8 +991,8 @@ function formatMessageMeta(
   return `${formatTimestamp(createdAt, timestampFormat)} • ${duration}`;
 }
 
-function workGroupId(createdAt: string): string {
-  return `work-group:${createdAt}`;
+function workGroupId(rowId: string): string {
+  return `work-group:${rowId}`;
 }
 
 function isThinkingWorkRow(row: TimelineRow | undefined): boolean {

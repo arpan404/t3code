@@ -305,6 +305,8 @@ function createSnapshotForTargetUser(options: {
         messages,
         activities: [],
         proposedPlans: [],
+        queuedComposerMessages: [],
+        queuedSteerRequest: null,
         checkpoints: [],
         session: {
           threadId: THREAD_ID,
@@ -363,6 +365,8 @@ function addThreadToSnapshot(
         messages: [],
         activities: [],
         proposedPlans: [],
+        queuedComposerMessages: [],
+        queuedSteerRequest: null,
         checkpoints: [],
         session: {
           threadId,

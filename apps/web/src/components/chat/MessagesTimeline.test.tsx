@@ -229,8 +229,8 @@ describe("MessagesTimeline", () => {
         turnDiffSummaryByAssistantMessageId={new Map()}
         nowIso="2026-03-17T19:12:33.000Z"
         expandedWorkGroups={{
-          "work-group:2026-03-17T19:12:29.500Z": true,
-          "work-group:2026-03-17T19:12:31.500Z": true,
+          "work-group:work-tool-1": true,
+          "work-group:thinking-1": true,
         }}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -392,7 +392,7 @@ describe("MessagesTimeline", () => {
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
         nowIso="2026-03-17T19:12:40.000Z"
-        expandedWorkGroups={{ "work-group:2026-03-17T19:12:20.000Z": true }}
+        expandedWorkGroups={{ "work-group:live-work-tool-1": true }}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
         revertTurnCountByUserMessageId={new Map()}
@@ -501,7 +501,7 @@ describe("MessagesTimeline", () => {
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
         nowIso="2026-03-17T19:12:33.000Z"
-        expandedWorkGroups={{ "work-group:2026-03-17T19:12:31.500Z": true }}
+        expandedWorkGroups={{ "work-group:thinking-accumulated": true }}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
         revertTurnCountByUserMessageId={new Map()}
@@ -656,7 +656,7 @@ describe("MessagesTimeline", () => {
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
         nowIso="2026-03-17T19:12:33.000Z"
-        expandedWorkGroups={{ "work-group:2026-03-17T19:12:31.500Z": true }}
+        expandedWorkGroups={{ "work-group:thinking-outline": true }}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
         revertTurnCountByUserMessageId={new Map()}
@@ -963,7 +963,7 @@ describe("MessagesTimeline", () => {
         turnDiffSummaryByAssistantMessageId={new Map()}
         nowIso="2026-03-17T19:12:35.000Z"
         expandedWorkGroups={{
-          "work-group:2026-03-17T19:12:30.000Z": false,
+          "work-group:intent-primary": false,
         }}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -982,5 +982,74 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain('data-work-entry-id="tool-burst-primary-1"');
     expect(markup).not.toContain('data-work-entry-id="tool-burst-primary-2"');
     expect(markup).not.toContain("Running format and checks");
+  });
+
+  it("keeps disclosure state isolated when separate work rows share a timestamp", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking={false}
+        activeTurnInProgress={false}
+        activeTurnStartedAt={null}
+        scrollContainer={null}
+        timelineEntries={[
+          {
+            id: "thinking-first",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:31.500Z",
+            entry: {
+              id: "thinking-first",
+              createdAt: "2026-03-17T19:12:31.500Z",
+              label: "Reasoning",
+              detail: "First thinking block.",
+              tone: "thinking",
+            },
+          },
+          {
+            id: "assistant-between-thinking",
+            kind: "message",
+            createdAt: "2026-03-17T19:12:31.500Z",
+            message: {
+              id: MessageId.makeUnsafe("assistant-between-thinking"),
+              role: "assistant",
+              text: "keeping rows separate",
+              createdAt: "2026-03-17T19:12:31.500Z",
+              streaming: false,
+            },
+          },
+          {
+            id: "thinking-second",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:31.500Z",
+            entry: {
+              id: "thinking-second",
+              createdAt: "2026-03-17T19:12:31.500Z",
+              label: "Reasoning",
+              detail: "Second thinking block.",
+              tone: "thinking",
+            },
+          },
+        ]}
+        completionDividerBeforeEntryId={null}
+        completionSummary={null}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        nowIso="2026-03-17T19:12:33.000Z"
+        expandedWorkGroups={{ "work-group:thinking-second": true }}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup).toContain('data-work-entry-id="thinking-second"');
+    expect(markup).not.toContain('data-work-entry-id="thinking-first"');
   });
 });

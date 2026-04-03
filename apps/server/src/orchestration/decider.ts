@@ -259,6 +259,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             : {}),
           ...(command.branch !== undefined ? { branch: command.branch } : {}),
           ...(command.worktreePath !== undefined ? { worktreePath: command.worktreePath } : {}),
+          ...(command.queuedComposerMessages !== undefined
+            ? { queuedComposerMessages: command.queuedComposerMessages }
+            : {}),
+          ...(command.queuedSteerRequest !== undefined
+            ? { queuedSteerRequest: command.queuedSteerRequest }
+            : {}),
           updatedAt: occurredAt,
         },
       };

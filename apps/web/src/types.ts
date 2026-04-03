@@ -40,6 +40,38 @@ export interface ChatImageAttachment {
 
 export type ChatAttachment = ChatImageAttachment;
 
+export interface QueuedComposerImageAttachment extends ChatImageAttachment {
+  dataUrl: string;
+  previewUrl: string;
+  file?: File;
+}
+
+export interface QueuedTerminalContext {
+  id: string;
+  createdAt: string;
+  terminalId: string;
+  terminalLabel: string;
+  lineStart: number;
+  lineEnd: number;
+  text: string;
+}
+
+export interface QueuedComposerMessage {
+  id: MessageId;
+  prompt: string;
+  images: QueuedComposerImageAttachment[];
+  terminalContexts: QueuedTerminalContext[];
+  modelSelection: ModelSelection;
+  runtimeMode: RuntimeMode;
+  interactionMode: ProviderInteractionMode;
+}
+
+export interface QueuedSteerRequest {
+  messageId: MessageId;
+  baselineWorkLogEntryCount: number;
+  interruptRequested: boolean;
+}
+
 export interface ChatMessage {
   id: MessageId;
   role: "user" | "assistant" | "system";
@@ -107,6 +139,8 @@ export interface Thread {
   pendingSourceProposedPlan?: OrchestrationLatestTurn["sourceProposedPlan"];
   branch: string | null;
   worktreePath: string | null;
+  queuedComposerMessages: QueuedComposerMessage[];
+  queuedSteerRequest: QueuedSteerRequest | null;
   turnDiffSummaries: TurnDiffSummary[];
   activities: OrchestrationThreadActivity[];
 }

@@ -4,6 +4,8 @@ import {
   MessageId,
   NonNegativeInt,
   OrchestrationCheckpointFile,
+  QueuedComposerMessage,
+  QueuedSteerRequest,
   OrchestrationProposedPlanId,
   OrchestrationReadModel,
   ProjectScript,
@@ -63,6 +65,8 @@ const ProjectionThreadProposedPlanDbRowSchema = ProjectionThreadProposedPlan;
 const ProjectionThreadDbRowSchema = ProjectionThread.mapFields(
   Struct.assign({
     modelSelection: Schema.fromJsonString(ModelSelection),
+    queuedComposerMessages: Schema.fromJsonString(Schema.Array(QueuedComposerMessage)),
+    queuedSteerRequest: Schema.NullOr(Schema.fromJsonString(QueuedSteerRequest)),
   }),
 );
 const ProjectionThreadActivityDbRowSchema = ProjectionThreadActivity.mapFields(
@@ -197,6 +201,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          queued_composer_messages_json AS "queuedComposerMessages",
+          queued_steer_request_json AS "queuedSteerRequest",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -672,6 +678,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             interactionMode: row.interactionMode,
             branch: row.branch,
             worktreePath: row.worktreePath,
+            queuedComposerMessages: row.queuedComposerMessages,
+            queuedSteerRequest: row.queuedSteerRequest,
             latestTurn: latestTurnByThread.get(row.threadId) ?? null,
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,

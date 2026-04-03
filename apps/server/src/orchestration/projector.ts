@@ -266,6 +266,8 @@ export function projectEvent(
             deletedAt: null,
             messages: [],
             activities: [],
+            queuedComposerMessages: [],
+            queuedSteerRequest: null,
             checkpoints: [],
             session: null,
           },
@@ -325,6 +327,12 @@ export function projectEvent(
               : {}),
             ...(payload.branch !== undefined ? { branch: payload.branch } : {}),
             ...(payload.worktreePath !== undefined ? { worktreePath: payload.worktreePath } : {}),
+            ...(payload.queuedComposerMessages !== undefined
+              ? { queuedComposerMessages: payload.queuedComposerMessages }
+              : {}),
+            ...(payload.queuedSteerRequest !== undefined
+              ? { queuedSteerRequest: payload.queuedSteerRequest }
+              : {}),
             updatedAt: payload.updatedAt,
           }),
         })),
