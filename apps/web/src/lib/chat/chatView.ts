@@ -50,6 +50,14 @@ export function revokeBlobPreviewUrl(previewUrl: string | undefined): void {
   URL.revokeObjectURL(previewUrl);
 }
 
+export function revokeComposerImagePreviewUrls(
+  images: ReadonlyArray<ComposerImageAttachment>,
+): void {
+  for (const image of images) {
+    revokeBlobPreviewUrl(image.previewUrl);
+  }
+}
+
 export function revokeUserMessagePreviewUrls(message: ChatMessage): void {
   if (message.role !== "user" || !message.attachments) {
     return;
@@ -140,6 +148,34 @@ export function deriveComposerSendState(options: {
     hasSendableContent:
       trimmedPrompt.length > 0 || options.imageCount > 0 || sendableTerminalContexts.length > 0,
   };
+}
+
+export function formatQueuedComposerMessagePreview(options: {
+  prompt: string;
+  imageCount: number;
+  terminalContextCount: number;
+}): string {
+  const trimmedPrompt = stripInlineTerminalContextPlaceholders(options.prompt)
+    .replace(/\s+/gu, " ")
+    .trim();
+
+  if (trimmedPrompt.length > 0) {
+    return trimmedPrompt;
+  }
+
+  const parts: string[] = [];
+  if (options.imageCount > 0) {
+    parts.push(options.imageCount === 1 ? "1 image" : `${options.imageCount} images`);
+  }
+  if (options.terminalContextCount > 0) {
+    parts.push(
+      options.terminalContextCount === 1
+        ? "1 terminal context"
+        : `${options.terminalContextCount} terminal contexts`,
+    );
+  }
+
+  return parts.length > 0 ? parts.join(" · ") : "Queued message";
 }
 
 export function buildExpiredTerminalContextToastCopy(

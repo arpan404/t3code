@@ -177,6 +177,10 @@ import { ComposerCommandItem, ComposerCommandMenu } from "./chat/ComposerCommand
 import { ComposerPendingApprovalActions } from "./chat/ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./chat/CompactComposerControlsMenu";
 import { ComposerPrimaryActions } from "./chat/ComposerPrimaryActions";
+import {
+  ComposerQueuedMessages,
+  type ComposerQueuedMessageItem,
+} from "./chat/ComposerQueuedMessages";
 import { ComposerPendingApprovalPanel } from "./chat/ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./chat/ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./chat/ComposerPlanFollowUpBanner";
@@ -195,6 +199,7 @@ import {
   collectUserMessageBlobPreviewUrls,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
+  revokeComposerImagePreviewUrls,
   hasServerAcknowledgedLocalDispatch,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
   LastInvokedScriptByProjectSchema,
@@ -223,6 +228,17 @@ const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 
 type ThreadPlanCatalogEntry = Pick<Thread, "id" | "proposedPlans">;
+
+interface QueuedComposerMessage extends ComposerQueuedMessageItem {
+  runtimeMode: RuntimeMode;
+  interactionMode: ProviderInteractionMode;
+}
+
+interface QueuedSteerRequest {
+  messageId: MessageId;
+  baselineWorkLogEntryCount: number;
+  interruptRequested: boolean;
+}
 
 const MAX_THREAD_PLAN_CATALOG_CACHE_ENTRIES = 500;
 const MAX_THREAD_PLAN_CATALOG_CACHE_MEMORY_BYTES = 512 * 1024;
@@ -510,8 +526,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
+  const [queuedComposerMessages, setQueuedComposerMessages] = useState<QueuedComposerMessage[]>([]);
+  const [queuedSteerRequest, setQueuedSteerRequest] = useState<QueuedSteerRequest | null>(null);
   const optimisticUserMessagesRef = useRef(optimisticUserMessages);
   optimisticUserMessagesRef.current = optimisticUserMessages;
+  const queuedComposerMessagesRef = useRef(queuedComposerMessages);
+  queuedComposerMessagesRef.current = queuedComposerMessages;
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>(composerTerminalContexts);
   const [localDraftErrorsByThreadId, setLocalDraftErrorsByThreadId] = useState<
     Record<ThreadId, string | null>
@@ -1059,6 +1079,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
       for (const message of optimisticUserMessagesRef.current) {
         revokeUserMessagePreviewUrls(message);
       }
+      for (const message of queuedComposerMessagesRef.current) {
+        revokeComposerImagePreviewUrls(message.images);
+      }
     };
   }, [clearAttachmentPreviewHandoffs]);
   const handoffAttachmentPreviews = useCallback((messageId: MessageId, previewUrls: string[]) => {
@@ -1523,6 +1546,176 @@ export default function ChatView({ threadId }: ChatViewProps) {
       focusComposer();
     });
   }, [focusComposer]);
+  const removeQueuedComposerMessage = useCallback(
+    (messageId: MessageId) => {
+      if (queuedSteerRequest?.messageId === messageId) {
+        setQueuedSteerRequest(null);
+      }
+      setQueuedComposerMessages((existing) => {
+        const nextMessage = existing.find((message) => message.id === messageId) ?? null;
+        if (!nextMessage) {
+          return existing;
+        }
+        revokeComposerImagePreviewUrls(nextMessage.images);
+        return existing.filter((message) => message.id !== messageId);
+      });
+    },
+    [queuedSteerRequest?.messageId],
+  );
+  const restoreQueuedComposerMessageToDraft = useCallback(
+    (message: QueuedComposerMessage) => {
+      promptRef.current = message.prompt;
+      setPrompt(message.prompt);
+      addComposerImagesToDraft([...message.images]);
+      setComposerDraftTerminalContexts(threadId, [...message.terminalContexts]);
+      setComposerDraftModelSelection(threadId, message.modelSelection);
+      setComposerDraftRuntimeMode(threadId, message.runtimeMode);
+      setComposerDraftInteractionMode(threadId, message.interactionMode);
+      if (isLocalDraftThread) {
+        setDraftThreadContext(threadId, {
+          runtimeMode: message.runtimeMode,
+          interactionMode: message.interactionMode,
+        });
+      }
+      const nextCursor = collapseExpandedComposerCursor(message.prompt, message.prompt.length);
+      setComposerCursor(nextCursor);
+      setComposerTrigger(detectComposerTrigger(message.prompt, message.prompt.length));
+      setComposerHighlightedItemId(null);
+      scheduleComposerFocus();
+    },
+    [
+      addComposerImagesToDraft,
+      isLocalDraftThread,
+      scheduleComposerFocus,
+      setComposerDraftInteractionMode,
+      setComposerDraftModelSelection,
+      setComposerDraftRuntimeMode,
+      setComposerDraftTerminalContexts,
+      setDraftThreadContext,
+      setPrompt,
+      threadId,
+    ],
+  );
+  const onEditQueuedComposerMessage = useCallback(
+    (messageId: MessageId) => {
+      const nextMessage = queuedComposerMessagesRef.current.find(
+        (message) => message.id === messageId,
+      );
+      if (!nextMessage) {
+        return;
+      }
+      if (queuedSteerRequest?.messageId === messageId) {
+        setQueuedSteerRequest(null);
+      }
+      setQueuedComposerMessages((existing) =>
+        existing.filter((message) => message.id !== messageId),
+      );
+      restoreQueuedComposerMessageToDraft(nextMessage);
+    },
+    [queuedSteerRequest?.messageId, restoreQueuedComposerMessageToDraft],
+  );
+  const queueCurrentComposerMessage = useCallback(
+    (mode: "queue" | "steer" = "queue") => {
+      const { sendableTerminalContexts, expiredTerminalContextCount, hasSendableContent } =
+        deriveComposerSendState({
+          prompt: promptRef.current,
+          imageCount: composerImages.length,
+          terminalContexts: composerTerminalContexts,
+        });
+      if (!hasSendableContent) {
+        if (expiredTerminalContextCount > 0) {
+          const toastCopy = buildExpiredTerminalContextToastCopy(
+            expiredTerminalContextCount,
+            "empty",
+          );
+          toastManager.add({
+            type: "warning",
+            title: toastCopy.title,
+            description: toastCopy.description,
+          });
+        }
+        return false;
+      }
+
+      const queuedMessage: QueuedComposerMessage = {
+        id: newMessageId(),
+        prompt: promptRef.current,
+        images: [...composerImages],
+        terminalContexts: [...sendableTerminalContexts],
+        modelSelection: selectedModelSelection,
+        runtimeMode,
+        interactionMode,
+      };
+      setQueuedComposerMessages((existing) =>
+        mode === "steer" ? [queuedMessage, ...existing] : [...existing, queuedMessage],
+      );
+      if (mode === "steer") {
+        setQueuedSteerRequest({
+          messageId: queuedMessage.id,
+          baselineWorkLogEntryCount: workLogEntries.length,
+          interruptRequested: false,
+        });
+      }
+
+      if (expiredTerminalContextCount > 0) {
+        const toastCopy = buildExpiredTerminalContextToastCopy(
+          expiredTerminalContextCount,
+          "omitted",
+        );
+        toastManager.add({
+          type: "warning",
+          title: toastCopy.title,
+          description: toastCopy.description,
+        });
+      }
+
+      promptRef.current = "";
+      clearComposerDraftContent(threadId);
+      setComposerHighlightedItemId(null);
+      setComposerCursor(0);
+      setComposerTrigger(null);
+      return true;
+    },
+    [
+      clearComposerDraftContent,
+      composerImages,
+      composerTerminalContexts,
+      interactionMode,
+      runtimeMode,
+      selectedModelSelection,
+      workLogEntries.length,
+      threadId,
+    ],
+  );
+  const onSteerQueuedComposerMessage = useCallback(
+    (messageId: MessageId) => {
+      const nextMessage = queuedComposerMessagesRef.current.find(
+        (message) => message.id === messageId,
+      );
+      if (!nextMessage) {
+        return;
+      }
+      setQueuedComposerMessages((existing) => {
+        const nextIndex = existing.findIndex((message) => message.id === messageId);
+        if (nextIndex <= 0) {
+          return existing;
+        }
+        const next = [...existing];
+        const [promoted] = next.splice(nextIndex, 1);
+        if (!promoted) {
+          return existing;
+        }
+        next.unshift(promoted);
+        return next;
+      });
+      setQueuedSteerRequest({
+        messageId,
+        baselineWorkLogEntryCount: workLogEntries.length,
+        interruptRequested: false,
+      });
+    },
+    [workLogEntries.length],
+  );
   const addTerminalContextToDraft = useCallback(
     (selection: TerminalContextSelection) => {
       if (!activeThread) {
@@ -2665,6 +2858,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
       return [];
     });
+    setQueuedComposerMessages((existing) => {
+      for (const message of existing) {
+        revokeComposerImagePreviewUrls(message.images);
+      }
+      return [];
+    });
+    setQueuedSteerRequest(null);
     resetLocalDispatch();
     setComposerHighlightedItemId(null);
     setComposerCursor(collapseExpandedComposerCursor(promptRef.current, promptRef.current.length));
@@ -3126,12 +3326,316 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [activeThread, isConnecting, isRevertingCheckpoint, isSendBusy, phase, setThreadError],
   );
 
+  const dispatchComposerMessage = useCallback(
+    async (
+      submission: {
+        prompt: string;
+        images: ComposerImageAttachment[];
+        terminalContexts: TerminalContextDraft[];
+        modelSelection: ModelSelection;
+        runtimeMode: RuntimeMode;
+        interactionMode: ProviderInteractionMode;
+      },
+      options?: {
+        onFailure?: () => void;
+      },
+    ) => {
+      const api = readNativeApi();
+      if (!api || !activeThread || sendInFlightRef.current) return;
+      if (!activeProject) return;
+
+      const promptForSend = submission.prompt;
+      const composerImagesSnapshot = [...submission.images];
+      const composerTerminalContextsSnapshot = [...submission.terminalContexts];
+      const threadIdForSend = activeThread.id;
+      const submissionModelOptions = submission.modelSelection.options
+        ? {
+            [submission.modelSelection.provider]: submission.modelSelection.options,
+          }
+        : null;
+      const submissionProviderModels = getProviderModels(
+        providerStatuses,
+        submission.modelSelection.provider,
+      );
+      const submissionProviderState = getComposerProviderState({
+        provider: submission.modelSelection.provider,
+        model: submission.modelSelection.model,
+        models: submissionProviderModels,
+        prompt: promptForSend,
+        modelOptions: submissionModelOptions,
+      });
+      const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
+      const baseBranchForWorktree =
+        isFirstMessage && envMode === "worktree" && !activeThread.worktreePath
+          ? activeThread.branch
+          : null;
+
+      const shouldCreateWorktree =
+        isFirstMessage && envMode === "worktree" && !activeThread.worktreePath;
+      if (shouldCreateWorktree && !activeThread.branch) {
+        setStoreThreadError(
+          threadIdForSend,
+          "Select a base branch before sending in New worktree mode.",
+        );
+        return;
+      }
+
+      const strippedPrompt = promptForSend.trim();
+      const messageTextForSend = appendTerminalContextsToPrompt(
+        promptForSend,
+        composerTerminalContextsSnapshot,
+      );
+      const messageIdForSend = newMessageId();
+      const messageCreatedAt = new Date().toISOString();
+      const outgoingMessageText = formatOutgoingPrompt({
+        provider: submission.modelSelection.provider,
+        model: submission.modelSelection.model,
+        models: submissionProviderModels,
+        effort: submissionProviderState.promptEffort,
+        text: messageTextForSend || IMAGE_ONLY_BOOTSTRAP_PROMPT,
+      });
+      const turnAttachmentsPromise = Promise.all(
+        composerImagesSnapshot.map(async (image) => ({
+          type: "image" as const,
+          name: image.name,
+          mimeType: image.mimeType,
+          sizeBytes: image.sizeBytes,
+          dataUrl: await readFileAsDataUrl(image.file),
+        })),
+      );
+      const optimisticAttachments = composerImagesSnapshot.map((image) => ({
+        type: "image" as const,
+        id: image.id,
+        name: image.name,
+        mimeType: image.mimeType,
+        sizeBytes: image.sizeBytes,
+        previewUrl: image.previewUrl,
+      }));
+
+      sendInFlightRef.current = true;
+      beginLocalDispatch({ preparingWorktree: Boolean(baseBranchForWorktree) });
+      setOptimisticUserMessages((existing) => [
+        ...existing,
+        {
+          id: messageIdForSend,
+          role: "user",
+          text: outgoingMessageText,
+          ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
+          createdAt: messageCreatedAt,
+          streaming: false,
+        },
+      ]);
+      shouldAutoScrollRef.current = true;
+      forceStickToBottom();
+
+      setThreadError(threadIdForSend, null);
+
+      let createdServerThreadForLocalDraft = false;
+      let turnStartSucceeded = false;
+      let nextThreadBranch = activeThread.branch;
+      let nextThreadWorktreePath = activeThread.worktreePath;
+      await (async () => {
+        if (baseBranchForWorktree) {
+          beginLocalDispatch({ preparingWorktree: true });
+          const newBranch = buildTemporaryWorktreeBranchName();
+          const result = await createWorktreeMutation.mutateAsync({
+            cwd: activeProject.cwd,
+            branch: baseBranchForWorktree,
+            newBranch,
+          });
+          nextThreadBranch = result.worktree.branch;
+          nextThreadWorktreePath = result.worktree.path;
+          if (isServerThread) {
+            await api.orchestration.dispatchCommand({
+              type: "thread.meta.update",
+              commandId: newCommandId(),
+              threadId: threadIdForSend,
+              branch: result.worktree.branch,
+              worktreePath: result.worktree.path,
+            });
+            setStoreThreadBranch(threadIdForSend, result.worktree.branch, result.worktree.path);
+          }
+        }
+
+        let firstComposerImageName: string | null = null;
+        if (composerImagesSnapshot.length > 0) {
+          const firstComposerImage = composerImagesSnapshot[0];
+          if (firstComposerImage) {
+            firstComposerImageName = firstComposerImage.name;
+          }
+        }
+        let titleSeed = strippedPrompt;
+        if (!titleSeed) {
+          if (firstComposerImageName) {
+            titleSeed = `Image: ${firstComposerImageName}`;
+          } else if (composerTerminalContextsSnapshot.length > 0) {
+            titleSeed = formatTerminalContextLabel(composerTerminalContextsSnapshot[0]!);
+          } else {
+            titleSeed = "New thread";
+          }
+        }
+        const title = truncate(titleSeed);
+        const threadCreateModelSelection: ModelSelection = buildProviderModelSelection(
+          submission.modelSelection.provider,
+          submission.modelSelection.model ||
+            activeProject.defaultModelSelection?.model ||
+            DEFAULT_MODEL_BY_PROVIDER.codex,
+          submission.modelSelection.options,
+        );
+
+        if (isLocalDraftThread) {
+          await api.orchestration.dispatchCommand({
+            type: "thread.create",
+            commandId: newCommandId(),
+            threadId: threadIdForSend,
+            projectId: activeProject.id,
+            title,
+            modelSelection: threadCreateModelSelection,
+            runtimeMode: submission.runtimeMode,
+            interactionMode: submission.interactionMode,
+            branch: nextThreadBranch,
+            worktreePath: nextThreadWorktreePath,
+            createdAt: activeThread.createdAt,
+          });
+          createdServerThreadForLocalDraft = true;
+        }
+
+        let setupScript: ProjectScript | null = null;
+        if (baseBranchForWorktree) {
+          setupScript = setupProjectScript(activeProject.scripts);
+        }
+        if (setupScript) {
+          let shouldRunSetupScript = false;
+          if (isServerThread) {
+            shouldRunSetupScript = true;
+          } else if (createdServerThreadForLocalDraft) {
+            shouldRunSetupScript = true;
+          }
+          if (shouldRunSetupScript) {
+            const setupScriptOptions: Parameters<typeof runProjectScript>[1] = {
+              worktreePath: nextThreadWorktreePath,
+              rememberAsLastInvoked: false,
+            };
+            if (nextThreadWorktreePath) {
+              setupScriptOptions.cwd = nextThreadWorktreePath;
+            }
+            await runProjectScript(setupScript, setupScriptOptions);
+          }
+        }
+
+        if (isFirstMessage && isServerThread) {
+          await api.orchestration.dispatchCommand({
+            type: "thread.meta.update",
+            commandId: newCommandId(),
+            threadId: threadIdForSend,
+            title,
+          });
+        }
+
+        if (isServerThread) {
+          await persistThreadSettingsForNextTurn({
+            threadId: threadIdForSend,
+            createdAt: messageCreatedAt,
+            modelSelection: submission.modelSelection,
+            runtimeMode: submission.runtimeMode,
+            interactionMode: submission.interactionMode,
+          });
+        }
+
+        beginLocalDispatch({ preparingWorktree: false });
+        const turnAttachments = await turnAttachmentsPromise;
+        await api.orchestration.dispatchCommand({
+          type: "thread.turn.start",
+          commandId: newCommandId(),
+          threadId: threadIdForSend,
+          message: {
+            messageId: messageIdForSend,
+            role: "user",
+            text: outgoingMessageText,
+            attachments: turnAttachments,
+          },
+          modelSelection: submission.modelSelection,
+          titleSeed: title,
+          runtimeMode: submission.runtimeMode,
+          interactionMode: submission.interactionMode,
+          createdAt: messageCreatedAt,
+        });
+        turnStartSucceeded = true;
+      })().catch(async (err: unknown) => {
+        if (createdServerThreadForLocalDraft && !turnStartSucceeded) {
+          await api.orchestration
+            .dispatchCommand({
+              type: "thread.delete",
+              commandId: newCommandId(),
+              threadId: threadIdForSend,
+            })
+            .catch(() => undefined);
+        }
+        if (
+          !turnStartSucceeded &&
+          promptRef.current.length === 0 &&
+          composerImagesRef.current.length === 0 &&
+          composerTerminalContextsRef.current.length === 0
+        ) {
+          setOptimisticUserMessages((existing) => {
+            const removed = existing.filter((message) => message.id === messageIdForSend);
+            for (const message of removed) {
+              revokeUserMessagePreviewUrls(message);
+            }
+            const next = existing.filter((message) => message.id !== messageIdForSend);
+            return next.length === existing.length ? existing : next;
+          });
+          promptRef.current = promptForSend;
+          setPrompt(promptForSend);
+          setComposerCursor(collapseExpandedComposerCursor(promptForSend, promptForSend.length));
+          addComposerImagesToDraft(composerImagesSnapshot.map(cloneComposerImageForRetry));
+          addComposerTerminalContextsToDraft(composerTerminalContextsSnapshot);
+          setComposerTrigger(detectComposerTrigger(promptForSend, promptForSend.length));
+        } else {
+          options?.onFailure?.();
+        }
+        setThreadError(
+          threadIdForSend,
+          err instanceof Error ? err.message : "Failed to send message.",
+        );
+      });
+      sendInFlightRef.current = false;
+      if (!turnStartSucceeded) {
+        resetLocalDispatch();
+      }
+    },
+    [
+      activeProject,
+      activeThread,
+      addComposerImagesToDraft,
+      addComposerTerminalContextsToDraft,
+      beginLocalDispatch,
+      createWorktreeMutation,
+      envMode,
+      forceStickToBottom,
+      isLocalDraftThread,
+      isServerThread,
+      persistThreadSettingsForNextTurn,
+      providerStatuses,
+      resetLocalDispatch,
+      runProjectScript,
+      setPrompt,
+      setStoreThreadBranch,
+      setStoreThreadError,
+      setThreadError,
+    ],
+  );
+
   const onSend = async (e?: { preventDefault: () => void }) => {
     e?.preventDefault();
     const api = readNativeApi();
-    if (!api || !activeThread || isSendBusy || isConnecting || sendInFlightRef.current) return;
+    if (!api || !activeThread || sendInFlightRef.current) return;
     if (activePendingProgress) {
       onAdvanceActivePendingUserInput();
+      return;
+    }
+    if (phase === "running" || isSendBusy || isConnecting) {
+      queueCurrentComposerMessage();
       return;
     }
     const promptForSend = promptRef.current;
@@ -3189,76 +3693,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
       return;
     }
     if (!activeProject) return;
-    const threadIdForSend = activeThread.id;
-    const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
-    const baseBranchForWorktree =
-      isFirstMessage && envMode === "worktree" && !activeThread.worktreePath
-        ? activeThread.branch
-        : null;
-
-    // In worktree mode, require an explicit base branch so we don't silently
-    // fall back to local execution when branch selection is missing.
-    const shouldCreateWorktree =
-      isFirstMessage && envMode === "worktree" && !activeThread.worktreePath;
-    if (shouldCreateWorktree && !activeThread.branch) {
-      setStoreThreadError(
-        threadIdForSend,
-        "Select a base branch before sending in New worktree mode.",
-      );
-      return;
-    }
-
-    sendInFlightRef.current = true;
-    beginLocalDispatch({ preparingWorktree: Boolean(baseBranchForWorktree) });
-
-    const composerImagesSnapshot = [...composerImages];
-    const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
-    const messageTextForSend = appendTerminalContextsToPrompt(
-      promptForSend,
-      composerTerminalContextsSnapshot,
-    );
-    const messageIdForSend = newMessageId();
-    const messageCreatedAt = new Date().toISOString();
-    const outgoingMessageText = formatOutgoingPrompt({
-      provider: selectedProvider,
-      model: selectedModel,
-      models: selectedProviderModels,
-      effort: selectedPromptEffort,
-      text: messageTextForSend || IMAGE_ONLY_BOOTSTRAP_PROMPT,
-    });
-    const turnAttachmentsPromise = Promise.all(
-      composerImagesSnapshot.map(async (image) => ({
-        type: "image" as const,
-        name: image.name,
-        mimeType: image.mimeType,
-        sizeBytes: image.sizeBytes,
-        dataUrl: await readFileAsDataUrl(image.file),
-      })),
-    );
-    const optimisticAttachments = composerImagesSnapshot.map((image) => ({
-      type: "image" as const,
-      id: image.id,
-      name: image.name,
-      mimeType: image.mimeType,
-      sizeBytes: image.sizeBytes,
-      previewUrl: image.previewUrl,
-    }));
-    setOptimisticUserMessages((existing) => [
-      ...existing,
-      {
-        id: messageIdForSend,
-        role: "user",
-        text: outgoingMessageText,
-        ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
-        createdAt: messageCreatedAt,
-        streaming: false,
-      },
-    ]);
-    // Sending a message should always bring the latest user turn into view.
-    shouldAutoScrollRef.current = true;
-    forceStickToBottom();
-
-    setThreadError(threadIdForSend, null);
     if (expiredTerminalContextCount > 0) {
       const toastCopy = buildExpiredTerminalContextToastCopy(
         expiredTerminalContextCount,
@@ -3271,189 +3705,110 @@ export default function ChatView({ threadId }: ChatViewProps) {
       });
     }
     promptRef.current = "";
-    clearComposerDraftContent(threadIdForSend);
+    clearComposerDraftContent(activeThread.id);
     setComposerHighlightedItemId(null);
     setComposerCursor(0);
     setComposerTrigger(null);
 
-    let createdServerThreadForLocalDraft = false;
-    let turnStartSucceeded = false;
-    let nextThreadBranch = activeThread.branch;
-    let nextThreadWorktreePath = activeThread.worktreePath;
-    await (async () => {
-      // On first message: lock in branch + create worktree if needed.
-      if (baseBranchForWorktree) {
-        beginLocalDispatch({ preparingWorktree: true });
-        const newBranch = buildTemporaryWorktreeBranchName();
-        const result = await createWorktreeMutation.mutateAsync({
-          cwd: activeProject.cwd,
-          branch: baseBranchForWorktree,
-          newBranch,
-        });
-        nextThreadBranch = result.worktree.branch;
-        nextThreadWorktreePath = result.worktree.path;
-        if (isServerThread) {
-          await api.orchestration.dispatchCommand({
-            type: "thread.meta.update",
-            commandId: newCommandId(),
-            threadId: threadIdForSend,
-            branch: result.worktree.branch,
-            worktreePath: result.worktree.path,
-          });
-          // Keep local thread state in sync immediately so terminal drawer opens
-          // with the worktree cwd/env instead of briefly using the project root.
-          setStoreThreadBranch(threadIdForSend, result.worktree.branch, result.worktree.path);
-        }
-      }
-
-      let firstComposerImageName: string | null = null;
-      if (composerImagesSnapshot.length > 0) {
-        const firstComposerImage = composerImagesSnapshot[0];
-        if (firstComposerImage) {
-          firstComposerImageName = firstComposerImage.name;
-        }
-      }
-      let titleSeed = trimmed;
-      if (!titleSeed) {
-        if (firstComposerImageName) {
-          titleSeed = `Image: ${firstComposerImageName}`;
-        } else if (composerTerminalContextsSnapshot.length > 0) {
-          titleSeed = formatTerminalContextLabel(composerTerminalContextsSnapshot[0]!);
-        } else {
-          titleSeed = "New thread";
-        }
-      }
-      const title = truncate(titleSeed);
-      const threadCreateModelSelection: ModelSelection = buildProviderModelSelection(
-        selectedProvider,
-        selectedModel ||
-          activeProject.defaultModelSelection?.model ||
-          DEFAULT_MODEL_BY_PROVIDER.codex,
-        selectedModelSelection.options,
-      );
-
-      if (isLocalDraftThread) {
-        await api.orchestration.dispatchCommand({
-          type: "thread.create",
-          commandId: newCommandId(),
-          threadId: threadIdForSend,
-          projectId: activeProject.id,
-          title,
-          modelSelection: threadCreateModelSelection,
-          runtimeMode,
-          interactionMode,
-          branch: nextThreadBranch,
-          worktreePath: nextThreadWorktreePath,
-          createdAt: activeThread.createdAt,
-        });
-        createdServerThreadForLocalDraft = true;
-      }
-
-      let setupScript: ProjectScript | null = null;
-      if (baseBranchForWorktree) {
-        setupScript = setupProjectScript(activeProject.scripts);
-      }
-      if (setupScript) {
-        let shouldRunSetupScript = false;
-        if (isServerThread) {
-          shouldRunSetupScript = true;
-        } else {
-          if (createdServerThreadForLocalDraft) {
-            shouldRunSetupScript = true;
-          }
-        }
-        if (shouldRunSetupScript) {
-          const setupScriptOptions: Parameters<typeof runProjectScript>[1] = {
-            worktreePath: nextThreadWorktreePath,
-            rememberAsLastInvoked: false,
-          };
-          if (nextThreadWorktreePath) {
-            setupScriptOptions.cwd = nextThreadWorktreePath;
-          }
-          await runProjectScript(setupScript, setupScriptOptions);
-        }
-      }
-
-      // Auto-title from first message
-      if (isFirstMessage && isServerThread) {
-        await api.orchestration.dispatchCommand({
-          type: "thread.meta.update",
-          commandId: newCommandId(),
-          threadId: threadIdForSend,
-          title,
-        });
-      }
-
-      if (isServerThread) {
-        await persistThreadSettingsForNextTurn({
-          threadId: threadIdForSend,
-          createdAt: messageCreatedAt,
-          ...(selectedModel ? { modelSelection: selectedModelSelection } : {}),
-          runtimeMode,
-          interactionMode,
-        });
-      }
-
-      beginLocalDispatch({ preparingWorktree: false });
-      const turnAttachments = await turnAttachmentsPromise;
-      await api.orchestration.dispatchCommand({
-        type: "thread.turn.start",
-        commandId: newCommandId(),
-        threadId: threadIdForSend,
-        message: {
-          messageId: messageIdForSend,
-          role: "user",
-          text: outgoingMessageText,
-          attachments: turnAttachments,
-        },
-        modelSelection: selectedModelSelection,
-        titleSeed: title,
-        runtimeMode,
-        interactionMode,
-        createdAt: messageCreatedAt,
-      });
-      turnStartSucceeded = true;
-    })().catch(async (err: unknown) => {
-      if (createdServerThreadForLocalDraft && !turnStartSucceeded) {
-        await api.orchestration
-          .dispatchCommand({
-            type: "thread.delete",
-            commandId: newCommandId(),
-            threadId: threadIdForSend,
-          })
-          .catch(() => undefined);
-      }
-      if (
-        !turnStartSucceeded &&
-        promptRef.current.length === 0 &&
-        composerImagesRef.current.length === 0 &&
-        composerTerminalContextsRef.current.length === 0
-      ) {
-        setOptimisticUserMessages((existing) => {
-          const removed = existing.filter((message) => message.id === messageIdForSend);
-          for (const message of removed) {
-            revokeUserMessagePreviewUrls(message);
-          }
-          const next = existing.filter((message) => message.id !== messageIdForSend);
-          return next.length === existing.length ? existing : next;
-        });
-        promptRef.current = promptForSend;
-        setPrompt(promptForSend);
-        setComposerCursor(collapseExpandedComposerCursor(promptForSend, promptForSend.length));
-        addComposerImagesToDraft(composerImagesSnapshot.map(cloneComposerImageForRetry));
-        addComposerTerminalContextsToDraft(composerTerminalContextsSnapshot);
-        setComposerTrigger(detectComposerTrigger(promptForSend, promptForSend.length));
-      }
-      setThreadError(
-        threadIdForSend,
-        err instanceof Error ? err.message : "Failed to send message.",
-      );
+    await dispatchComposerMessage({
+      prompt: promptForSend,
+      images: composerImages,
+      terminalContexts: sendableComposerTerminalContexts,
+      modelSelection: selectedModelSelection,
+      runtimeMode,
+      interactionMode,
     });
-    sendInFlightRef.current = false;
-    if (!turnStartSucceeded) {
-      resetLocalDispatch();
-    }
   };
+
+  useEffect(() => {
+    if (!activeThread || queuedComposerMessages.length === 0) {
+      return;
+    }
+    if (
+      phase === "running" ||
+      isSendBusy ||
+      isConnecting ||
+      sendInFlightRef.current ||
+      activePendingProgress ||
+      activePendingApproval
+    ) {
+      return;
+    }
+
+    const nextQueuedMessage = queuedComposerMessages[0];
+    if (!nextQueuedMessage) {
+      return;
+    }
+
+    if (queuedSteerRequest?.messageId === nextQueuedMessage.id) {
+      setQueuedSteerRequest(null);
+    }
+    setQueuedComposerMessages((existing) => existing.slice(1));
+    void dispatchComposerMessage(
+      {
+        prompt: nextQueuedMessage.prompt,
+        images: [...nextQueuedMessage.images],
+        terminalContexts: [...nextQueuedMessage.terminalContexts],
+        modelSelection: nextQueuedMessage.modelSelection,
+        runtimeMode: nextQueuedMessage.runtimeMode,
+        interactionMode: nextQueuedMessage.interactionMode,
+      },
+      {
+        onFailure: () => {
+          setQueuedComposerMessages((existing) => [nextQueuedMessage, ...existing]);
+        },
+      },
+    );
+  }, [
+    activePendingApproval,
+    activePendingProgress,
+    activeThread,
+    dispatchComposerMessage,
+    isConnecting,
+    isSendBusy,
+    phase,
+    queuedSteerRequest,
+    queuedComposerMessages,
+  ]);
+
+  useEffect(() => {
+    if (!queuedSteerRequest) {
+      return;
+    }
+    if (!queuedComposerMessages.some((message) => message.id === queuedSteerRequest.messageId)) {
+      setQueuedSteerRequest(null);
+      return;
+    }
+    if (phase !== "running" || isConnecting || queuedSteerRequest.interruptRequested) {
+      return;
+    }
+    if (workLogEntries.length <= queuedSteerRequest.baselineWorkLogEntryCount) {
+      return;
+    }
+
+    setQueuedSteerRequest((existing) =>
+      existing && existing.messageId === queuedSteerRequest.messageId
+        ? { ...existing, interruptRequested: true }
+        : existing,
+    );
+    const api = readNativeApi();
+    if (!api || !activeThread) {
+      return;
+    }
+    void api.orchestration.dispatchCommand({
+      type: "thread.turn.interrupt",
+      commandId: newCommandId(),
+      threadId: activeThread.id,
+      createdAt: new Date().toISOString(),
+    });
+  }, [
+    activeThread,
+    isConnecting,
+    phase,
+    queuedComposerMessages,
+    queuedSteerRequest,
+    workLogEntries.length,
+  ]);
 
   const onInterrupt = async () => {
     const api = readNativeApi();
@@ -4433,6 +4788,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
                       </div>
                     )}
 
+                    <ComposerQueuedMessages
+                      messages={queuedComposerMessages}
+                      className="mb-3"
+                      steerMessageId={queuedSteerRequest?.messageId ?? null}
+                      onEdit={onEditQueuedComposerMessage}
+                      onDelete={removeQueuedComposerMessage}
+                      onSteer={onSteerQueuedComposerMessage}
+                    />
+
                     {!isComposerApprovalState &&
                       pendingUserInputs.length === 0 &&
                       composerImages.length > 0 && (
@@ -4734,9 +5098,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
                           isConnecting={isConnecting}
                           isPreparingWorktree={isPreparingWorktree}
                           hasSendableContent={composerSendState.hasSendableContent}
+                          canQueueMessage={composerSendState.hasSendableContent}
                           onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                           onInterrupt={() => void onInterrupt()}
                           onImplementPlanInNewThread={() => void onImplementPlanInNewThread()}
+                          onQueueMessage={() =>
+                            queueCurrentComposerMessage(phase === "running" ? "steer" : "queue")
+                          }
                         />
                       </div>
                     </div>

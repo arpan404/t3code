@@ -44,6 +44,7 @@ export interface WorkLogEntry {
   toolTitle?: string;
   itemType?: ToolLifecycleItemType;
   requestKind?: PendingApproval["requestKind"];
+  intentText?: string;
 }
 
 interface DerivedWorkLogEntry extends WorkLogEntry {
@@ -90,6 +91,12 @@ export type TimelineEntry =
       kind: "message";
       createdAt: string;
       message: ChatMessage;
+    }
+  | {
+      id: string;
+      kind: "intent";
+      createdAt: string;
+      text: string;
     }
   | {
       id: string;
@@ -462,7 +469,6 @@ export function deriveWorkLogEntries(
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
   const entries = ordered
     .filter((activity) => (latestTurnId ? activity.turnId === latestTurnId : true))
-    .filter((activity) => activity.kind !== "tool.started")
     .filter((activity) => activity.kind !== "task.started" && activity.kind !== "task.completed")
     .filter((activity) => activity.kind !== "context-window.updated")
     .filter((activity) => activity.summary !== "Checkpoint captured")
@@ -496,14 +502,21 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   const entry: DerivedWorkLogEntry = {
     id: activity.id,
     createdAt: activity.createdAt,
-    label: activity.summary,
-    tone: activity.tone === "approval" ? "info" : activity.tone,
+    label: sanitizeWorkLogText(activity.summary),
+    tone:
+      activity.kind === "task.progress" ||
+      activity.kind === "reasoning.completed" ||
+      payload?.itemType === "reasoning"
+        ? "thinking"
+        : activity.tone === "approval"
+          ? "info"
+          : activity.tone,
     activityKind: activity.kind,
   };
   const itemType = extractWorkLogItemType(payload);
   const requestKind = extractWorkLogRequestKind(payload);
   if (payload && typeof payload.detail === "string" && payload.detail.length > 0) {
-    const detail = stripTrailingExitCode(payload.detail).output;
+    const detail = stripTrailingExitCode(sanitizeWorkLogText(payload.detail)).output;
     if (detail) {
       entry.detail = detail;
     }
@@ -523,7 +536,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (requestKind) {
     entry.requestKind = requestKind;
   }
-  const collapseKey = deriveToolLifecycleCollapseKey(entry);
+  const collapseKey = deriveActivityCollapseKey(entry, payload);
   if (collapseKey) {
     entry.collapseKey = collapseKey;
   }
@@ -549,16 +562,22 @@ function shouldCollapseToolLifecycleEntries(
   previous: DerivedWorkLogEntry,
   next: DerivedWorkLogEntry,
 ): boolean {
-  if (previous.activityKind !== "tool.updated" && previous.activityKind !== "tool.completed") {
+  if (previous.collapseKey === undefined || previous.collapseKey !== next.collapseKey) {
     return false;
   }
-  if (next.activityKind !== "tool.updated" && next.activityKind !== "tool.completed") {
+
+  if (previous.tone === "thinking" && next.tone === "thinking") {
+    return true;
+  }
+
+  if (
+    !isToolLifecycleActivityKind(previous.activityKind) ||
+    !isToolLifecycleActivityKind(next.activityKind)
+  ) {
     return false;
   }
-  if (previous.activityKind === "tool.completed") {
-    return false;
-  }
-  return previous.collapseKey !== undefined && previous.collapseKey === next.collapseKey;
+
+  return previous.activityKind !== "tool.completed";
 }
 
 function mergeDerivedWorkLogEntries(
@@ -566,7 +585,10 @@ function mergeDerivedWorkLogEntries(
   next: DerivedWorkLogEntry,
 ): DerivedWorkLogEntry {
   const changedFiles = mergeChangedFiles(previous.changedFiles, next.changedFiles);
-  const detail = next.detail ?? previous.detail;
+  const detail =
+    previous.tone === "thinking" && next.tone === "thinking"
+      ? mergeThinkingWorkLogDetail(previous.detail, next.detail)
+      : (next.detail ?? previous.detail);
   const command = next.command ?? previous.command;
   const toolTitle = next.toolTitle ?? previous.toolTitle;
   const itemType = next.itemType ?? previous.itemType;
@@ -575,6 +597,7 @@ function mergeDerivedWorkLogEntries(
   return {
     ...previous,
     ...next,
+    createdAt: previous.createdAt,
     ...(detail ? { detail } : {}),
     ...(command ? { command } : {}),
     ...(changedFiles.length > 0 ? { changedFiles } : {}),
@@ -583,6 +606,27 @@ function mergeDerivedWorkLogEntries(
     ...(requestKind ? { requestKind } : {}),
     ...(collapseKey ? { collapseKey } : {}),
   };
+}
+
+function mergeThinkingWorkLogDetail(
+  previous: string | undefined,
+  next: string | undefined,
+): string | undefined {
+  if (!previous) {
+    return next;
+  }
+  if (!next) {
+    return previous;
+  }
+  if (next.startsWith(previous)) {
+    return next;
+  }
+  if (previous.startsWith(next)) {
+    return previous;
+  }
+
+  const needsSpace = /[A-Za-z0-9).!?]$/.test(previous) && /^[A-Za-z0-9(]/.test(next);
+  return `${previous}${needsSpace ? " " : ""}${next}`;
 }
 
 function mergeChangedFiles(
@@ -596,21 +640,65 @@ function mergeChangedFiles(
   return [...new Set(merged)];
 }
 
-function deriveToolLifecycleCollapseKey(entry: DerivedWorkLogEntry): string | undefined {
-  if (entry.activityKind !== "tool.updated" && entry.activityKind !== "tool.completed") {
+function isToolLifecycleActivityKind(kind: OrchestrationThreadActivity["kind"]): boolean {
+  return kind === "tool.started" || kind === "tool.updated" || kind === "tool.completed";
+}
+
+function deriveActivityCollapseKey(
+  entry: DerivedWorkLogEntry,
+  payload: Record<string, unknown> | null,
+): string | undefined {
+  if (entry.tone === "thinking") {
+    const taskId = asTrimmedString(payload?.taskId);
+    if (taskId) {
+      return `thinking:${taskId}`;
+    }
+  }
+
+  if (!isToolLifecycleActivityKind(entry.activityKind)) {
     return undefined;
   }
+
   const normalizedLabel = normalizeCompactToolLabel(entry.toolTitle ?? entry.label);
-  const detail = entry.detail?.trim() ?? "";
   const itemType = entry.itemType ?? "";
-  if (normalizedLabel.length === 0 && detail.length === 0 && itemType.length === 0) {
+  if (normalizedLabel.length === 0 && itemType.length === 0) {
     return undefined;
   }
-  return [itemType, normalizedLabel, detail].join("\u001f");
+  return [itemType, normalizedLabel].join("\u001f");
 }
 
 function normalizeCompactToolLabel(value: string): string {
-  return value.replace(/\s+(?:complete|completed)\s*$/i, "").trim();
+  return value.replace(/\s+(?:start(?:ed)?|complete|completed)\s*$/i, "").trim();
+}
+
+function extractEmbeddedWorkLogText(value: string): string | null {
+  for (const key of ["intent", "goal", "explanation", "summary"] as const) {
+    const match = new RegExp(`["']${key}["']\\s*:\\s*["']([^"']+)["']`, "i").exec(value);
+    const extracted = asTrimmedString(match?.[1]);
+    if (extracted) {
+      return extracted;
+    }
+  }
+  return null;
+}
+
+function sanitizeWorkLogText(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return value;
+  }
+
+  const embedded = extractEmbeddedWorkLogText(trimmed);
+  if (embedded) {
+    return embedded;
+  }
+
+  const payloadBoundary = trimmed.indexOf(" - {");
+  if (payloadBoundary > 0) {
+    return trimmed.slice(0, payloadBoundary).trim();
+  }
+
+  return trimmed;
 }
 
 function toLatestProposedPlanState(proposedPlan: ProposedPlan): LatestProposedPlanState {
@@ -666,7 +754,7 @@ function extractToolCommand(payload: Record<string, unknown> | null): string | n
 }
 
 function extractToolTitle(payload: Record<string, unknown> | null): string | null {
-  return asTrimmedString(payload?.title);
+  return typeof payload?.title === "string" ? sanitizeWorkLogText(payload.title) : null;
 }
 
 function stripTrailingExitCode(value: string): {
@@ -830,27 +918,197 @@ export function deriveTimelineEntries(
   proposedPlans: ProposedPlan[],
   workEntries: WorkLogEntry[],
 ): TimelineEntry[] {
-  const messageRows: TimelineEntry[] = messages.map((message) => ({
-    id: message.id,
-    kind: "message",
-    createdAt: message.createdAt,
-    message,
-  }));
-  const proposedPlanRows: TimelineEntry[] = proposedPlans.map((proposedPlan) => ({
-    id: proposedPlan.id,
-    kind: "proposed-plan",
-    createdAt: proposedPlan.createdAt,
-    proposedPlan,
-  }));
-  const workRows: TimelineEntry[] = workEntries.map((entry) => ({
-    id: entry.id,
-    kind: "work",
-    createdAt: entry.createdAt,
-    entry,
-  }));
-  return [...messageRows, ...proposedPlanRows, ...workRows].toSorted((a, b) =>
-    a.createdAt.localeCompare(b.createdAt),
+  const rawEntries: TimelineEntry[] = [
+    ...messages.map((message) => ({
+      id: message.id,
+      kind: "message" as const,
+      createdAt: message.createdAt,
+      message,
+    })),
+    ...proposedPlans.map((proposedPlan) => ({
+      id: proposedPlan.id,
+      kind: "proposed-plan" as const,
+      createdAt: proposedPlan.createdAt,
+      proposedPlan,
+    })),
+    ...workEntries.map((entry) => ({
+      id: entry.id,
+      kind: "work" as const,
+      createdAt: entry.createdAt,
+      entry,
+    })),
+  ].toSorted((a, b) => a.createdAt.localeCompare(b.createdAt));
+
+  const normalizedEntries: TimelineEntry[] = [];
+  let pendingIntentText: string | null = null;
+  let previousIntentFingerprint: string | null = null;
+
+  for (const entry of rawEntries) {
+    if (entry.kind === "work" && isReportIntentWorkEntry(entry.entry)) {
+      const intentText = extractReportIntentText(entry.entry);
+      if (intentText) {
+        const nextIntentFingerprint = normalizeIntentComparisonText(intentText);
+        if (nextIntentFingerprint !== previousIntentFingerprint) {
+          normalizedEntries.push({
+            id: `intent:${entry.id}`,
+            kind: "intent",
+            createdAt: entry.createdAt,
+            text: intentText,
+          });
+        }
+        pendingIntentText = intentText;
+        previousIntentFingerprint = nextIntentFingerprint;
+      }
+      continue;
+    }
+
+    previousIntentFingerprint = null;
+
+    if (entry.kind === "work" && pendingIntentText) {
+      if (entry.entry.tone === "tool") {
+        normalizedEntries.push({
+          ...entry,
+          entry: {
+            ...entry.entry,
+            intentText: pendingIntentText,
+          },
+        });
+        pendingIntentText = null;
+        continue;
+      }
+
+      normalizedEntries.push(entry);
+      continue;
+    }
+
+    normalizedEntries.push(entry);
+  }
+
+  return mergeShortIntentPreamblesIntoAssistantMessages(normalizedEntries);
+}
+
+function mergeShortIntentPreamblesIntoAssistantMessages(entries: TimelineEntry[]): TimelineEntry[] {
+  const mergedEntries: TimelineEntry[] = [];
+
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    if (!entry) {
+      continue;
+    }
+
+    if (!isShortIntentTimelineEntry(entry)) {
+      mergedEntries.push(entry);
+      continue;
+    }
+
+    const intentEntries = [entry];
+    let cursor = index + 1;
+    while (cursor < entries.length && isShortIntentTimelineEntry(entries[cursor])) {
+      intentEntries.push(entries[cursor] as Extract<TimelineEntry, { kind: "intent" }>);
+      cursor += 1;
+    }
+
+    const nextEntry = entries[cursor];
+    if (nextEntry?.kind === "message" && nextEntry.message.role === "assistant") {
+      const mergedPreamble = intentEntries.map((intentEntry) => intentEntry.text).join("\n");
+      mergedEntries.push({
+        ...nextEntry,
+        message: {
+          ...nextEntry.message,
+          text: prependIntentPreambleToAssistantMessage(mergedPreamble, nextEntry.message.text),
+        },
+      });
+      index = cursor;
+      continue;
+    }
+
+    mergedEntries.push(...intentEntries);
+    index = cursor - 1;
+  }
+
+  return mergedEntries;
+}
+
+function normalizeIntentToolLabel(value: string | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return null;
+  }
+  return trimmed
+    .replace(/[_\s]+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function isReportIntentWorkEntry(entry: WorkLogEntry): boolean {
+  return (
+    normalizeIntentToolLabel(entry.toolTitle) === "report intent" ||
+    normalizeIntentToolLabel(entry.label) === "report intent" ||
+    normalizeIntentToolLabel(entry.detail) === "report intent"
   );
+}
+
+function extractReportIntentText(entry: WorkLogEntry): string | null {
+  for (const candidate of [entry.detail, entry.toolTitle, entry.label]) {
+    const trimmed = candidate?.trim();
+    if (!trimmed) {
+      continue;
+    }
+    if (normalizeIntentToolLabel(trimmed) === "report intent") {
+      continue;
+    }
+    return normalizeIntentDisplayText(trimmed);
+  }
+  return null;
+}
+
+function normalizeIntentComparisonText(value: string): string {
+  return value
+    .trim()
+    .replace(/[^a-z0-9]+/gi, " ")
+    .toLowerCase()
+    .trim();
+}
+
+function normalizeIntentDisplayText(value: string): string {
+  const compact = value.replace(/\s+/g, " ").trim();
+  const words = compact.split(" ").filter(Boolean);
+
+  if (words.length >= 2 && words.length % 2 === 0) {
+    const midpoint = words.length / 2;
+    const left = words.slice(0, midpoint).join(" ");
+    const right = words.slice(midpoint).join(" ");
+    if (normalizeIntentComparisonText(left) === normalizeIntentComparisonText(right)) {
+      return left;
+    }
+  }
+
+  return compact;
+}
+
+function isShortIntentTimelineEntry(
+  entry: TimelineEntry | undefined,
+): entry is Extract<TimelineEntry, { kind: "intent" }> {
+  if (entry?.kind !== "intent") {
+    return false;
+  }
+
+  return entry.text.length <= 72 && entry.text.split(/\s+/).filter(Boolean).length <= 8;
+}
+
+function prependIntentPreambleToAssistantMessage(intentText: string, messageText: string): string {
+  const preamble = intentText.trim();
+  const content = messageText.trim();
+
+  if (!preamble) {
+    return messageText;
+  }
+
+  if (!content) {
+    return preamble;
+  }
+
+  return `${preamble}\n\n${content}`;
 }
 
 export function deriveCompletionDividerBeforeEntryId(

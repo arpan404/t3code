@@ -6,6 +6,7 @@ import {
   buildExpiredTerminalContextToastCopy,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
+  formatQueuedComposerMessagePreview,
   hasServerAcknowledgedLocalDispatch,
   waitForStartedServerThread,
 } from "./chatView";
@@ -72,6 +73,28 @@ describe("buildExpiredTerminalContextToastCopy", () => {
       title: "Expired terminal contexts omitted from message",
       description: "Re-add it if you want that terminal output included.",
     });
+  });
+});
+
+describe("formatQueuedComposerMessagePreview", () => {
+  it("uses trimmed prompt text when present", () => {
+    expect(
+      formatQueuedComposerMessagePreview({
+        prompt: "  fix   the flaky reconnect path  ",
+        imageCount: 1,
+        terminalContextCount: 1,
+      }),
+    ).toBe("fix the flaky reconnect path");
+  });
+
+  it("falls back to queued attachment/context summary when the prompt is empty", () => {
+    expect(
+      formatQueuedComposerMessagePreview({
+        prompt: "\uFFFC",
+        imageCount: 2,
+        terminalContextCount: 1,
+      }),
+    ).toBe("2 images · 1 terminal context");
   });
 });
 

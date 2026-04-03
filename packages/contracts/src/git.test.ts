@@ -72,6 +72,23 @@ describe("GitRunStackedActionInput", () => {
     expect(parsed.actionId).toBe("action-1");
     expect(parsed.action).toBe("create_pr");
   });
+
+  it("accepts an optional model selection override", () => {
+    const parsed = decodeRunStackedActionInput({
+      actionId: "action-1",
+      cwd: "/repo",
+      action: "commit",
+      modelSelection: {
+        provider: "githubCopilot",
+        model: "gpt-5",
+      },
+    });
+
+    expect(parsed.modelSelection).toEqual({
+      provider: "githubCopilot",
+      model: "gpt-5",
+    });
+  });
 });
 
 describe("GitRunStackedActionResult", () => {

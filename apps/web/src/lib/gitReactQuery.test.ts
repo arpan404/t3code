@@ -20,6 +20,7 @@ import {
   gitStatusQueryOptions,
   invalidateGitQueries,
 } from "./gitReactQuery";
+import { getWsRpcClient } from "../wsRpcClient";
 
 describe("gitMutationKeys", () => {
   it("scopes stacked action keys by cwd", () => {
@@ -61,6 +62,42 @@ describe("git mutation options", () => {
       queryClient,
     });
     expect(options.mutationKey).toEqual(gitMutationKeys.preparePullRequestThread("/repo/a"));
+  });
+
+  it("forwards an optional model selection with stacked actions", async () => {
+    const runStackedAction = vi.fn().mockResolvedValue({ ok: true });
+    vi.mocked(getWsRpcClient).mockReturnValue({
+      git: {
+        runStackedAction,
+      },
+    } as unknown as ReturnType<typeof getWsRpcClient>);
+
+    const options = gitRunStackedActionMutationOptions({
+      cwd: "/repo/a",
+      queryClient,
+    });
+
+    await options.mutationFn?.(
+      {
+        actionId: "action-1",
+        action: "commit",
+        modelSelection: {
+          provider: "githubCopilot",
+          model: "gpt-5",
+        },
+      },
+      {} as never,
+    );
+
+    expect(runStackedAction).toHaveBeenCalledWith({
+      actionId: "action-1",
+      cwd: "/repo/a",
+      action: "commit",
+      modelSelection: {
+        provider: "githubCopilot",
+        model: "gpt-5",
+      },
+    });
   });
 });
 

@@ -1,4 +1,8 @@
-import { type GitActionProgressEvent, type GitStackedAction } from "@t3tools/contracts";
+import {
+  type GitActionProgressEvent,
+  type GitRunStackedActionInput,
+  type GitStackedAction,
+} from "@t3tools/contracts";
 import { mutationOptions, queryOptions, type QueryClient } from "@tanstack/react-query";
 import { ensureNativeApi } from "../nativeApi";
 import { getWsRpcClient } from "../wsRpcClient";
@@ -138,6 +142,7 @@ export function gitRunStackedActionMutationOptions(input: {
       commitMessage,
       featureBranch,
       filePaths,
+      modelSelection,
       onProgress,
     }: {
       actionId: string;
@@ -145,6 +150,7 @@ export function gitRunStackedActionMutationOptions(input: {
       commitMessage?: string;
       featureBranch?: boolean;
       filePaths?: string[];
+      modelSelection?: GitRunStackedActionInput["modelSelection"];
       onProgress?: (event: GitActionProgressEvent) => void;
     }) => {
       if (!input.cwd) throw new Error("Git action is unavailable.");
@@ -156,6 +162,7 @@ export function gitRunStackedActionMutationOptions(input: {
           ...(commitMessage ? { commitMessage } : {}),
           ...(featureBranch ? { featureBranch } : {}),
           ...(filePaths ? { filePaths } : {}),
+          ...(modelSelection ? { modelSelection } : {}),
         },
         ...(onProgress ? [{ onProgress }] : []),
       );

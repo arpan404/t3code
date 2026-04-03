@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
+import { DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, PlatformError, Scope } from "effect";
@@ -575,6 +576,7 @@ function runStackedAction(
     commitMessage?: string;
     featureBranch?: boolean;
     filePaths?: readonly string[];
+    modelSelection?: ModelSelection;
   },
   options?: Parameters<GitManagerShape["runStackedAction"]>[1],
 ) {
@@ -601,6 +603,7 @@ function preparePullRequestThread(
 function makeManager(input?: {
   ghScenario?: FakeGhScenario;
   textGeneration?: Partial<FakeGitTextGeneration>;
+  textGenerationModelSelection?: ModelSelection;
 }) {
   const { service: gitHubCli, ghCalls } = createGitHubCliWithFakeGh(input?.ghScenario);
   const textGeneration = createTextGeneration(input?.textGeneration);
@@ -608,7 +611,11 @@ function makeManager(input?: {
     prefix: "t3-git-manager-test-",
   });
 
-  const serverSettingsLayer = ServerSettingsService.layerTest();
+  const serverSettingsLayer = ServerSettingsService.layerTest(
+    input?.textGenerationModelSelection
+      ? { textGenerationModelSelection: input.textGenerationModelSelection }
+      : {},
+  );
 
   const gitCoreLayer = GitCoreLive.pipe(
     Layer.provideMerge(NodeServices.layer),
@@ -1232,6 +1239,91 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         Effect.map((r) => r.stdout.trim()),
       );
       expect(mergeBase).toBe(mainSha);
+    }),
+  );
+
+  it.effect("uses the provider's cost-efficient model for commit generation", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      fs.writeFileSync(path.join(repoDir, "README.md"), "hello\ncheap-model\n");
+
+      const seenSelections: ModelSelection[] = [];
+      const configuredSelection: ModelSelection = {
+        provider: "claudeAgent",
+        model: "claude-opus-4-6",
+      };
+
+      const { manager } = yield* makeManager({
+        textGenerationModelSelection: configuredSelection,
+        textGeneration: {
+          generateCommitMessage: (input) =>
+            Effect.sync(() => {
+              seenSelections.push(input.modelSelection);
+              return {
+                subject: "Use cheap model for commit generation",
+                body: "",
+              };
+            }),
+        },
+      });
+
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+      });
+
+      expect(result.commit.status).toBe("created");
+      expect(seenSelections).toEqual([
+        {
+          provider: "claudeAgent",
+          model: DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER.claudeAgent,
+        },
+      ]);
+    }),
+  );
+
+  it.effect("prefers the request model selection over server git settings", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      fs.writeFileSync(path.join(repoDir, "README.md"), "hello\nrequest-provider\n");
+
+      const seenSelections: ModelSelection[] = [];
+
+      const { manager } = yield* makeManager({
+        textGenerationModelSelection: {
+          provider: "codex",
+          model: "gpt-5.4",
+        },
+        textGeneration: {
+          generateCommitMessage: (input) =>
+            Effect.sync(() => {
+              seenSelections.push(input.modelSelection);
+              return {
+                subject: "Use request provider for commit generation",
+                body: "",
+              };
+            }),
+        },
+      });
+
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        modelSelection: {
+          provider: "githubCopilot",
+          model: "gpt-4.1",
+        },
+      });
+
+      expect(result.commit.status).toBe("created");
+      expect(seenSelections).toEqual([
+        {
+          provider: "githubCopilot",
+          model: DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER.githubCopilot,
+        },
+      ]);
     }),
   );
 

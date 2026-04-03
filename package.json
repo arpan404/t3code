@@ -54,11 +54,11 @@
     "sync:vscode-icons": "node scripts/sync-vscode-icons.mjs"
   },
   "devDependencies": {
-    "@types/node": "catalog:",
+    "@types/node": "^24.12.0",
     "oxfmt": "^0.40.0",
-    "oxlint": "^1.55.0",
-    "turbo": "^2.3.3",
-    "vitest": "catalog:"
+    "oxlint": "^1.58.0",
+    "turbo": "^2.9.3",
+    "vitest": "^4.1.2"
   },
   "overrides": {
     "vite": "^8.0.0"

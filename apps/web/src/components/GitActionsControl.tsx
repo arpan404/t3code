@@ -549,6 +549,9 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
         ...(commitMessage ? { commitMessage } : {}),
         ...(featureBranch ? { featureBranch } : {}),
         ...(filePaths ? { filePaths } : {}),
+        ...(activeServerThread?.modelSelection
+          ? { modelSelection: activeServerThread.modelSelection }
+          : {}),
         onProgress: applyProgressEvent,
       });
 

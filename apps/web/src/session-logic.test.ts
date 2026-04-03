@@ -742,6 +742,163 @@ describe("deriveWorkLogEntries", () => {
     });
   });
 
+  it("maps reasoning-style activities to thinking tone", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "reasoning-progress",
+        kind: "task.progress",
+        summary: "Reasoning update",
+        tone: "info",
+        payload: {
+          detail: "Inspecting project structure",
+        },
+      }),
+      makeActivity({
+        id: "reasoning-complete",
+        kind: "reasoning.completed",
+        summary: "Reasoning",
+        tone: "info",
+        payload: {
+          itemType: "reasoning",
+          detail: "Ready to patch the adapter",
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities, undefined);
+    expect(entries).toHaveLength(2);
+    expect(entries[0]?.tone).toBe("thinking");
+    expect(entries[1]?.tone).toBe("thinking");
+  });
+
+  it("collapses streamed reasoning updates for the same reasoning task", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "reasoning-progress-1",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "task.progress",
+        summary: "Reasoning",
+        tone: "info",
+        payload: {
+          taskId: "reasoning:item-1",
+          detail: "Inspecting package scripts.",
+        },
+      }),
+      makeActivity({
+        id: "reasoning-progress-2",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "task.progress",
+        summary: "Reasoning",
+        tone: "info",
+        payload: {
+          taskId: "reasoning:item-1",
+          detail: "Running format and lint checks.",
+        },
+      }),
+      makeActivity({
+        id: "reasoning-complete",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "reasoning.completed",
+        summary: "Reasoning",
+        tone: "info",
+        payload: {
+          taskId: "reasoning:item-1",
+          itemType: "reasoning",
+          detail: "Checks finished; ready to patch the timeline.",
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities, undefined);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      createdAt: "2026-02-23T00:00:01.000Z",
+      tone: "thinking",
+      detail:
+        "Inspecting package scripts. Running format and lint checks. Checks finished; ready to patch the timeline.",
+    });
+  });
+
+  it("accumulates token-like streamed reasoning fragments into readable text", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "reasoning-token-1",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "task.progress",
+        summary: "Reasoning",
+        tone: "info",
+        payload: {
+          taskId: "reasoning:item-tokenized",
+          detail: "Inspecting",
+        },
+      }),
+      makeActivity({
+        id: "reasoning-token-2",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "task.progress",
+        summary: "Reasoning",
+        tone: "info",
+        payload: {
+          taskId: "reasoning:item-tokenized",
+          detail: "package.json",
+        },
+      }),
+      makeActivity({
+        id: "reasoning-token-3",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "task.progress",
+        summary: "Reasoning",
+        tone: "info",
+        payload: {
+          taskId: "reasoning:item-tokenized",
+          detail: "before patching.",
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities, undefined);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.detail).toBe("Inspecting package.json before patching.");
+  });
+
+  it("keeps tool starts visible and collapses them into the final tool entry", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "tool-started",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.started",
+        summary: "Running format & checks",
+        tone: "tool",
+        payload: {
+          itemType: "command_execution",
+          title: "Running format & checks",
+          detail: "Running format & checks",
+        },
+      }),
+      makeActivity({
+        id: "tool-completed",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "Running format & checks",
+        tone: "tool",
+        payload: {
+          itemType: "command_execution",
+          title: "Running format & checks",
+          detail: "Formatting and checks completed successfully.",
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities, undefined);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      createdAt: "2026-02-23T00:00:01.000Z",
+      toolTitle: "Running format & checks",
+      detail: "Formatting and checks completed successfully.",
+    });
+  });
+
   it("extracts changed file paths for file-change tool activities", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -816,7 +973,7 @@ describe("deriveWorkLogEntries", () => {
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({
       id: "tool-complete",
-      createdAt: "2026-02-23T00:00:03.000Z",
+      createdAt: "2026-02-23T00:00:01.000Z",
       label: "Tool call completed",
       detail: 'Read: {"file_path":"/tmp/app.ts"}',
       command: "sed -n 1,40p /tmp/app.ts",
@@ -962,6 +1119,260 @@ describe("deriveTimelineEntries", () => {
         planMarkdown: "# Ship it",
         implementedAt: null,
         implementationThreadId: null,
+      },
+    });
+  });
+
+  it("lifts report_intent out of the work log and attaches it to the next tool entry", () => {
+    const entries = deriveTimelineEntries(
+      [],
+      [],
+      [
+        {
+          id: "work-intent",
+          createdAt: "2026-02-23T00:00:01.000Z",
+          label: "Report Intent",
+          toolTitle: "Report Intent",
+          detail: "Running format and checks",
+          tone: "tool",
+        },
+        {
+          id: "work-tool",
+          createdAt: "2026-02-23T00:00:02.000Z",
+          label: "Run command",
+          toolTitle: "Run command",
+          detail: "bun fmt && bun lint",
+          tone: "tool",
+        },
+      ],
+    );
+
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toMatchObject({
+      kind: "intent",
+      text: "Running format and checks",
+    });
+    expect(entries[1]).toMatchObject({
+      kind: "work",
+      entry: {
+        intentText: "Running format and checks",
+      },
+    });
+  });
+
+  it("collapses repeated near-identical report_intent entries into a single timeline intent row", () => {
+    const entries = deriveTimelineEntries(
+      [],
+      [],
+      [
+        {
+          id: "work-intent-1",
+          createdAt: "2026-02-23T00:00:01.000Z",
+          label: "Report Intent",
+          toolTitle: "Report Intent",
+          detail: "Running format and checks",
+          tone: "tool",
+        },
+        {
+          id: "work-intent-2",
+          createdAt: "2026-02-23T00:00:01.100Z",
+          label: "Report Intent",
+          toolTitle: "Report Intent",
+          detail: "Running format and checks.",
+          tone: "tool",
+        },
+        {
+          id: "work-tool",
+          createdAt: "2026-02-23T00:00:02.000Z",
+          label: "Run command",
+          toolTitle: "Run command",
+          detail: "bun fmt && bun lint",
+          tone: "tool",
+        },
+      ],
+    );
+
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toMatchObject({
+      kind: "intent",
+      text: "Running format and checks",
+    });
+    expect(entries[1]).toMatchObject({
+      kind: "work",
+      entry: {
+        intentText: "Running format and checks.",
+      },
+    });
+  });
+
+  it("normalizes duplicated report_intent text before rendering it in the timeline", () => {
+    const entries = deriveTimelineEntries(
+      [],
+      [],
+      [
+        {
+          id: "work-intent-duplicate-text",
+          createdAt: "2026-02-23T00:00:01.000Z",
+          label: "Report Intent",
+          toolTitle: "Report Intent",
+          detail: "Exploring codebase Exploring codebase",
+          tone: "tool",
+        },
+        {
+          id: "work-tool-after-duplicate-text",
+          createdAt: "2026-02-23T00:00:02.000Z",
+          label: "Read file",
+          toolTitle: "Read file",
+          detail: "src/main.ts",
+          tone: "tool",
+        },
+      ],
+    );
+
+    expect(entries[0]).toMatchObject({
+      kind: "intent",
+      text: "Exploring codebase",
+    });
+    expect(entries[1]).toMatchObject({
+      kind: "work",
+      entry: {
+        intentText: "Exploring codebase",
+      },
+    });
+  });
+
+  it("merges short consecutive intent rows into the following assistant message", () => {
+    const entries = deriveTimelineEntries(
+      [
+        {
+          id: MessageId.makeUnsafe("assistant-final"),
+          role: "assistant",
+          text: "I found the root cause in the timeline renderer.",
+          createdAt: "2026-02-23T00:00:03.000Z",
+          streaming: false,
+        },
+      ],
+      [],
+      [
+        {
+          id: "work-intent-1",
+          createdAt: "2026-02-23T00:00:01.000Z",
+          label: "Report Intent",
+          toolTitle: "Report Intent",
+          detail: "Exploring codebase",
+          tone: "tool",
+        },
+        {
+          id: "work-intent-2",
+          createdAt: "2026-02-23T00:00:02.000Z",
+          label: "Report Intent",
+          toolTitle: "Report Intent",
+          detail: "Tracing timeline state",
+          tone: "tool",
+        },
+      ],
+    );
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      kind: "message",
+      message: {
+        text: "Exploring codebase\nTracing timeline state\n\nI found the root cause in the timeline renderer.",
+      },
+    });
+  });
+
+  it("keeps longer intent rows separate from assistant messages", () => {
+    const entries = deriveTimelineEntries(
+      [
+        {
+          id: MessageId.makeUnsafe("assistant-after-long-intent"),
+          role: "assistant",
+          text: "I can now summarize the migration plan.",
+          createdAt: "2026-02-23T00:00:03.000Z",
+          streaming: false,
+        },
+      ],
+      [],
+      [
+        {
+          id: "work-intent-long",
+          createdAt: "2026-02-23T00:00:01.000Z",
+          label: "Report Intent",
+          toolTitle: "Report Intent",
+          detail:
+            "Inspecting all server orchestration boundaries before rewriting the ingestion and projection path.",
+          tone: "tool",
+        },
+      ],
+    );
+
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toMatchObject({
+      kind: "intent",
+      text: "Inspecting all server orchestration boundaries before rewriting the ingestion and projection path.",
+    });
+    expect(entries[1]).toMatchObject({
+      kind: "message",
+      message: {
+        text: "I can now summarize the migration plan.",
+      },
+    });
+  });
+
+  it("does not attach intent text to thinking rows before the next tool call", () => {
+    const entries = deriveTimelineEntries(
+      [],
+      [],
+      [
+        {
+          id: "work-intent",
+          createdAt: "2026-02-23T00:00:01.000Z",
+          label: "Report Intent",
+          toolTitle: "Report Intent",
+          detail: "Counting files",
+          tone: "tool",
+        },
+        {
+          id: "work-thinking",
+          createdAt: "2026-02-23T00:00:02.000Z",
+          label: "Reasoning",
+          detail: "Checking tracked files first.",
+          tone: "thinking",
+        },
+        {
+          id: "work-tool",
+          createdAt: "2026-02-23T00:00:03.000Z",
+          label: "Run command",
+          toolTitle: "Run command",
+          detail: "git ls-files",
+          tone: "tool",
+        },
+      ],
+    );
+
+    expect(entries).toHaveLength(3);
+    expect(entries[0]).toMatchObject({
+      kind: "intent",
+      text: "Counting files",
+    });
+    expect(entries[1]).toMatchObject({
+      kind: "work",
+      entry: {
+        tone: "thinking",
+      },
+    });
+    expect(entries[1]).not.toMatchObject({
+      kind: "work",
+      entry: {
+        intentText: "Counting files",
+      },
+    });
+    expect(entries[2]).toMatchObject({
+      kind: "work",
+      entry: {
+        tone: "tool",
+        intentText: "Counting files",
       },
     });
   });
@@ -1167,6 +1578,7 @@ describe("PROVIDER_OPTIONS", () => {
     expect(PROVIDER_OPTIONS).toEqual([
       { value: "codex", label: "Codex", available: true },
       { value: "claudeAgent", label: "Claude", available: true },
+      { value: "githubCopilot", label: "Copilot", available: true },
       { value: "cursor", label: "Cursor", available: false },
     ]);
     expect(claude).toEqual({
