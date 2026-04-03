@@ -11,6 +11,16 @@
 import type { Scope } from "effect";
 import { Effect, TxQueue, TxRef } from "effect";
 
+export interface DrainableWorkerOptions {
+  /**
+   * Optional queue capacity. When provided as a positive integer, enqueue
+   * applies natural backpressure once the queue reaches this size.
+   *
+   * Defaults to unbounded for backwards compatibility.
+   */
+  readonly capacity?: number;
+}
+
 export interface DrainableWorker<A> {
   /**
    * Enqueue a work item and track it for `drain()`.
@@ -27,7 +37,7 @@ export interface DrainableWorker<A> {
 }
 
 /**
- * Create a drainable worker that processes items from an unbounded queue.
+ * Create a drainable worker that processes items from a queue.
  *
  * The worker is forked into the current scope and will be interrupted when
  * the scope closes. A finalizer shuts down the queue.
@@ -37,9 +47,14 @@ export interface DrainableWorker<A> {
  */
 export const makeDrainableWorker = <A, E, R>(
   process: (item: A) => Effect.Effect<void, E, R>,
+  options?: DrainableWorkerOptions,
 ): Effect.Effect<DrainableWorker<A>, never, Scope.Scope | R> =>
   Effect.gen(function* () {
-    const queue = yield* Effect.acquireRelease(TxQueue.unbounded<A>(), TxQueue.shutdown);
+    const normalizedCapacity = Math.max(0, Math.floor(options?.capacity ?? 0));
+    const queue = yield* Effect.acquireRelease(
+      normalizedCapacity > 0 ? TxQueue.bounded<A>(normalizedCapacity) : TxQueue.unbounded<A>(),
+      TxQueue.shutdown,
+    );
     const outstanding = yield* TxRef.make(0);
 
     yield* TxQueue.take(queue).pipe(

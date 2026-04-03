@@ -6,6 +6,7 @@ import type {
 } from "@t3tools/contracts";
 import { OrchestrationCommand } from "@t3tools/contracts";
 import { Deferred, Effect, Layer, Option, PubSub, Queue, Schema, Stream } from "effect";
+import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { toPersistenceSqlError } from "../../persistence/Errors.ts";
@@ -30,6 +31,19 @@ interface CommandEnvelope {
   result: Deferred.Deferred<{ sequence: number }, OrchestrationDispatchError>;
 }
 
+const ORCHESTRATION_ENGINE_WORKER_COUNT = Math.max(
+  1,
+  Number.parseInt(process.env.T3CODE_ORCHESTRATION_WORKERS ?? "8", 10) || 8,
+);
+const ORCHESTRATION_ENGINE_QUEUE_CAPACITY = Math.max(
+  64,
+  Number.parseInt(process.env.T3CODE_ORCHESTRATION_QUEUE_CAPACITY ?? "10000", 10) || 10_000,
+);
+const ORCHESTRATION_ENGINE_PARTITION_QUEUE_CAPACITY = Math.max(
+  64,
+  Math.ceil(ORCHESTRATION_ENGINE_QUEUE_CAPACITY / ORCHESTRATION_ENGINE_WORKER_COUNT),
+);
+
 function commandToAggregateRef(command: OrchestrationCommand): {
   readonly aggregateKind: "project" | "thread";
   readonly aggregateId: ProjectId | ThreadId;
@@ -50,6 +64,41 @@ function commandToAggregateRef(command: OrchestrationCommand): {
   }
 }
 
+function commandThreadId(command: OrchestrationCommand): ThreadId | null {
+  switch (command.type) {
+    case "project.create":
+    case "project.meta.update":
+    case "project.delete":
+    case "thread.create":
+      return null;
+    default:
+      return command.threadId;
+  }
+}
+
+function commandPartitionKey(command: OrchestrationCommand): string {
+  if (command.type === "project.create" || command.type === "project.meta.update") {
+    return `project:${command.projectId}`;
+  }
+  if (command.type === "project.delete" || command.type === "thread.create") {
+    return `project:${command.projectId}`;
+  }
+  const threadId = commandThreadId(command);
+  if (threadId === null) {
+    return "shared";
+  }
+  return `thread:${threadId}`;
+}
+
+function partitionIndexForCommand(command: OrchestrationCommand, workerCount: number): number {
+  const key = commandPartitionKey(command);
+  let hash = 0;
+  for (let index = 0; index < key.length; index += 1) {
+    hash = (hash * 31 + key.charCodeAt(index)) >>> 0;
+  }
+  return hash % workerCount;
+}
+
 const makeOrchestrationEngine = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const eventStore = yield* OrchestrationEventStore;
@@ -59,31 +108,37 @@ const makeOrchestrationEngine = Effect.gen(function* () {
 
   let readModel = createEmptyReadModel(new Date().toISOString());
 
-  const commandQueue = yield* Queue.unbounded<CommandEnvelope>();
+  const commandQueue = yield* Queue.bounded<CommandEnvelope>(ORCHESTRATION_ENGINE_QUEUE_CAPACITY);
   const eventPubSub = yield* PubSub.unbounded<OrchestrationEvent>();
+  const readModelReconcileSemaphore = yield* Semaphore.make(1);
+  const queueByPartition = yield* Effect.forEach(
+    Array.from({ length: ORCHESTRATION_ENGINE_WORKER_COUNT }, () => null),
+    () => Queue.bounded<CommandEnvelope>(ORCHESTRATION_ENGINE_PARTITION_QUEUE_CAPACITY),
+  );
 
-  const processEnvelope = (envelope: CommandEnvelope): Effect.Effect<void> => {
-    const dispatchStartSequence = readModel.snapshotSequence;
-    const reconcileReadModelAfterDispatchFailure = Effect.gen(function* () {
+  const reconcilePersistedReadModel = readModelReconcileSemaphore.withPermits(1)(
+    Effect.gen(function* () {
       const persistedEvents = yield* Stream.runCollect(
-        eventStore.readFromSequence(dispatchStartSequence),
+        eventStore.readFromSequence(readModel.snapshotSequence),
       ).pipe(Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)));
       if (persistedEvents.length === 0) {
         return;
       }
 
-      let nextReadModel = readModel;
       for (const persistedEvent of persistedEvents) {
-        nextReadModel = yield* projectEvent(nextReadModel, persistedEvent);
+        readModel = yield* projectEvent(readModel, persistedEvent);
       }
-      readModel = nextReadModel;
 
       for (const persistedEvent of persistedEvents) {
         yield* PubSub.publish(eventPubSub, persistedEvent);
       }
-    });
+    }),
+  );
 
+  const processEnvelope = (envelope: CommandEnvelope): Effect.Effect<void> => {
     return Effect.gen(function* () {
+      yield* reconcilePersistedReadModel;
+
       const existingReceipt = yield* commandReceiptRepository.getByCommandId({
         commandId: envelope.command.commandId,
       });
@@ -113,11 +168,9 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         .withTransaction(
           Effect.gen(function* () {
             const committedEvents: OrchestrationEvent[] = [];
-            let nextReadModel = readModel;
 
             for (const nextEvent of eventBases) {
               const savedEvent = yield* eventStore.append(nextEvent);
-              nextReadModel = yield* projectEvent(nextReadModel, savedEvent);
               yield* projectionPipeline.projectEvent(savedEvent);
               committedEvents.push(savedEvent);
             }
@@ -143,7 +196,6 @@ const makeOrchestrationEngine = Effect.gen(function* () {
             return {
               committedEvents,
               lastSequence: lastSavedEvent.sequence,
-              nextReadModel,
             } as const;
           }),
         )
@@ -155,15 +207,12 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           ),
         );
 
-      readModel = committedCommand.nextReadModel;
-      for (const event of committedCommand.committedEvents) {
-        yield* PubSub.publish(eventPubSub, event);
-      }
+      yield* reconcilePersistedReadModel;
       yield* Deferred.succeed(envelope.result, { sequence: committedCommand.lastSequence });
     }).pipe(
       Effect.catch((error) =>
         Effect.gen(function* () {
-          yield* reconcileReadModelAfterDispatchFailure.pipe(
+          yield* reconcilePersistedReadModel.pipe(
             Effect.catch(() =>
               Effect.logWarning(
                 "failed to reconcile orchestration read model after dispatch failure",
@@ -199,10 +248,34 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   yield* projectionPipeline.bootstrap;
   readModel = yield* projectionSnapshotQuery.getSnapshot();
 
-  const worker = Effect.forever(Queue.take(commandQueue).pipe(Effect.flatMap(processEnvelope)));
-  yield* Effect.forkScoped(worker);
+  const fanoutWorker = Effect.forever(
+    Queue.take(commandQueue).pipe(
+      Effect.flatMap((envelope) =>
+        Queue.offer(
+          queueByPartition[
+            partitionIndexForCommand(envelope.command, ORCHESTRATION_ENGINE_WORKER_COUNT)
+          ]!,
+          envelope,
+        ),
+      ),
+    ),
+  );
+  yield* Effect.forkScoped(fanoutWorker);
+  yield* Effect.forEach(
+    queueByPartition,
+    (partitionQueue) =>
+      Effect.forever(Queue.take(partitionQueue).pipe(Effect.flatMap(processEnvelope))).pipe(
+        Effect.forkScoped,
+      ),
+    { concurrency: "unbounded" },
+  );
   yield* Effect.logDebug("orchestration engine started").pipe(
-    Effect.annotateLogs({ sequence: readModel.snapshotSequence }),
+    Effect.annotateLogs({
+      sequence: readModel.snapshotSequence,
+      workers: ORCHESTRATION_ENGINE_WORKER_COUNT,
+      queueCapacity: ORCHESTRATION_ENGINE_QUEUE_CAPACITY,
+      partitionQueueCapacity: ORCHESTRATION_ENGINE_PARTITION_QUEUE_CAPACITY,
+    }),
   );
 
   const getReadModel: OrchestrationEngineShape["getReadModel"] = () =>
