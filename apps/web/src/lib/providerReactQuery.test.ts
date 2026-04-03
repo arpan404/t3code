@@ -126,10 +126,10 @@ describe("checkpointDiffQueryOptions", () => {
 
     expect(retry(1, new Error("Checkpoint turn count 2 exceeds current turn count 1."))).toBe(true);
     expect(
-      retry(11, new Error("Filesystem checkpoint is unavailable for turn 2 in thread thread-1.")),
+      retry(5, new Error("Filesystem checkpoint is unavailable for turn 2 in thread thread-1.")),
     ).toBe(true);
     expect(
-      retry(12, new Error("Filesystem checkpoint is unavailable for turn 2 in thread thread-1.")),
+      retry(6, new Error("Filesystem checkpoint is unavailable for turn 2 in thread thread-1.")),
     ).toBe(false);
     expect(retry(2, new Error("Something else failed."))).toBe(true);
     expect(retry(3, new Error("Something else failed."))).toBe(false);
@@ -157,5 +157,16 @@ describe("checkpointDiffQueryOptions", () => {
     expect(typeof checkpointDelay).toBe("number");
     expect(typeof genericDelay).toBe("number");
     expect((checkpointDelay ?? 0) > (genericDelay ?? 0)).toBe(true);
+  });
+
+  it("stays disabled when checkpoint range is incomplete", () => {
+    const options = checkpointDiffQueryOptions({
+      threadId,
+      fromTurnCount: null,
+      toTurnCount: 2,
+      cacheScope: "turn:incomplete",
+    });
+
+    expect(options.enabled).toBe(false);
   });
 });

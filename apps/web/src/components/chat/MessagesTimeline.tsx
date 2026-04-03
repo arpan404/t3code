@@ -150,31 +150,39 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         continue;
       }
 
-      if (!activeTurnInProgress && isCompletedToolBatchEntry(timelineEntry)) {
-        const items: CompletedToolBatchItem[] = [toCompletedToolBatchItem(timelineEntry)];
-        let cursor = index + 1;
-        while (cursor < timelineEntries.length) {
-          const nextEntry = timelineEntries[cursor];
-          if (!nextEntry || !isCompletedToolBatchEntry(nextEntry)) {
-            break;
-          }
-          items.push(toCompletedToolBatchItem(nextEntry));
-          cursor += 1;
+      if (!activeTurnInProgress) {
+        if (timelineEntry.kind === "work" && timelineEntry.entry.tone === "tool") {
+          continue;
         }
-
-        if (countCompletedToolBatchCalls(items) > 0) {
-          nextRows.push({
-            kind: "completed-tool-calls",
-            id: `completed-tool-calls:${timelineEntry.id}`,
-            createdAt: timelineEntry.createdAt,
-            items,
-          });
-          index = cursor - 1;
+        if (
+          timelineEntry.kind === "intent" &&
+          shouldHideCompletedIntentWithToolCalls(timelineEntries, index, {
+            activeTurnInProgress,
+            activeTurnStartedAt,
+          })
+        ) {
+          continue;
+        }
+      } else {
+        if (
+          timelineEntry.kind === "work" &&
+          timelineEntry.entry.tone === "tool" &&
+          isBeforeActiveTurnBoundary(timelineEntry.createdAt, activeTurnStartedAt)
+        ) {
+          continue;
+        }
+        if (
+          timelineEntry.kind === "intent" &&
+          shouldHideCompletedIntentWithToolCalls(timelineEntries, index, {
+            activeTurnInProgress,
+            activeTurnStartedAt,
+          })
+        ) {
           continue;
         }
       }
 
-      if (timelineEntry.kind === "intent") {
+      if (activeTurnInProgress && timelineEntry.kind === "intent") {
         const groupedEntries: TimelineWorkEntry[] = [];
         let cursor = index + 1;
         while (cursor < timelineEntries.length) {
@@ -328,7 +336,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       if (!row) return 96;
       if (row.kind === "work") return 112;
       if (row.kind === "intent-work") return 160;
-      if (row.kind === "completed-tool-calls") return 220;
       if (row.kind === "intent") return 76;
       if (row.kind === "proposed-plan") return estimateTimelineProposedPlanHeight(row.proposedPlan);
       if (row.kind === "working") return 40;
@@ -380,11 +387,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const lastExpandableWorkRowId = useMemo(() => {
     for (let index = rows.length - 1; index >= 0; index -= 1) {
       const row = rows[index];
-      if (
-        row?.kind === "work" ||
-        row?.kind === "intent-work" ||
-        row?.kind === "completed-tool-calls"
-      ) {
+      if (row?.kind === "work" || row?.kind === "intent-work") {
         return row.id;
       }
     }
@@ -433,66 +436,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             : undefined
         }
       >
-        {row.kind === "completed-tool-calls" &&
-          (() => {
-            const groupId = workGroupId(row.createdAt);
-            const hasExplicitExpandedState = Object.prototype.hasOwnProperty.call(
-              expandedWorkGroups,
-              groupId,
-            );
-            const isExpanded = hasExplicitExpandedState
-              ? Boolean(expandedWorkGroups[groupId])
-              : row.id === lastExpandableWorkRowId;
-            const toolCallCount = countCompletedToolBatchCalls(row.items);
-            const intentCount = countCompletedToolBatchIntents(row.items);
-
-            return (
-              <div
-                className="rounded-2xl border border-border/50 bg-card/20 px-3 py-3"
-                data-completed-tool-calls="true"
-                data-completed-tool-calls-open={String(isExpanded)}
-              >
-                <button
-                  type="button"
-                  className="w-full text-left"
-                  onClick={() => onToggleWorkGroup(groupId)}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground/60">
-                      Tool calls ({toolCallCount})
-                    </p>
-                    <span className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground/55">
-                      {isExpanded ? "Show less" : "Open"}
-                    </span>
-                  </div>
-                  <p className="mt-1 text-[11px] text-muted-foreground/70">
-                    {intentCount > 0
-                      ? `${intentCount} ${intentCount === 1 ? "intent update" : "intent updates"} · ${toolCallCount} ${toolCallCount === 1 ? "tool call" : "tool calls"}`
-                      : `${toolCallCount} ${toolCallCount === 1 ? "tool call" : "tool calls"}`}
-                  </p>
-                </button>
-                {isExpanded && (
-                  <div className="mt-3 space-y-1.5">
-                    {row.items.map((item) =>
-                      item.kind === "intent" ? (
-                        <CompletedToolBatchIntentRow
-                          key={`completed-tool-intent:${item.id}`}
-                          text={item.text}
-                        />
-                      ) : (
-                        <SimpleWorkEntryRow
-                          key={`completed-tool-work:${item.entry.id}`}
-                          workEntry={item.entry}
-                          compact
-                        />
-                      ),
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })()}
-
         {row.kind === "work" &&
           (() => {
             const groupedEntries = row.groupedEntries;
@@ -977,9 +920,6 @@ type TimelineEntry = ReturnType<typeof deriveTimelineEntries>[number];
 type TimelineMessage = Extract<TimelineEntry, { kind: "message" }>["message"];
 type TimelineProposedPlan = Extract<TimelineEntry, { kind: "proposed-plan" }>["proposedPlan"];
 type TimelineWorkEntry = Extract<TimelineEntry, { kind: "work" }>["entry"];
-type CompletedToolBatchItem =
-  | Extract<TimelineEntry, { kind: "intent" }>
-  | Extract<TimelineEntry, { kind: "work" }>;
 type TimelineRow =
   | {
       kind: "work";
@@ -1002,12 +942,6 @@ type TimelineRow =
       text: string;
     }
   | {
-      kind: "completed-tool-calls";
-      id: string;
-      createdAt: string;
-      items: CompletedToolBatchItem[];
-    }
-  | {
       kind: "message";
       id: string;
       createdAt: string;
@@ -1026,22 +960,6 @@ type TimelineRow =
 function estimateTimelineProposedPlanHeight(proposedPlan: TimelineProposedPlan): number {
   const estimatedLines = Math.max(1, Math.ceil(proposedPlan.planMarkdown.length / 72));
   return 120 + Math.min(estimatedLines * 22, 880);
-}
-
-function isCompletedToolBatchEntry(entry: TimelineEntry): entry is CompletedToolBatchItem {
-  return entry.kind === "intent" || (entry.kind === "work" && entry.entry.tone !== "thinking");
-}
-
-function toCompletedToolBatchItem(entry: CompletedToolBatchItem): CompletedToolBatchItem {
-  return entry;
-}
-
-function countCompletedToolBatchCalls(items: ReadonlyArray<CompletedToolBatchItem>): number {
-  return items.filter((item) => item.kind === "work" && item.entry.tone === "tool").length;
-}
-
-function countCompletedToolBatchIntents(items: ReadonlyArray<CompletedToolBatchItem>): number {
-  return items.filter((item) => item.kind === "intent").length;
 }
 
 function formatWorkingTimer(startIso: string, endIso: string): string | null {
@@ -1097,6 +1015,63 @@ function canGroupAdjacentWorkEntries(
 
 function isStreamingAssistantMessageRow(row: TimelineRow | undefined): boolean {
   return row?.kind === "message" && row.message.role === "assistant" && row.message.streaming;
+}
+
+function shouldHideCompletedIntentWithToolCalls(
+  entries: ReadonlyArray<TimelineEntry>,
+  intentIndex: number,
+  input: {
+    activeTurnInProgress: boolean;
+    activeTurnStartedAt: string | null;
+  },
+): boolean {
+  for (let cursor = intentIndex + 1; cursor < entries.length; cursor += 1) {
+    const nextEntry = entries[cursor];
+    if (!nextEntry) {
+      continue;
+    }
+    if (nextEntry.kind === "work") {
+      if (
+        nextEntry.entry.tone === "tool" &&
+        shouldHideToolEntry(
+          nextEntry.createdAt,
+          input.activeTurnInProgress,
+          input.activeTurnStartedAt,
+        )
+      ) {
+        return true;
+      }
+      continue;
+    }
+    return false;
+  }
+  return false;
+}
+
+function shouldHideToolEntry(
+  createdAt: string,
+  activeTurnInProgress: boolean,
+  activeTurnStartedAt: string | null,
+): boolean {
+  if (!activeTurnInProgress) {
+    return true;
+  }
+  return isBeforeActiveTurnBoundary(createdAt, activeTurnStartedAt);
+}
+
+function isBeforeActiveTurnBoundary(
+  createdAt: string,
+  activeTurnStartedAt: string | null,
+): boolean {
+  if (!activeTurnStartedAt) {
+    return false;
+  }
+  const boundaryMs = Date.parse(activeTurnStartedAt);
+  const createdAtMs = Date.parse(createdAt);
+  if (!Number.isFinite(boundaryMs) || !Number.isFinite(createdAtMs)) {
+    return false;
+  }
+  return createdAtMs < boundaryMs;
 }
 
 const UserMessageTerminalContextInlineLabel = memo(
@@ -1467,30 +1442,6 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
           )}
         </div>
       )}
-    </div>
-  );
-});
-
-const CompletedToolBatchIntentRow = memo(function CompletedToolBatchIntentRow(props: {
-  text: string;
-}) {
-  return (
-    <div className="rounded-lg border border-border/50 bg-background/25 px-2.5 py-2">
-      <div className="flex items-start gap-2">
-        <span className="mt-0.5 flex size-4.5 shrink-0 items-center justify-center rounded-sm border border-border/55 bg-background/70 text-foreground/88">
-          <BotIcon className="size-2.5" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="mb-0.5 flex items-center gap-2">
-            <span className="inline-flex shrink-0 items-center rounded-full border border-border/60 bg-background/80 px-1.25 py-px text-[8px] font-medium uppercase tracking-[0.14em] text-muted-foreground/75">
-              Message
-            </span>
-          </div>
-          <p className="wrap-break-word text-[11px] leading-5 text-foreground/78">
-            &quot;{props.text}&quot;
-          </p>
-        </div>
-      </div>
     </div>
   );
 });

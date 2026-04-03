@@ -157,6 +157,16 @@ function buildFileDiffRenderKey(fileDiff: FileDiffMetadata): string {
   return fileDiff.cacheKey ?? `${fileDiff.prevName ?? "none"}:${fileDiff.name}`;
 }
 
+function isCheckpointSummaryQueryable(
+  summary: { status?: string | undefined },
+  checkpointTurnCount: number | undefined,
+): boolean {
+  if (summary.status === "missing" || summary.status === "error") {
+    return false;
+  }
+  return typeof checkpointTurnCount === "number" && checkpointTurnCount > 0;
+}
+
 interface DiffPanelProps {
   mode?: DiffPanelMode;
 }
@@ -190,7 +200,18 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   );
   const activeCwd = activeThread?.worktreePath ?? activeProject?.cwd;
   const gitBranchesQuery = useQuery(gitBranchesQueryOptions(activeCwd ?? null));
-  const isGitRepo = gitBranchesQuery.data?.isRepo ?? true;
+  const gitRepoStatus = gitBranchesQuery.data?.isRepo;
+  const gitRepoCheckError =
+    gitBranchesQuery.error instanceof Error
+      ? gitBranchesQuery.error.message
+      : gitBranchesQuery.error
+        ? "Failed to inspect git repository status."
+        : null;
+  const isCheckingGitRepo =
+    activeCwd !== null &&
+    (gitBranchesQuery.isPending ||
+      (gitBranchesQuery.fetchStatus === "fetching" && typeof gitRepoStatus !== "boolean"));
+  const isGitRepo = gitRepoStatus === true;
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
     useTurnDiffSummaries(activeThread);
   const orderedTurnDiffSummaries = useMemo(
@@ -207,6 +228,16 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       }),
     [inferredCheckpointTurnCountByTurnId, turnDiffSummaries],
   );
+  const queryableTurnDiffSummaries = useMemo(
+    () =>
+      orderedTurnDiffSummaries.filter((summary) =>
+        isCheckpointSummaryQueryable(
+          summary,
+          summary.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[summary.turnId],
+        ),
+      ),
+    [inferredCheckpointTurnCountByTurnId, orderedTurnDiffSummaries],
+  );
 
   const selectedTurnId = diffSearch.diffTurnId ?? null;
   const selectedFilePath = selectedTurnId !== null ? (diffSearch.diffFilePath ?? null) : null;
@@ -214,22 +245,38 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     selectedTurnId === null
       ? undefined
       : (orderedTurnDiffSummaries.find((summary) => summary.turnId === selectedTurnId) ??
+        queryableTurnDiffSummaries[0] ??
         orderedTurnDiffSummaries[0]);
   const selectedCheckpointTurnCount =
     selectedTurn &&
     (selectedTurn.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[selectedTurn.turnId]);
+  const selectedTurnQueryable = selectedTurn
+    ? isCheckpointSummaryQueryable(selectedTurn, selectedCheckpointTurnCount)
+    : false;
+  const selectedTurnUnavailableReason = useMemo(() => {
+    if (!selectedTurn || selectedTurnQueryable) {
+      return null;
+    }
+    if (selectedTurn.status === "missing") {
+      return "Diff is still being prepared for this turn.";
+    }
+    if (selectedTurn.status === "error") {
+      return "Diff generation failed for this turn.";
+    }
+    return "Diff is unavailable for this turn.";
+  }, [selectedTurn, selectedTurnQueryable]);
   const selectedCheckpointRange = useMemo(
     () =>
-      typeof selectedCheckpointTurnCount === "number"
+      selectedTurn && selectedTurnQueryable && typeof selectedCheckpointTurnCount === "number"
         ? {
             fromTurnCount: Math.max(0, selectedCheckpointTurnCount - 1),
             toTurnCount: selectedCheckpointTurnCount,
           }
         : null,
-    [selectedCheckpointTurnCount],
+    [selectedCheckpointTurnCount, selectedTurn, selectedTurnQueryable],
   );
   const conversationCheckpointTurnCount = useMemo(() => {
-    const turnCounts = orderedTurnDiffSummaries
+    const turnCounts = queryableTurnDiffSummaries
       .map(
         (summary) =>
           summary.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[summary.turnId],
@@ -240,7 +287,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     }
     const latest = Math.max(...turnCounts);
     return latest > 0 ? latest : undefined;
-  }, [inferredCheckpointTurnCountByTurnId, orderedTurnDiffSummaries]);
+  }, [inferredCheckpointTurnCountByTurnId, queryableTurnDiffSummaries]);
   const conversationCheckpointRange = useMemo(
     () =>
       !selectedTurn && typeof conversationCheckpointTurnCount === "number"
@@ -255,18 +302,20 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     ? selectedCheckpointRange
     : conversationCheckpointRange;
   const conversationCacheScope = useMemo(() => {
-    if (selectedTurn || orderedTurnDiffSummaries.length === 0) {
+    if (selectedTurn || queryableTurnDiffSummaries.length === 0) {
       return null;
     }
-    return `conversation:${orderedTurnDiffSummaries.map((summary) => summary.turnId).join(",")}`;
-  }, [orderedTurnDiffSummaries, selectedTurn]);
+    return `conversation:${queryableTurnDiffSummaries.map((summary) => summary.turnId).join(",")}`;
+  }, [queryableTurnDiffSummaries, selectedTurn]);
+  const canQueryCheckpointDiff =
+    !isCheckingGitRepo && isGitRepo && activeThreadId !== null && activeCheckpointRange !== null;
   const activeCheckpointDiffQuery = useQuery(
     checkpointDiffQueryOptions({
       threadId: activeThreadId,
       fromTurnCount: activeCheckpointRange?.fromTurnCount ?? null,
       toTurnCount: activeCheckpointRange?.toTurnCount ?? null,
       cacheScope: selectedTurn ? `turn:${selectedTurn.turnId}` : conversationCacheScope,
-      enabled: isGitRepo,
+      enabled: canQueryCheckpointDiff,
     }),
   );
   const selectedTurnCheckpointDiff = selectedTurn
@@ -275,7 +324,9 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const conversationCheckpointDiff = selectedTurn
     ? undefined
     : activeCheckpointDiffQuery.data?.diff;
-  const isLoadingCheckpointDiff = activeCheckpointDiffQuery.isLoading;
+  const isLoadingCheckpointDiff =
+    canQueryCheckpointDiff &&
+    (activeCheckpointDiffQuery.isPending || activeCheckpointDiffQuery.fetchStatus === "fetching");
   const checkpointDiffError =
     activeCheckpointDiffQuery.error instanceof Error
       ? activeCheckpointDiffQuery.error.message
@@ -286,9 +337,16 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const selectedPatch = selectedTurn ? selectedTurnCheckpointDiff : conversationCheckpointDiff;
   const hasResolvedPatch = typeof selectedPatch === "string";
   const hasNoNetChanges = hasResolvedPatch && selectedPatch.trim().length === 0;
+  const noPatchMessage =
+    selectedTurnUnavailableReason ??
+    (!selectedTurn && queryableTurnDiffSummaries.length === 0
+      ? "Diff checkpoints are still being prepared for this conversation."
+      : hasNoNetChanges
+        ? "No net changes in this selection."
+        : "No patch available for this selection.");
   const renderablePatch = useMemo(
-    () => getRenderablePatch(selectedPatch, `diff-panel:${resolvedTheme}`),
-    [resolvedTheme, selectedPatch],
+    () => getRenderablePatch(selectedPatch, "diff-panel"),
+    [selectedPatch],
   );
   const renderableFiles = useMemo(() => {
     if (!renderablePatch || renderablePatch.kind !== "files") {
@@ -548,6 +606,18 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           Select a thread to inspect turn diffs.
         </div>
+      ) : activeCwd === null ? (
+        <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
+          Turn diffs are unavailable because this thread has no workspace path.
+        </div>
+      ) : isCheckingGitRepo ? (
+        <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
+          Checking git repository status...
+        </div>
+      ) : gitRepoCheckError && typeof gitRepoStatus !== "boolean" ? (
+        <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
+          {gitRepoCheckError}
+        </div>
       ) : !isGitRepo ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           Turn diffs are unavailable because this project is not a git repository.
@@ -572,11 +642,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                 <DiffPanelLoadingState label="Loading checkpoint diff..." />
               ) : (
                 <div className="flex h-full items-center justify-center px-3 py-2 text-xs text-muted-foreground/70">
-                  <p>
-                    {hasNoNetChanges
-                      ? "No net changes in this selection."
-                      : "No patch available for this selection."}
-                  </p>
+                  <p>{noPatchMessage}</p>
                 </div>
               )
             ) : renderablePatch.kind === "files" ? (

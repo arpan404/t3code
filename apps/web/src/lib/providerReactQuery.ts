@@ -91,6 +91,9 @@ function isCheckpointTemporarilyUnavailable(error: unknown): boolean {
 
 export function checkpointDiffQueryOptions(input: CheckpointDiffQueryInput) {
   const decodedRequest = decodeCheckpointDiffRequest(input);
+  const hasValidRange = input.fromTurnCount !== null && input.toTurnCount !== null;
+  const shouldEnable =
+    (input.enabled ?? true) && !!input.threadId && hasValidRange && decodedRequest._tag === "Some";
 
   return queryOptions({
     queryKey: providerQueryKeys.checkpointDiff(input),
@@ -108,11 +111,13 @@ export function checkpointDiffQueryOptions(input: CheckpointDiffQueryInput) {
         throw new Error(normalizeCheckpointErrorMessage(error), { cause: error });
       }
     },
-    enabled: (input.enabled ?? true) && !!input.threadId && decodedRequest._tag === "Some",
+    enabled: shouldEnable,
     staleTime: Infinity,
+    refetchOnReconnect: "always",
+    refetchOnWindowFocus: false,
     retry: (failureCount, error) => {
       if (isCheckpointTemporarilyUnavailable(error)) {
-        return failureCount < 12;
+        return failureCount < 6;
       }
       return failureCount < 3;
     },

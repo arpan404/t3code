@@ -232,10 +232,12 @@ type ThreadPlanCatalogEntry = Pick<Thread, "id" | "proposedPlans">;
 interface QueuedComposerMessage extends ComposerQueuedMessageItem {
   runtimeMode: RuntimeMode;
   interactionMode: ProviderInteractionMode;
+  threadId: ThreadId;
 }
 
 interface QueuedSteerRequest {
   messageId: MessageId;
+  threadId: ThreadId;
   baselineWorkLogEntryCount: number;
   interruptRequested: boolean;
 }
@@ -1604,6 +1606,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
       if (!nextMessage) {
         return;
       }
+      if (nextMessage.threadId !== threadId) {
+        removeQueuedComposerMessage(messageId);
+        return;
+      }
       if (queuedSteerRequest?.messageId === messageId) {
         setQueuedSteerRequest(null);
       }
@@ -1612,7 +1618,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
       );
       restoreQueuedComposerMessageToDraft(nextMessage);
     },
-    [queuedSteerRequest?.messageId, restoreQueuedComposerMessageToDraft],
+    [
+      queuedSteerRequest?.messageId,
+      removeQueuedComposerMessage,
+      restoreQueuedComposerMessageToDraft,
+      threadId,
+    ],
   );
   const queueCurrentComposerMessage = useCallback(
     (mode: "queue" | "steer" = "queue") => {
@@ -1645,6 +1656,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         modelSelection: selectedModelSelection,
         runtimeMode,
         interactionMode,
+        threadId,
       };
       setQueuedComposerMessages((existing) =>
         mode === "steer" ? [queuedMessage, ...existing] : [...existing, queuedMessage],
@@ -1652,6 +1664,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       if (mode === "steer") {
         setQueuedSteerRequest({
           messageId: queuedMessage.id,
+          threadId,
           baselineWorkLogEntryCount: workLogEntries.length,
           interruptRequested: false,
         });
@@ -1695,6 +1708,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
       if (!nextMessage) {
         return;
       }
+      if (nextMessage.threadId !== threadId) {
+        removeQueuedComposerMessage(messageId);
+        return;
+      }
       setQueuedComposerMessages((existing) => {
         const nextIndex = existing.findIndex((message) => message.id === messageId);
         if (nextIndex <= 0) {
@@ -1710,11 +1727,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
       });
       setQueuedSteerRequest({
         messageId,
+        threadId,
         baselineWorkLogEntryCount: workLogEntries.length,
         interruptRequested: false,
       });
     },
-    [workLogEntries.length],
+    [removeQueuedComposerMessage, threadId, workLogEntries.length],
   );
   const addTerminalContextToDraft = useCallback(
     (selection: TerminalContextSelection) => {
@@ -3739,6 +3757,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
     if (!nextQueuedMessage) {
       return;
     }
+    if (nextQueuedMessage.threadId !== threadId || nextQueuedMessage.threadId !== activeThread.id) {
+      revokeComposerImagePreviewUrls(nextQueuedMessage.images);
+      if (queuedSteerRequest?.messageId === nextQueuedMessage.id) {
+        setQueuedSteerRequest(null);
+      }
+      setQueuedComposerMessages((existing) => existing.slice(1));
+      return;
+    }
 
     if (queuedSteerRequest?.messageId === nextQueuedMessage.id) {
       setQueuedSteerRequest(null);
@@ -3769,10 +3795,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
     phase,
     queuedSteerRequest,
     queuedComposerMessages,
+    threadId,
   ]);
 
   useEffect(() => {
     if (!queuedSteerRequest) {
+      return;
+    }
+    if (queuedSteerRequest.threadId !== threadId) {
+      setQueuedSteerRequest(null);
       return;
     }
     if (!queuedComposerMessages.some((message) => message.id === queuedSteerRequest.messageId)) {
@@ -3807,6 +3838,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     phase,
     queuedComposerMessages,
     queuedSteerRequest,
+    threadId,
     workLogEntries.length,
   ]);
 

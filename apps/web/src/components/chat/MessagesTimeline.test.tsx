@@ -147,7 +147,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Work log");
   });
 
-  it("renders assistant, tool, follow-up, and thinking rows in chronological order", async () => {
+  it("renders assistant, follow-up, and thinking rows in chronological order", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -246,20 +246,17 @@ describe("MessagesTimeline", () => {
     );
 
     const firstAssistantIndex = markup.indexOf("I inspected the workspace.");
-    const firstToolIndex = markup.indexOf("Read file");
     const followUpIndex = markup.indexOf("The timeline needed message segmentation.");
     const thinkingIndex = markup.indexOf("Segment assistant output around tool execution.");
-    const secondToolIndex = markup.indexOf("Apply patch");
 
     expect(firstAssistantIndex).toBeGreaterThanOrEqual(0);
-    expect(firstToolIndex).toBeGreaterThan(firstAssistantIndex);
-    expect(followUpIndex).toBeGreaterThan(firstToolIndex);
+    expect(followUpIndex).toBeGreaterThan(firstAssistantIndex);
     expect(thinkingIndex).toBeGreaterThan(followUpIndex);
-    expect(secondToolIndex).toBeGreaterThan(thinkingIndex);
     expect(markup).toContain('data-work-entry-tone="thinking"');
-    expect(markup).toContain('data-completed-tool-calls="true"');
+    expect(markup).not.toContain("Read file");
+    expect(markup).not.toContain("Apply patch");
     expect(markup).toContain(">Thinking<");
-    expect(markup).toContain(">Tool<");
+    expect(markup).not.toContain(">Tool<");
   });
 
   it("prefers human-readable detail over noisy wrapper commands in tool rows", async () => {
@@ -310,7 +307,7 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("cat package.json");
   });
 
-  it("renders very large completed tool-only runs inside one tool calls container", async () => {
+  it("hides completed tool-only runs", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const hiddenEntries = [
       { label: "Read file", toolTitle: "Read file" },
@@ -362,11 +359,9 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain('data-completed-tool-calls="true"');
-    expect(markup).toContain('data-completed-tool-calls-open="true"');
-    expect(markup).toContain("Tool calls (10)");
-    expect(markup).toContain('data-work-entry-id="work-tool-1"');
-    expect(markup).toContain('data-work-entry-id="work-tool-10"');
+    expect(markup).not.toContain("Tool calls");
+    expect(markup).not.toContain('data-work-entry-id="work-tool-1"');
+    expect(markup).not.toContain('data-work-entry-id="work-tool-10"');
   });
 
   it("keeps live work groups collapsed even when an expanded state exists", async () => {
@@ -417,6 +412,65 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain(">Show less<");
     expect(markup).not.toContain('data-work-entry-id="live-work-tool-1"');
     expect(markup).toContain('data-work-entry-id="live-work-tool-10"');
+  });
+
+  it("hides completed tool rows before the active turn while keeping live rows", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking={false}
+        activeTurnInProgress
+        activeTurnStartedAt="2026-03-17T19:12:35.000Z"
+        scrollContainer={null}
+        timelineEntries={[
+          {
+            id: "old-tool-before-turn",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:30.000Z",
+            entry: {
+              id: "old-tool-before-turn",
+              createdAt: "2026-03-17T19:12:30.000Z",
+              label: "Read file",
+              toolTitle: "Read file",
+              detail: "README.md",
+              tone: "tool",
+            },
+          },
+          {
+            id: "new-tool-during-turn",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:36.000Z",
+            entry: {
+              id: "new-tool-during-turn",
+              createdAt: "2026-03-17T19:12:36.000Z",
+              label: "Run command",
+              toolTitle: "Run command",
+              detail: "bun lint",
+              tone: "tool",
+            },
+          },
+        ]}
+        completionDividerBeforeEntryId={null}
+        completionSummary={null}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        nowIso="2026-03-17T19:12:40.000Z"
+        expandedWorkGroups={{}}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup).not.toContain("README.md");
+    expect(markup).toContain("bun lint");
   });
 
   it("shows accumulated thinking text instead of a single truncated token line", async () => {
@@ -621,7 +675,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-work-entry-tone="thinking"');
   });
 
-  it("renders completed intent and tool activity inside one tool calls container", async () => {
+  it("hides completed intent and tool activity after completion", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -670,17 +724,13 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("Running format and checks");
-    expect(markup).toContain("bun fmt &amp;&amp; bun lint");
-    expect(markup).toContain('data-completed-tool-calls="true"');
-    expect(markup).toContain('data-completed-tool-calls-open="true"');
-    expect(markup).toContain("Tool calls (1)");
-    expect(markup).toContain(">Message<");
-    expect(markup).toContain("1 intent update · 1 tool call");
-    expect(markup).toContain("&quot;Running format and checks&quot;");
+    expect(markup).not.toContain("Running format and checks");
+    expect(markup).not.toContain("bun fmt &amp;&amp; bun lint");
+    expect(markup).not.toContain("Tool calls");
+    expect(markup).not.toContain(">Message<");
   });
 
-  it("counts image views as tool calls in completed tool call containers", async () => {
+  it("hides completed image-view tool calls", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -730,8 +780,9 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("Tool calls (1)");
-    expect(markup).not.toContain("1 image");
+    expect(markup).not.toContain("Tool calls");
+    expect(markup).not.toContain("Reviewing screenshot");
+    expect(markup).not.toContain("screenshot.png");
   });
 
   it("does not create an intent tool disclosure for thinking-only work", async () => {
@@ -799,10 +850,10 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain('data-intent-disclosure="true"');
     expect(markup).toContain('data-thinking-disclosure="true"');
     expect(markup).not.toContain("0 tool calls");
-    expect(markup).toContain("git ls-files");
+    expect(markup).not.toContain("git ls-files");
   });
 
-  it("folds repeated completed intent bursts into one tool calls container", async () => {
+  it("hides repeated completed intent bursts with tool calls", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -871,18 +922,13 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    const renderedCompletedToolContainerCount = (
-      markup.match(/data-completed-tool-calls="true"/g) ?? []
-    ).length;
-
-    expect(renderedCompletedToolContainerCount).toBe(1);
-    expect(markup).toContain('data-completed-tool-calls-open="true"');
-    expect(markup).toContain(">Message<");
-    expect(markup).toContain('data-work-entry-id="tool-burst-1"');
-    expect(markup).toContain('data-work-entry-id="tool-burst-2"');
+    expect(markup).not.toContain("Tool calls");
+    expect(markup).not.toContain('data-work-entry-id="tool-burst-1"');
+    expect(markup).not.toContain('data-work-entry-id="tool-burst-2"');
+    expect(markup).not.toContain("Running format and checks");
   });
 
-  it("honors explicit expansion state for completed tool call containers", async () => {
+  it("hides completed tool calls regardless of saved expansion state", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -947,9 +993,9 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain('data-completed-tool-calls-open="false"');
-    expect(markup).toContain("Tool calls (2)");
+    expect(markup).not.toContain("Tool calls");
     expect(markup).not.toContain('data-work-entry-id="tool-burst-primary-1"');
     expect(markup).not.toContain('data-work-entry-id="tool-burst-primary-2"');
+    expect(markup).not.toContain("Running format and checks");
   });
 });
