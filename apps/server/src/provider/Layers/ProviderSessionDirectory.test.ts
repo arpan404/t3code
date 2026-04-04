@@ -236,4 +236,36 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
         assert.deepEqual(binding.value.runtimePayload, { model: "gpt-5-mini" });
       }
     }));
+
+  it("decodes persisted cursor bindings", () =>
+    Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory;
+      const runtimeRepository = yield* ProviderSessionRuntimeRepository;
+      const threadId = ThreadId.makeUnsafe("thread-cursor");
+
+      yield* runtimeRepository.upsert({
+        threadId,
+        providerName: "cursor",
+        adapterKey: "cursor",
+        runtimeMode: "full-access",
+        status: "running",
+        lastSeenAt: new Date().toISOString(),
+        resumeCursor: { sessionId: "cursor-session-1" },
+        runtimePayload: { model: "auto" },
+      });
+
+      const provider = yield* directory.getProvider(threadId);
+      assert.equal(provider, "cursor");
+
+      const binding = yield* directory.getBinding(threadId);
+      assertSome(binding, {
+        threadId,
+        provider: "cursor",
+        adapterKey: "cursor",
+      });
+      if (Option.isSome(binding)) {
+        assert.deepEqual(binding.value.resumeCursor, { sessionId: "cursor-session-1" });
+        assert.deepEqual(binding.value.runtimePayload, { model: "auto" });
+      }
+    }));
 });

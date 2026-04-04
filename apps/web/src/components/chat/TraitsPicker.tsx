@@ -1,6 +1,7 @@
 import {
   type ClaudeModelOptions,
   type CodexModelOptions,
+  type CursorModelOptions,
   type GitHubCopilotModelOptions,
   type ProviderKind,
   type ProviderModelOptions,
@@ -50,9 +51,15 @@ function getRawEffort(
   provider: ProviderKind,
   modelOptions: ProviderOptions | null | undefined,
 ): string | null {
-  if (provider === "codex" || provider === "githubCopilot") {
+  if (provider === "codex" || provider === "githubCopilot" || provider === "cursor") {
     return trimOrNull(
-      (modelOptions as CodexModelOptions | GitHubCopilotModelOptions | undefined)?.reasoningEffort,
+      (
+        modelOptions as
+          | CodexModelOptions
+          | GitHubCopilotModelOptions
+          | CursorModelOptions
+          | undefined
+      )?.reasoningEffort,
     );
   }
   return trimOrNull((modelOptions as ClaudeModelOptions | undefined)?.effort);
@@ -84,6 +91,12 @@ function buildNextOptions(
       ...(modelOptions as GitHubCopilotModelOptions | undefined),
       ...patch,
     } as GitHubCopilotModelOptions;
+  }
+  if (provider === "cursor") {
+    return {
+      ...(modelOptions as CursorModelOptions | undefined),
+      ...patch,
+    } as CursorModelOptions;
   }
   return {
     ...(modelOptions as ClaudeModelOptions | undefined),

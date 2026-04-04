@@ -30,7 +30,11 @@ import {
   readCodexConfigModelProvider,
 } from "./CodexProvider";
 import { checkClaudeProviderStatus, parseClaudeAuthStatusFromOutput } from "./ClaudeProvider";
-import { checkCursorProviderStatus, parseCursorModelsOutput } from "./CursorProvider";
+import {
+  checkCursorProviderStatus,
+  parseCursorModelsOutput,
+  resolveCursorCliModelId,
+} from "./CursorProvider";
 import { haveProvidersChanged, ProviderRegistryLive } from "./ProviderRegistry";
 import { ServerSettingsService, type ServerSettingsShape } from "../../serverSettings";
 import { ProviderRegistry } from "../Services/ProviderRegistry";
@@ -165,6 +169,26 @@ claude-4-sonnet-thinking - Sonnet 4 Thinking  (current)
 gpt-5.4-nano-xhigh \u001b[2m- GPT-5.4 Nano Extra High
 
 Tip: use --model <id> (or /model <id> in interactive mode) to switch.
+`;
+
+const CURSOR_VARIANT_MODELS_OUTPUT = `Available models
+
+gpt-5.3-codex-low - GPT-5.3 Codex Low
+gpt-5.3-codex-low-fast - GPT-5.3 Codex Low Fast
+gpt-5.3-codex-none - GPT-5.3 Codex None
+gpt-5.3-codex-none-fast - GPT-5.3 Codex None Fast
+gpt-5.3-codex-high - GPT-5.3 Codex High
+gpt-5.3-codex-high-fast - GPT-5.3 Codex High Fast
+gpt-5.3-codex-xhigh - GPT-5.3 Codex Extra High
+gpt-5.3-codex-xhigh-fast - GPT-5.3 Codex Extra High Fast
+`;
+
+const CURSOR_NONE_VARIANT_MODELS_OUTPUT = `Available models
+
+gpt-5.4-mini-none - GPT-5.4 Mini None
+gpt-5.4-mini-none-fast - GPT-5.4 Mini None Fast
+gpt-5.4-mini-high - GPT-5.4 Mini High
+gpt-5.4-mini-high-fast - GPT-5.4 Mini High Fast
 `;
 
 it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
@@ -1071,17 +1095,132 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
     });
 
     describe("parseCursorModelsOutput", () => {
-      it("extracts Cursor model ids and labels from cli output", () => {
+      it("normalizes fast and reasoning-only Cursor variants into single picker entries", () => {
         const models = parseCursorModelsOutput(CURSOR_MODELS_OUTPUT);
         assert.deepStrictEqual(
-          models.map(({ slug, name }) => ({ slug, name })),
+          models.map(({ slug, name, capabilities }) => ({
+            slug,
+            name,
+            capabilities,
+          })),
           [
-            { slug: "auto", name: "Auto" },
-            { slug: "composer-2-fast", name: "Composer 2 Fast" },
-            { slug: "claude-4-sonnet", name: "Sonnet 4" },
-            { slug: "claude-4-sonnet-thinking", name: "Sonnet 4 Thinking" },
-            { slug: "gpt-5.4-nano-xhigh", name: "GPT-5.4 Nano Extra High" },
+            { slug: "auto", name: "Auto", capabilities: null },
+            {
+              slug: "composer-2",
+              name: "Composer 2",
+              capabilities: {
+                reasoningEffortLevels: [],
+                supportsFastMode: true,
+                supportsThinkingToggle: false,
+                contextWindowOptions: [],
+                promptInjectedEffortLevels: [],
+              },
+            },
+            { slug: "claude-4-sonnet", name: "Sonnet 4", capabilities: null },
+            { slug: "claude-4-sonnet-thinking", name: "Sonnet 4 Thinking", capabilities: null },
+            {
+              slug: "gpt-5.4-nano",
+              name: "GPT-5.4 Nano",
+              capabilities: {
+                reasoningEffortLevels: [{ value: "xhigh", label: "Extra High", isDefault: true }],
+                supportsFastMode: false,
+                supportsThinkingToggle: false,
+                contextWindowOptions: [],
+                promptInjectedEffortLevels: [],
+              },
+            },
           ],
+        );
+      });
+
+      it("normalizes Cursor reasoning variants into one model with traits", () => {
+        const models = parseCursorModelsOutput(CURSOR_VARIANT_MODELS_OUTPUT);
+        assert.deepStrictEqual(models, [
+          {
+            slug: "gpt-5.3-codex",
+            name: "GPT-5.3 Codex",
+            isCustom: false,
+            capabilities: {
+              reasoningEffortLevels: [
+                { value: "xhigh", label: "Extra High", isDefault: false },
+                { value: "high", label: "High", isDefault: false },
+                { value: "medium", label: "Medium", isDefault: true },
+                { value: "low", label: "Low", isDefault: false },
+              ],
+              supportsFastMode: true,
+              supportsThinkingToggle: false,
+              contextWindowOptions: [],
+              promptInjectedEffortLevels: [],
+            },
+          },
+        ]);
+      });
+
+      it("treats Cursor none variants as the base model with medium effort", () => {
+        const models = parseCursorModelsOutput(CURSOR_NONE_VARIANT_MODELS_OUTPUT);
+        assert.deepStrictEqual(models, [
+          {
+            slug: "gpt-5.4-mini",
+            name: "GPT-5.4 Mini",
+            isCustom: false,
+            capabilities: {
+              reasoningEffortLevels: [
+                { value: "high", label: "High", isDefault: false },
+                { value: "medium", label: "Medium", isDefault: true },
+              ],
+              supportsFastMode: true,
+              supportsThinkingToggle: false,
+              contextWindowOptions: [],
+              promptInjectedEffortLevels: [],
+            },
+          },
+        ]);
+      });
+
+      it("rebuilds the concrete Cursor CLI slug from normalized picker options", () => {
+        assert.strictEqual(
+          resolveCursorCliModelId({
+            model: "gpt-5.3-codex",
+            options: {
+              reasoningEffort: "xhigh",
+              fastMode: true,
+            },
+          }),
+          "gpt-5.3-codex-xhigh-fast",
+        );
+        assert.strictEqual(
+          resolveCursorCliModelId({
+            model: "gpt-5.3-codex",
+            options: {
+              reasoningEffort: "medium",
+            },
+          }),
+          "gpt-5.3-codex",
+        );
+      });
+
+      it("rebuilds the concrete Cursor CLI slug for reasoning-only synthetic base models", () => {
+        assert.strictEqual(
+          resolveCursorCliModelId({
+            model: "gpt-5.4-nano",
+            options: {
+              reasoningEffort: "xhigh",
+            },
+          }),
+          "gpt-5.4-nano-xhigh",
+        );
+      });
+
+      it("normalizes legacy Cursor none slugs before applying traits", () => {
+        assert.strictEqual(
+          resolveCursorCliModelId({
+            model: "gpt-5.4-mini-none",
+            options: {
+              reasoningEffort: "high",
+              fastMode: true,
+            },
+          }),
+          "gpt-5.4-mini-high-fast",
         );
       });
     });
@@ -1095,11 +1234,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           assert.strictEqual(status.installed, true);
           assert.strictEqual(status.auth.status, "authenticated");
           assert.strictEqual(
-            status.models.some((model) => model.slug === "composer-2-fast"),
+            status.models.some((model) => model.slug === "composer-2"),
             true,
           );
           assert.strictEqual(
-            status.models.some((model) => model.slug === "gpt-5.4-nano-xhigh"),
+            status.models.some((model) => model.slug === "gpt-5.4-nano"),
             true,
           );
           assert.strictEqual(

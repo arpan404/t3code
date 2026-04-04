@@ -10,6 +10,7 @@ import {
   isClaudeUltrathinkPrompt,
   normalizeClaudeModelOptionsWithCapabilities,
   normalizeCodexModelOptionsWithCapabilities,
+  normalizeCursorModelOptionsWithCapabilities,
   normalizeGitHubCopilotModelOptionsWithCapabilities,
   normalizeModelSlug,
   resolveApiModelId,
@@ -59,6 +60,19 @@ const githubCopilotCaps: ModelCapabilities = {
   promptInjectedEffortLevels: [],
 };
 
+const cursorCaps: ModelCapabilities = {
+  reasoningEffortLevels: [
+    { value: "xhigh", label: "Extra High" },
+    { value: "high", label: "High" },
+    { value: "medium", label: "Medium", isDefault: true },
+    { value: "low", label: "Low" },
+  ],
+  supportsFastMode: true,
+  supportsThinkingToggle: false,
+  contextWindowOptions: [],
+  promptInjectedEffortLevels: [],
+};
+
 describe("normalizeModelSlug", () => {
   it("maps known aliases to canonical slugs", () => {
     expect(normalizeModelSlug("5.3")).toBe("gpt-5.3-codex");
@@ -97,6 +111,20 @@ describe("resolveSelectableModel", () => {
     expect(resolveSelectableModel("codex", "gpt-5.3-codex", options)).toBe("gpt-5.3-codex");
     expect(resolveSelectableModel("codex", "gpt-5.3 codex", options)).toBe("gpt-5.3-codex");
     expect(resolveSelectableModel("claudeAgent", "sonnet", options)).toBe("claude-sonnet-4-6");
+  });
+
+  it("maps legacy Cursor variant slugs onto normalized base model options", () => {
+    const options = [{ slug: "gpt-5.3-codex", name: "GPT-5.3 Codex" }];
+    expect(resolveSelectableModel("cursor", "gpt-5.3-codex-high-fast", options)).toBe(
+      "gpt-5.3-codex",
+    );
+  });
+
+  it("maps legacy Cursor none slugs onto normalized base model options", () => {
+    const options = [{ slug: "gpt-5.4-mini", name: "GPT-5.4 Mini" }];
+    expect(resolveSelectableModel("cursor", "gpt-5.4-mini-none-fast", options)).toBe(
+      "gpt-5.4-mini",
+    );
   });
 });
 
@@ -315,6 +343,34 @@ describe("normalize*ModelOptionsWithCapabilities", () => {
         },
         {
           reasoningEffort: "high",
+        },
+      ),
+    ).toBeUndefined();
+  });
+
+  it("normalizes Cursor reasoning effort and fast mode against capabilities", () => {
+    expect(
+      normalizeCursorModelOptionsWithCapabilities(cursorCaps, {
+        reasoningEffort: "low",
+        fastMode: true,
+      }),
+    ).toEqual({
+      reasoningEffort: "low",
+      fastMode: true,
+    });
+  });
+
+  it("drops unsupported Cursor fast mode and effort options", () => {
+    expect(
+      normalizeCursorModelOptionsWithCapabilities(
+        {
+          ...cursorCaps,
+          reasoningEffortLevels: [],
+          supportsFastMode: false,
+        },
+        {
+          reasoningEffort: "high",
+          fastMode: true,
         },
       ),
     ).toBeUndefined();

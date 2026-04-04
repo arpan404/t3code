@@ -3657,7 +3657,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           submission.modelSelection.provider,
           submission.modelSelection.model ||
             activeProject.defaultModelSelection?.model ||
-            DEFAULT_MODEL_BY_PROVIDER.codex,
+            DEFAULT_MODEL_BY_PROVIDER[submission.modelSelection.provider],
           submission.modelSelection.options,
         );
 

@@ -1,21 +1,13 @@
 /**
- * RoutingTextGeneration – Dispatches text generation requests to either the
- * Codex CLI or Claude CLI implementation based on the provider in each
- * request input.
+ * RoutingTextGeneration – Dispatches text generation requests to the provider-
+ * specific implementation selected in each request input.
  *
- * When `modelSelection.provider` is `"claudeAgent"` or `"githubCopilot"` the
- * request is forwarded to that provider's text-generation layer. Unsupported
- * providers fall back to Codex with Codex's default git-text model so the
- * downstream implementation always receives a valid selection.
+ * Each supported provider gets its own dedicated text-generation backend so the
+ * Git/title flows use the same provider the user selected.
  *
  * @module RoutingTextGeneration
  */
-import {
-  DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER,
-  type ModelSelection,
-  type ProviderKind,
-} from "@t3tools/contracts";
-import { buildProviderModelSelection } from "@t3tools/shared/model";
+import type { ModelSelection, ProviderKind } from "@t3tools/contracts";
 import { Effect, Layer, ServiceMap } from "effect";
 
 import {
@@ -23,6 +15,7 @@ import {
   type TextGenerationProvider,
   type TextGenerationShape,
 } from "../Services/TextGeneration.ts";
+import { CursorTextGenerationLive } from "./CursorTextGeneration.ts";
 import { CodexTextGenerationLive } from "./CodexTextGeneration.ts";
 import { ClaudeTextGenerationLive } from "./ClaudeTextGeneration.ts";
 import { GitHubCopilotTextGenerationLive } from "./GitHubCopilotTextGeneration.ts";
@@ -43,27 +36,18 @@ class GitHubCopilotTextGen extends ServiceMap.Service<GitHubCopilotTextGen, Text
   "t3/git/Layers/RoutingTextGeneration/GitHubCopilotTextGen",
 ) {}
 
-const toTextGenerationProvider = (provider: ProviderKind): TextGenerationProvider | undefined =>
-  provider === "claudeAgent" || provider === "githubCopilot" || provider === "codex"
-    ? provider
-    : undefined;
+class CursorTextGen extends ServiceMap.Service<CursorTextGen, TextGenerationShape>()(
+  "t3/git/Layers/RoutingTextGeneration/CursorTextGen",
+) {}
+
+const toTextGenerationProvider = (provider: ProviderKind): TextGenerationProvider => provider;
 
 type TextGenerationModelSelection = Extract<ModelSelection, { provider: TextGenerationProvider }>;
 
 export function normalizeTextGenerationModelSelection(
   selection: ModelSelection,
 ): TextGenerationModelSelection {
-  switch (selection.provider) {
-    case "codex":
-    case "claudeAgent":
-    case "githubCopilot":
-      return selection;
-    case "cursor":
-      return buildProviderModelSelection(
-        "codex",
-        DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER.codex,
-      );
-  }
+  return selection;
 }
 
 // ---------------------------------------------------------------------------
@@ -74,9 +58,16 @@ const makeRoutingTextGeneration = Effect.gen(function* () {
   const codex = yield* CodexTextGen;
   const claude = yield* ClaudeTextGen;
   const gitHubCopilot = yield* GitHubCopilotTextGen;
+  const cursor = yield* CursorTextGen;
 
   const route = (provider?: TextGenerationProvider): TextGenerationShape =>
-    provider === "claudeAgent" ? claude : provider === "githubCopilot" ? gitHubCopilot : codex;
+    provider === "claudeAgent"
+      ? claude
+      : provider === "githubCopilot"
+        ? gitHubCopilot
+        : provider === "cursor"
+          ? cursor
+          : codex;
 
   return {
     generateCommitMessage: (input) => {
@@ -134,6 +125,14 @@ const InternalGitHubCopilotLayer = Layer.effect(
   }),
 ).pipe(Layer.provide(GitHubCopilotTextGenerationLive));
 
+const InternalCursorLayer = Layer.effect(
+  CursorTextGen,
+  Effect.gen(function* () {
+    const svc = yield* TextGeneration;
+    return svc;
+  }),
+).pipe(Layer.provide(CursorTextGenerationLive));
+
 export const RoutingTextGenerationLive = Layer.effect(
   TextGeneration,
   makeRoutingTextGeneration,
@@ -141,4 +140,5 @@ export const RoutingTextGenerationLive = Layer.effect(
   Layer.provide(InternalCodexLayer),
   Layer.provide(InternalClaudeLayer),
   Layer.provide(InternalGitHubCopilotLayer),
+  Layer.provide(InternalCursorLayer),
 );

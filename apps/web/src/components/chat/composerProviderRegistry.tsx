@@ -11,6 +11,7 @@ import { shouldRenderTraitsPicker, TraitsMenuContent, TraitsPicker } from "./Tra
 import {
   normalizeClaudeModelOptionsWithCapabilities,
   normalizeCodexModelOptionsWithCapabilities,
+  normalizeCursorModelOptionsWithCapabilities,
   normalizeGitHubCopilotModelOptionsWithCapabilities,
 } from "@t3tools/shared/model";
 
@@ -77,7 +78,9 @@ function getProviderStateFromCapabilities(
         ? normalizeClaudeModelOptionsWithCapabilities(caps, modelOptions?.claudeAgent)
         : provider === "githubCopilot"
           ? normalizeGitHubCopilotModelOptionsWithCapabilities(caps, modelOptions?.githubCopilot)
-          : undefined;
+          : provider === "cursor"
+            ? normalizeCursorModelOptionsWithCapabilities(caps, modelOptions?.cursor)
+            : undefined;
 
   // Ultrathink styling (driven by capabilities data, not provider identity)
   const ultrathinkActive =
@@ -195,13 +198,36 @@ const composerProviderRegistry: Record<ProviderKind, ProviderRegistryEntry> = {
     ),
   },
   cursor: {
-    getState: (input) => ({
-      provider: input.provider,
-      promptEffort: null,
-      modelOptionsForDispatch: undefined,
-    }),
-    renderTraitsMenuContent: () => null,
-    renderTraitsPicker: () => null,
+    getState: (input) => getProviderStateFromCapabilities(input),
+    renderTraitsMenuContent: ({
+      threadId,
+      model,
+      models,
+      modelOptions,
+      prompt,
+      onPromptChange,
+    }) => (
+      <TraitsMenuContent
+        provider="cursor"
+        models={models}
+        threadId={threadId}
+        model={model}
+        modelOptions={modelOptions}
+        prompt={prompt}
+        onPromptChange={onPromptChange}
+      />
+    ),
+    renderTraitsPicker: ({ threadId, model, models, modelOptions, prompt, onPromptChange }) => (
+      <TraitsPicker
+        provider="cursor"
+        models={models}
+        threadId={threadId}
+        model={model}
+        modelOptions={modelOptions}
+        prompt={prompt}
+        onPromptChange={onPromptChange}
+      />
+    ),
   },
 };
 

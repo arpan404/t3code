@@ -137,6 +137,26 @@ const GITHUB_COPILOT_MODELS: ReadonlyArray<ServerProviderModel> = [
   },
 ];
 
+const CURSOR_MODELS: ReadonlyArray<ServerProviderModel> = [
+  {
+    slug: "gpt-5.3-codex",
+    name: "GPT-5.3 Codex",
+    isCustom: false,
+    capabilities: {
+      reasoningEffortLevels: [
+        { value: "xhigh", label: "Extra High" },
+        { value: "high", label: "High" },
+        { value: "medium", label: "Medium", isDefault: true },
+        { value: "low", label: "Low" },
+      ],
+      supportsFastMode: true,
+      supportsThinkingToggle: false,
+      contextWindowOptions: [],
+      promptInjectedEffortLevels: [],
+    },
+  },
+];
+
 describe("getComposerProviderState", () => {
   it("returns codex defaults when no codex draft options exist", () => {
     const state = getComposerProviderState({
@@ -483,6 +503,30 @@ describe("getComposerProviderState", () => {
       provider: "githubCopilot",
       promptEffort: null,
       modelOptionsForDispatch: undefined,
+    });
+  });
+
+  it("normalizes Cursor effort and fast mode like the Codex-style providers", () => {
+    const state = getComposerProviderState({
+      provider: "cursor",
+      model: "gpt-5.3-codex",
+      models: CURSOR_MODELS,
+      prompt: "",
+      modelOptions: {
+        cursor: {
+          reasoningEffort: "low",
+          fastMode: true,
+        },
+      },
+    });
+
+    expect(state).toEqual({
+      provider: "cursor",
+      promptEffort: "low",
+      modelOptionsForDispatch: {
+        reasoningEffort: "low",
+        fastMode: true,
+      },
     });
   });
 });

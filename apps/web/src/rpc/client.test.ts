@@ -137,6 +137,9 @@ describe("WsRpcAtomClient", () => {
         githubCopilot: {
           ...DEFAULT_SERVER_SETTINGS.providers.githubCopilot,
         },
+        cursor: {
+          ...DEFAULT_SERVER_SETTINGS.providers.cursor,
+        },
       },
     };
     const requestPromise = runRpc((client) => client(WS_METHODS.serverGetSettings, {}));
@@ -189,6 +192,9 @@ describe("WsRpcAtomClient", () => {
         },
         githubCopilot: {
           ...DEFAULT_SERVER_SETTINGS.providers.githubCopilot,
+        },
+        cursor: {
+          ...DEFAULT_SERVER_SETTINGS.providers.cursor,
         },
       },
     };

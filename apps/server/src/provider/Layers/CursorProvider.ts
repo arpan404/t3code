@@ -1,4 +1,11 @@
-import type { CursorSettings, ServerProvider, ServerProviderModel } from "@t3tools/contracts";
+import type {
+  CodexReasoningEffort,
+  CursorModelOptions,
+  CursorSettings,
+  ModelCapabilities,
+  ServerProvider,
+  ServerProviderModel,
+} from "@t3tools/contracts";
 import { Cache, Duration, Effect, Equal, Layer, Result, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
@@ -16,6 +23,50 @@ import { ServerSettingsError } from "@t3tools/contracts";
 
 const PROVIDER = "cursor" as const;
 const ANSI_ESCAPE_PATTERN = new RegExp(String.raw`\u001b\[[0-9;]*m`, "g");
+const EMPTY_CURSOR_CAPABILITIES: ModelCapabilities = {
+  reasoningEffortLevels: [],
+  supportsFastMode: false,
+  supportsThinkingToggle: false,
+  contextWindowOptions: [],
+  promptInjectedEffortLevels: [],
+};
+const CURSOR_REASONING_VARIANTS: ReadonlyArray<{
+  readonly value: CodexReasoningEffort;
+  readonly slugSuffix: string;
+  readonly nameSuffixPattern: RegExp;
+  readonly label: string;
+}> = [
+  {
+    value: "xhigh",
+    slugSuffix: "-xhigh",
+    nameSuffixPattern: /\s+extra high$/i,
+    label: "Extra High",
+  },
+  {
+    value: "high",
+    slugSuffix: "-high",
+    nameSuffixPattern: /\s+high$/i,
+    label: "High",
+  },
+  {
+    value: "medium",
+    slugSuffix: "-medium",
+    nameSuffixPattern: /\s+medium$/i,
+    label: "Medium",
+  },
+  {
+    value: "low",
+    slugSuffix: "-low",
+    nameSuffixPattern: /\s+low$/i,
+    label: "Low",
+  },
+] as const;
+const CURSOR_REASONING_ORDER: ReadonlyArray<CodexReasoningEffort> = [
+  "xhigh",
+  "high",
+  "medium",
+  "low",
+];
 const FALLBACK_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
     slug: "auto",
@@ -24,10 +75,13 @@ const FALLBACK_MODELS: ReadonlyArray<ServerProviderModel> = [
     capabilities: null,
   },
   {
-    slug: "composer-2-fast",
-    name: "Composer 2 Fast",
+    slug: "composer-2",
+    name: "Composer 2",
     isCustom: false,
-    capabilities: null,
+    capabilities: {
+      ...EMPTY_CURSOR_CAPABILITIES,
+      supportsFastMode: true,
+    },
   },
   {
     slug: "gpt-5-mini",
@@ -94,7 +148,15 @@ function stripAnsi(value: string): string {
   return value.replace(ANSI_ESCAPE_PATTERN, "");
 }
 
-export function parseCursorModelsOutput(output: string): ReadonlyArray<ServerProviderModel> {
+type ParsedCursorVariant = {
+  readonly rawModel: ServerProviderModel;
+  readonly baseSlug: string;
+  readonly baseName: string;
+  readonly reasoningEffort: CodexReasoningEffort | null;
+  readonly fastMode: boolean;
+};
+
+function parseRawCursorModelsOutput(output: string): ReadonlyArray<ServerProviderModel> {
   const seen = new Set<string>();
   const models: ServerProviderModel[] = [];
 
@@ -126,6 +188,180 @@ export function parseCursorModelsOutput(output: string): ReadonlyArray<ServerPro
   }
 
   return models;
+}
+
+function parseCursorVariant(model: ServerProviderModel): ParsedCursorVariant {
+  let baseSlug = model.slug;
+  let baseName = model.name;
+  let fastMode = false;
+
+  if (baseSlug.endsWith("-fast")) {
+    fastMode = true;
+    baseSlug = baseSlug.slice(0, -"-fast".length);
+    baseName = baseName.replace(/\s+fast$/i, "").trim();
+  }
+
+  let reasoningEffort: CodexReasoningEffort | null = null;
+  if (baseSlug.endsWith("-none")) {
+    reasoningEffort = "medium";
+    baseSlug = baseSlug.slice(0, -"-none".length);
+    baseName = baseName.replace(/\s+none$/i, "").trim();
+  }
+  for (const variant of CURSOR_REASONING_VARIANTS) {
+    if (!baseSlug.endsWith(variant.slugSuffix)) {
+      continue;
+    }
+    reasoningEffort = variant.value;
+    baseSlug = baseSlug.slice(0, -variant.slugSuffix.length);
+    baseName = baseName.replace(variant.nameSuffixPattern, "").trim();
+    break;
+  }
+
+  return {
+    rawModel: model,
+    baseSlug,
+    baseName: baseName || model.name,
+    reasoningEffort,
+    fastMode,
+  };
+}
+
+function buildNormalizedCursorModel(
+  variants: ReadonlyArray<ParsedCursorVariant>,
+): ServerProviderModel | null {
+  const baseVariant = variants.find(
+    (variant) => !variant.fastMode && variant.reasoningEffort === null,
+  );
+  const firstNonFastVariant = variants.find((variant) => !variant.fastMode);
+  const identityVariant = baseVariant ?? firstNonFastVariant ?? variants[0];
+  if (!identityVariant) {
+    return null;
+  }
+
+  const supportsFastMode = variants.some((variant) => variant.fastMode);
+  const discoveredEffortLevels = new Set<CodexReasoningEffort>();
+  const hasExplicitEffortVariants = variants.some((variant) => variant.reasoningEffort !== null);
+  const supportsBaseEffort =
+    (baseVariant !== undefined && hasExplicitEffortVariants) ||
+    variants.some((variant) => variant.reasoningEffort === "medium");
+
+  for (const variant of variants) {
+    if (variant.reasoningEffort) {
+      discoveredEffortLevels.add(variant.reasoningEffort);
+    }
+  }
+  if (supportsBaseEffort) {
+    discoveredEffortLevels.add("medium");
+  }
+
+  if (!supportsFastMode && discoveredEffortLevels.size === 0) {
+    return null;
+  }
+
+  const defaultReasoningEffort = supportsBaseEffort
+    ? ("medium" as const)
+    : (CURSOR_REASONING_ORDER.find((value) => discoveredEffortLevels.has(value)) ?? null);
+
+  return {
+    slug: identityVariant.baseSlug,
+    name: identityVariant.baseName,
+    isCustom: false,
+    capabilities: {
+      ...EMPTY_CURSOR_CAPABILITIES,
+      reasoningEffortLevels: CURSOR_REASONING_ORDER.filter((value) =>
+        discoveredEffortLevels.has(value),
+      ).map((value) => {
+        const effortLevel = {
+          value,
+          label:
+            CURSOR_REASONING_VARIANTS.find((variant) => variant.value === value)?.label ?? value,
+          isDefault: false,
+        };
+        if (value === defaultReasoningEffort) {
+          effortLevel.isDefault = true;
+        }
+        return effortLevel;
+      }),
+      supportsFastMode,
+    },
+  };
+}
+
+function normalizeCursorModels(
+  models: ReadonlyArray<ServerProviderModel>,
+): ReadonlyArray<ServerProviderModel> {
+  const variantsByBaseSlug = new Map<string, ParsedCursorVariant[]>();
+  const parsedVariants = models.map((model) => {
+    const parsed = parseCursorVariant(model);
+    const group = variantsByBaseSlug.get(parsed.baseSlug);
+    if (group) {
+      group.push(parsed);
+    } else {
+      variantsByBaseSlug.set(parsed.baseSlug, [parsed]);
+    }
+    return parsed;
+  });
+
+  const emittedBaseSlugs = new Set<string>();
+  const normalizedModels: ServerProviderModel[] = [];
+  for (const parsed of parsedVariants) {
+    const groupedVariants = variantsByBaseSlug.get(parsed.baseSlug) ?? [parsed];
+    const normalized = buildNormalizedCursorModel(groupedVariants);
+    if (!normalized) {
+      normalizedModels.push(parsed.rawModel);
+      continue;
+    }
+    if (emittedBaseSlugs.has(parsed.baseSlug)) {
+      continue;
+    }
+    emittedBaseSlugs.add(parsed.baseSlug);
+    normalizedModels.push(normalized);
+  }
+
+  return normalizedModels;
+}
+
+export function parseCursorModelsOutput(output: string): ReadonlyArray<ServerProviderModel> {
+  return normalizeCursorModels(parseRawCursorModelsOutput(output));
+}
+
+export function resolveCursorCliModelId(input: {
+  readonly model: string;
+  readonly options?: CursorModelOptions | null | undefined;
+}): string {
+  let slug = input.model.trim();
+  if (!slug) {
+    return input.model;
+  }
+
+  const requestedFastMode = input.options?.fastMode === true;
+  const requestedEffort = input.options?.reasoningEffort;
+  if (!requestedFastMode && !requestedEffort) {
+    return slug;
+  }
+
+  if (slug.endsWith("-fast")) {
+    slug = slug.slice(0, -"-fast".length);
+  }
+  if (slug.endsWith("-none")) {
+    slug = slug.slice(0, -"-none".length);
+  }
+  for (const variant of CURSOR_REASONING_VARIANTS) {
+    if (!slug.endsWith(variant.slugSuffix)) {
+      continue;
+    }
+    slug = slug.slice(0, -variant.slugSuffix.length);
+    break;
+  }
+
+  if (requestedEffort && requestedEffort !== "medium") {
+    slug = `${slug}${requestedEffort === "xhigh" ? "-xhigh" : `-${requestedEffort}`}`;
+  }
+  if (requestedFastMode) {
+    slug = `${slug}-fast`;
+  }
+
+  return slug;
 }
 
 const runCursorCommand = Effect.fn("runCursorCommand")(function* (args: ReadonlyArray<string>) {

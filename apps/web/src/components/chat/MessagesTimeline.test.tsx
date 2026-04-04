@@ -991,6 +991,81 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("Running format and checks");
   });
 
+  it("merges repeated live intent bursts with the same text into one disclosure", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking
+        activeTurnInProgress
+        activeTurnStartedAt="2026-03-17T19:12:30.000Z"
+        scrollContainer={null}
+        timelineEntries={[
+          {
+            id: "intent-live-1",
+            kind: "intent",
+            createdAt: "2026-03-17T19:12:30.000Z",
+            text: "Exploring cursor flow",
+          },
+          {
+            id: "tool-live-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:31.000Z",
+            entry: {
+              id: "tool-live-1",
+              createdAt: "2026-03-17T19:12:31.000Z",
+              label: "Read file",
+              toolTitle: "Read file",
+              detail: "apps/server/src/provider/Layers/ProviderService.ts",
+              tone: "tool",
+              intentText: "Exploring cursor flow",
+            },
+          },
+          {
+            id: "intent-live-2",
+            kind: "intent",
+            createdAt: "2026-03-17T19:12:32.000Z",
+            text: "Exploring cursor flow",
+          },
+          {
+            id: "tool-live-2",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:33.000Z",
+            entry: {
+              id: "tool-live-2",
+              createdAt: "2026-03-17T19:12:33.000Z",
+              label: "Search code",
+              toolTitle: "Search code",
+              detail: "apps/web/src/components/chat/MessagesTimeline.tsx",
+              tone: "tool",
+              intentText: "Exploring cursor flow",
+            },
+          },
+        ]}
+        completionDividerBeforeEntryId={null}
+        completionSummary={null}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        nowIso="2026-03-17T19:12:35.000Z"
+        expandedWorkGroups={{}}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup.match(/data-intent-disclosure="true"/g) ?? []).toHaveLength(1);
+    expect(markup).toContain("2 tool calls");
+    expect(markup).toContain("ProviderService.ts");
+    expect(markup).toContain("MessagesTimeline.tsx");
+  });
+
   it("hides completed tool calls regardless of saved expansion state", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(

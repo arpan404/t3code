@@ -1,4 +1,3 @@
-import { DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
 import { normalizeTextGenerationModelSelection } from "./RoutingTextGeneration";
@@ -16,15 +15,15 @@ describe("normalizeTextGenerationModelSelection", () => {
     });
   });
 
-  it("falls back unsupported Cursor selections to Codex defaults", () => {
+  it("preserves Cursor selections now that Cursor has a real text-generation backend", () => {
     expect(
       normalizeTextGenerationModelSelection({
         provider: "cursor",
         model: "claude-4-sonnet",
       }),
     ).toEqual({
-      provider: "codex",
-      model: DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER.codex,
+      provider: "cursor",
+      model: "claude-4-sonnet",
     });
   });
 });

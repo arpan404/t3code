@@ -4,6 +4,7 @@ import {
   type ClaudeCodeEffort,
   type ClaudeModelOptions,
   type CodexModelOptions,
+  type CursorModelOptions,
   type GitHubCopilotModelOptions,
   type ModelCapabilities,
   type ModelSelection,
@@ -132,6 +133,21 @@ export function normalizeGitHubCopilotModelOptionsWithCapabilities(
   return Object.keys(nextOptions).length > 0 ? nextOptions : undefined;
 }
 
+export function normalizeCursorModelOptionsWithCapabilities(
+  caps: ModelCapabilities,
+  modelOptions: CursorModelOptions | null | undefined,
+): CursorModelOptions | undefined {
+  const reasoningEffort = resolveEffort(caps, modelOptions?.reasoningEffort);
+  const fastMode = caps.supportsFastMode ? modelOptions?.fastMode : undefined;
+  const nextOptions: CursorModelOptions = {
+    ...(reasoningEffort
+      ? { reasoningEffort: reasoningEffort as CursorModelOptions["reasoningEffort"] }
+      : {}),
+    ...(fastMode !== undefined ? { fastMode } : {}),
+  };
+  return Object.keys(nextOptions).length > 0 ? nextOptions : undefined;
+}
+
 export function buildProviderModelSelection(
   provider: "codex",
   model: string,
@@ -150,6 +166,7 @@ export function buildProviderModelSelection(
 export function buildProviderModelSelection(
   provider: "cursor",
   model: string,
+  options?: ProviderModelOptions["cursor"],
 ): Extract<ModelSelection, { provider: "cursor" }>;
 export function buildProviderModelSelection(
   provider: ProviderKind,
@@ -184,8 +201,29 @@ export function buildProviderModelSelection(
       return {
         provider,
         model,
+        ...(options ? { options: options as ProviderModelOptions["cursor"] } : {}),
       } as Extract<ModelSelection, { provider: "cursor" }>;
   }
+}
+
+function normalizeCursorVariantSelectionCandidate(value: string): string | null {
+  let normalized = value.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized.endsWith("-fast")) {
+    normalized = normalized.slice(0, -"-fast".length);
+  }
+
+  for (const suffix of ["-xhigh", "-high", "-medium", "-low", "-none"] as const) {
+    if (normalized.endsWith(suffix)) {
+      normalized = normalized.slice(0, -suffix.length);
+      break;
+    }
+  }
+
+  return normalized !== value.trim() ? normalized : null;
 }
 
 export function isClaudeUltrathinkPrompt(text: string | null | undefined): boolean {
@@ -242,7 +280,20 @@ export function resolveSelectableModel(
   }
 
   const resolved = options.find((option) => option.slug === normalized);
-  return resolved ? resolved.slug : null;
+  if (resolved) {
+    return resolved.slug;
+  }
+
+  if (provider === "cursor") {
+    const canonicalCursorSlug = normalizeCursorVariantSelectionCandidate(normalized);
+    if (!canonicalCursorSlug) {
+      return null;
+    }
+    const canonicalCursorOption = options.find((option) => option.slug === canonicalCursorSlug);
+    return canonicalCursorOption ? canonicalCursorOption.slug : null;
+  }
+
+  return null;
 }
 
 export function resolveModelSlug(model: string | null | undefined, provider: ProviderKind): string {

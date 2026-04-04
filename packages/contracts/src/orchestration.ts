@@ -1,5 +1,10 @@
 import { Option, Schema, SchemaIssue, Struct } from "effect";
-import { ClaudeModelOptions, CodexModelOptions, GitHubCopilotModelOptions } from "./model";
+import {
+  ClaudeModelOptions,
+  CodexModelOptions,
+  CursorModelOptions,
+  GitHubCopilotModelOptions,
+} from "./model";
 import {
   ApprovalRequestId,
   CheckpointRef,
@@ -65,7 +70,7 @@ export type GitHubCopilotModelSelection = typeof GitHubCopilotModelSelection.Typ
 export const CursorModelSelection = Schema.Struct({
   provider: Schema.Literal("cursor"),
   model: TrimmedNonEmptyString,
-  options: Schema.optionalKey(Schema.Struct({})),
+  options: Schema.optionalKey(CursorModelOptions),
 });
 export type CursorModelSelection = typeof CursorModelSelection.Type;
 

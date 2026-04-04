@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import {
+  DEFAULT_MODEL_BY_PROVIDER,
   ApprovalRequestId,
   EventId,
   RuntimeRequestId,
@@ -26,6 +27,7 @@ import { startCursorAcpClient, type CursorAcpClient, type CursorAcpJsonRpcId } f
 import { type CursorAdapterShape, CursorAdapter } from "../Services/CursorAdapter.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { resolveCursorCliModelId } from "./CursorProvider.ts";
 
 const PROVIDER = "cursor" as const;
 const ACP_CONTROL_TIMEOUT_MS = 15_000;
@@ -176,6 +178,23 @@ function describePermissionRequest(params: unknown): string | undefined {
   return undefined;
 }
 
+export function permissionOptionIdForRuntimeMode(runtimeMode: ProviderSession["runtimeMode"]): {
+  readonly primary: "allow-always" | "allow-once";
+  readonly decision: ProviderApprovalDecision;
+} {
+  if (runtimeMode === "full-access") {
+    return {
+      primary: "allow-always",
+      decision: "acceptForSession",
+    };
+  }
+
+  return {
+    primary: "allow-once",
+    decision: "accept",
+  };
+}
+
 function planStepsFromTodos(
   todos: unknown,
 ): Array<{ step: string; status: "pending" | "inProgress" | "completed" }> {
@@ -212,6 +231,9 @@ export const CursorAdapterLive = Layer.effect(
     const emit = (event: ProviderRuntimeEvent) => {
       void runPromise(PubSub.publish(eventsPubSub, event).pipe(Effect.asVoid));
     };
+
+    const resolveSelectedModel = (modelSelection: { readonly model: string } | undefined) =>
+      modelSelection?.model ?? DEFAULT_MODEL_BY_PROVIDER.cursor;
 
     const baseEvent = (
       context: CursorSessionContext,
@@ -345,6 +367,17 @@ export const CursorAdapterLive = Layer.effect(
       const turnId = context.activeTurn?.id;
 
       if (request.method === "session/request_permission") {
+        if (context.session.runtimeMode === "full-access") {
+          const resolution = permissionOptionIdForRuntimeMode(context.session.runtimeMode);
+          context.client.respond(request.id, {
+            outcome: {
+              outcome: "selected",
+              optionId: resolution.primary,
+            },
+          });
+          return;
+        }
+
         const requestId = ApprovalRequestId.makeUnsafe(`cursor-permission:${randomUUID()}`);
         context.pendingApprovals.set(requestId, {
           requestId,
@@ -568,10 +601,17 @@ export const CursorAdapterLive = Layer.effect(
         if (existing) {
           return existing.session;
         }
+        const selectedModel = resolveSelectedModel(input.modelSelection);
+        const cursorCliModel = input.modelSelection
+          ? resolveCursorCliModelId({
+              model: selectedModel,
+              options: input.modelSelection.options,
+            })
+          : selectedModel;
 
         const client = startCursorAcpClient({
           binaryPath: settings.providers.cursor.binaryPath,
-          ...(input.modelSelection?.model ? { model: input.modelSelection.model } : {}),
+          model: cursorCliModel,
         });
         const createdAt = isoNow();
         const session: ProviderSession = {
@@ -579,7 +619,7 @@ export const CursorAdapterLive = Layer.effect(
           status: "connecting",
           runtimeMode: input.runtimeMode,
           ...(input.cwd ? { cwd: input.cwd } : {}),
-          ...(input.modelSelection?.model ? { model: input.modelSelection.model } : {}),
+          model: selectedModel,
           threadId: input.threadId,
           createdAt,
           updatedAt: createdAt,
@@ -680,7 +720,7 @@ export const CursorAdapterLive = Layer.effect(
         updateSession(context, {
           status: "ready",
           ...((input.cwd ?? serverConfig.cwd) ? { cwd: input.cwd ?? serverConfig.cwd } : {}),
-          ...(input.modelSelection?.model ? { model: input.modelSelection.model } : {}),
+          model: selectedModel,
           resumeCursor: {
             sessionId,
           } satisfies CursorResumeCursor,
@@ -763,6 +803,7 @@ export const CursorAdapterLive = Layer.effect(
         }
 
         const turnId = TurnId.makeUnsafe(`cursor-turn:${randomUUID()}`);
+        const selectedModel = resolveSelectedModel(input.modelSelection);
         const activeTurn: TurnSnapshot = {
           id: turnId,
           items: [],
@@ -772,13 +813,13 @@ export const CursorAdapterLive = Layer.effect(
         updateSession(context, {
           status: "running",
           activeTurnId: turnId,
-          ...(input.modelSelection?.model ? { model: input.modelSelection.model } : {}),
+          model: selectedModel,
         });
         emit({
           ...baseEvent(context, { turnId }),
           type: "turn.started",
           payload: {
-            ...(input.modelSelection?.model ? { model: input.modelSelection.model } : {}),
+            model: selectedModel,
             ...(input.interactionMode === "plan" ? { effort: "plan" } : {}),
           },
         });

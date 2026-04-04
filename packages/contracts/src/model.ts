@@ -28,11 +28,17 @@ export const GitHubCopilotModelOptions = Schema.Struct({
 });
 export type GitHubCopilotModelOptions = typeof GitHubCopilotModelOptions.Type;
 
+export const CursorModelOptions = Schema.Struct({
+  reasoningEffort: Schema.optional(Schema.Literals(CODEX_REASONING_EFFORT_OPTIONS)),
+  fastMode: Schema.optional(Schema.Boolean),
+});
+export type CursorModelOptions = typeof CursorModelOptions.Type;
+
 export const ProviderModelOptions = Schema.Struct({
   codex: Schema.optional(CodexModelOptions),
   claudeAgent: Schema.optional(ClaudeModelOptions),
   githubCopilot: Schema.optional(GitHubCopilotModelOptions),
-  cursor: Schema.optional(Schema.Struct({})),
+  cursor: Schema.optional(CursorModelOptions),
 });
 export type ProviderModelOptions = typeof ProviderModelOptions.Type;
 
@@ -109,8 +115,8 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string,
     "claude-sonnet-4-5": "claude-sonnet-4.5",
   },
   cursor: {
-    composer: "composer-2-fast",
-    "composer-2-fast": "composer-2-fast",
+    composer: "composer-2",
+    "composer-2-fast": "composer-2",
     "composer-2": "composer-2",
     sonnet: "claude-4-sonnet",
     "sonnet-4": "claude-4-sonnet",

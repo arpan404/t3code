@@ -289,7 +289,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       const input = {
         ...parsed,
         threadId,
-        provider: parsed.provider ?? "codex",
+        provider: parsed.provider ?? parsed.modelSelection?.provider ?? "codex",
       };
       const settings = yield* serverSettings.getSettings.pipe(
         Effect.mapError((error) =>

@@ -1233,6 +1233,12 @@ const make = Effect.fn("make")(function* () {
       if (!eventTurnId) {
         return false;
       }
+      if (event.type === "content.delta") {
+        return (
+          event.payload.streamKind === "reasoning_text" ||
+          event.payload.streamKind === "reasoning_summary_text"
+        );
+      }
       if (event.type === "item.started" || event.type === "item.updated") {
         return event.payload.itemType !== "assistant_message";
       }

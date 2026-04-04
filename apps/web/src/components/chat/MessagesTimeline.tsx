@@ -197,14 +197,23 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         }
 
         if (groupedEntries.length > 0) {
-          nextRows.push({
-            kind: "intent-work",
-            id: `intent-work:${timelineEntry.id}`,
-            createdAt: timelineEntry.createdAt,
-            text: timelineEntry.text,
-            groupedEntries,
-            workCreatedAt: groupedEntries[0]?.createdAt ?? timelineEntry.createdAt,
-          });
+          const previousRow = nextRows.at(-1);
+          if (
+            previousRow?.kind === "intent-work" &&
+            normalizeIntentTimelineText(previousRow.text) ===
+              normalizeIntentTimelineText(timelineEntry.text)
+          ) {
+            previousRow.groupedEntries.push(...groupedEntries);
+          } else {
+            nextRows.push({
+              kind: "intent-work",
+              id: `intent-work:${timelineEntry.id}`,
+              createdAt: timelineEntry.createdAt,
+              text: timelineEntry.text,
+              groupedEntries,
+              workCreatedAt: groupedEntries[0]?.createdAt ?? timelineEntry.createdAt,
+            });
+          }
           index = cursor - 1;
           continue;
         }
@@ -1014,6 +1023,14 @@ function formatMessageMeta(
 
 function workGroupId(rowId: string): string {
   return `work-group:${rowId}`;
+}
+
+function normalizeIntentTimelineText(value: string): string {
+  return value
+    .trim()
+    .replace(/[^a-z0-9]+/gi, " ")
+    .toLowerCase()
+    .trim();
 }
 
 function isThinkingWorkRow(row: TimelineRow | undefined): boolean {

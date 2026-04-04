@@ -775,6 +775,88 @@ describe("ProviderRuntimeIngestion", () => {
     expect(toolActivity?.kind).toBe("tool.started");
   });
 
+  it("splits assistant messages when reasoning activity interrupts the same assistant item", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-reasoning-segment-delta-1"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-reasoning-segmented"),
+      itemId: asItemId("item-reasoning-segmented"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "Before reasoning.",
+      },
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-reasoning-segment-thinking"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-reasoning-segmented"),
+      itemId: asItemId("reasoning-reasoning-segmented"),
+      payload: {
+        streamKind: "reasoning_text",
+        delta: "Thinking through the next tool call.",
+      },
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-reasoning-segment-delta-2"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-reasoning-segmented"),
+      itemId: asItemId("item-reasoning-segmented"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "After reasoning.",
+      },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-reasoning-segment-complete"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-reasoning-segmented"),
+      itemId: asItemId("item-reasoning-segmented"),
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+      },
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) => {
+      const assistantMessages = entry.messages.filter(
+        (message: ProviderRuntimeTestMessage) =>
+          message.turnId === "turn-reasoning-segmented" &&
+          message.role === "assistant" &&
+          !message.streaming,
+      );
+      return assistantMessages.length >= 2;
+    });
+
+    const assistantMessages = thread.messages.filter(
+      (message: ProviderRuntimeTestMessage) =>
+        message.turnId === "turn-reasoning-segmented" && message.role === "assistant",
+    );
+    expect(assistantMessages.map((message) => message.text)).toEqual([
+      "Before reasoning.",
+      "After reasoning.",
+    ]);
+
+    const reasoningActivity = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-reasoning-segment-thinking",
+    );
+    expect(reasoningActivity?.kind).toBe("task.progress");
+  });
+
   it("uses assistant item completion detail when no assistant deltas were streamed", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
