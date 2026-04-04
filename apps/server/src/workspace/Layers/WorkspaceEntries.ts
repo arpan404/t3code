@@ -74,6 +74,14 @@ function toSearchableWorkspaceEntry(entry: ProjectEntry): SearchableWorkspaceEnt
   };
 }
 
+function toPublicProjectEntry(entry: SearchableWorkspaceEntry): ProjectEntry {
+  return {
+    path: entry.path,
+    kind: entry.kind,
+    ...(entry.parentPath ? { parentPath: entry.parentPath } : {}),
+  };
+}
+
 function normalizeQuery(input: string): string {
   return input
     .trim()
@@ -486,7 +494,7 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
           }
 
           return {
-            entries: rankedEntries.map((candidate) => candidate.entry),
+            entries: rankedEntries.map((candidate) => toPublicProjectEntry(candidate.entry)),
             truncated: index.truncated || matchedEntryCount > limit,
           };
         }),
@@ -494,8 +502,21 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
     },
   );
 
+  const listTree: WorkspaceEntriesShape["listTree"] = Effect.fn("WorkspaceEntries.listTree")(
+    function* (cwd) {
+      const normalizedCwd = yield* normalizeWorkspaceRoot(cwd);
+      return yield* Cache.get(workspaceIndexCache, normalizedCwd).pipe(
+        Effect.map((index) => ({
+          entries: index.entries.map(toPublicProjectEntry),
+          truncated: index.truncated,
+        })),
+      );
+    },
+  );
+
   return {
     invalidate,
+    listTree,
     search,
   } satisfies WorkspaceEntriesShape;
 });

@@ -3,12 +3,19 @@
  * Codex CLI or Claude CLI implementation based on the provider in each
  * request input.
  *
- * When `modelSelection.provider` is `"claudeAgent"` the request is forwarded to
- * the Claude layer; for any other value (including the default `undefined`) it
- * falls through to the Codex layer.
+ * When `modelSelection.provider` is `"claudeAgent"` or `"githubCopilot"` the
+ * request is forwarded to that provider's text-generation layer. Unsupported
+ * providers fall back to Codex with Codex's default git-text model so the
+ * downstream implementation always receives a valid selection.
  *
  * @module RoutingTextGeneration
  */
+import {
+  DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER,
+  type ModelSelection,
+  type ProviderKind,
+} from "@t3tools/contracts";
+import { buildProviderModelSelection } from "@t3tools/shared/model";
 import { Effect, Layer, ServiceMap } from "effect";
 
 import {
@@ -36,6 +43,29 @@ class GitHubCopilotTextGen extends ServiceMap.Service<GitHubCopilotTextGen, Text
   "t3/git/Layers/RoutingTextGeneration/GitHubCopilotTextGen",
 ) {}
 
+const toTextGenerationProvider = (provider: ProviderKind): TextGenerationProvider | undefined =>
+  provider === "claudeAgent" || provider === "githubCopilot" || provider === "codex"
+    ? provider
+    : undefined;
+
+type TextGenerationModelSelection = Extract<ModelSelection, { provider: TextGenerationProvider }>;
+
+export function normalizeTextGenerationModelSelection(
+  selection: ModelSelection,
+): TextGenerationModelSelection {
+  switch (selection.provider) {
+    case "codex":
+    case "claudeAgent":
+    case "githubCopilot":
+      return selection;
+    case "cursor":
+      return buildProviderModelSelection(
+        "codex",
+        DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER.codex,
+      );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Routing implementation
 // ---------------------------------------------------------------------------
@@ -49,11 +79,34 @@ const makeRoutingTextGeneration = Effect.gen(function* () {
     provider === "claudeAgent" ? claude : provider === "githubCopilot" ? gitHubCopilot : codex;
 
   return {
-    generateCommitMessage: (input) =>
-      route(input.modelSelection.provider).generateCommitMessage(input),
-    generatePrContent: (input) => route(input.modelSelection.provider).generatePrContent(input),
-    generateBranchName: (input) => route(input.modelSelection.provider).generateBranchName(input),
-    generateThreadTitle: (input) => route(input.modelSelection.provider).generateThreadTitle(input),
+    generateCommitMessage: (input) => {
+      const modelSelection = normalizeTextGenerationModelSelection(input.modelSelection);
+      return route(toTextGenerationProvider(modelSelection.provider)).generateCommitMessage({
+        ...input,
+        modelSelection,
+      });
+    },
+    generatePrContent: (input) => {
+      const modelSelection = normalizeTextGenerationModelSelection(input.modelSelection);
+      return route(toTextGenerationProvider(modelSelection.provider)).generatePrContent({
+        ...input,
+        modelSelection,
+      });
+    },
+    generateBranchName: (input) => {
+      const modelSelection = normalizeTextGenerationModelSelection(input.modelSelection);
+      return route(toTextGenerationProvider(modelSelection.provider)).generateBranchName({
+        ...input,
+        modelSelection,
+      });
+    },
+    generateThreadTitle: (input) => {
+      const modelSelection = normalizeTextGenerationModelSelection(input.modelSelection);
+      return route(toTextGenerationProvider(modelSelection.provider)).generateThreadTitle({
+        ...input,
+        modelSelection,
+      });
+    },
   } satisfies TextGenerationShape;
 });
 

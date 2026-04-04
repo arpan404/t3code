@@ -72,6 +72,7 @@ function createBaseServerConfig(): ServerConfig {
         },
         claudeAgent: { enabled: true, binaryPath: "", customModels: [] },
         githubCopilot: { enabled: true, binaryPath: "", cliUrl: "", customModels: [] },
+        cursor: { enabled: true, binaryPath: "", customModels: [] },
       },
     },
   };
@@ -184,6 +185,12 @@ function resolveWsRpc(tag: string): unknown {
   }
   if (tag === WS_METHODS.projectsSearchEntries) {
     return { entries: [], truncated: false };
+  }
+  if (tag === WS_METHODS.projectsListTree) {
+    return { entries: [], truncated: false };
+  }
+  if (tag === WS_METHODS.projectsReadFile) {
+    return { relativePath: "README.md", contents: "", sizeBytes: 0 };
   }
   return {};
 }

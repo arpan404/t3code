@@ -263,4 +263,32 @@ it.layer(TestLayer)("WorkspaceEntriesLive", (it) => {
       }),
     );
   });
+
+  describe("listTree", () => {
+    it.effect("returns the cached workspace tree without internal search metadata", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-tree-" });
+        yield* writeTextFile(cwd, "apps/web/src/main.tsx", "export {};\n");
+        yield* writeTextFile(cwd, "README.md", "# demo\n");
+
+        const result = yield* workspaceEntries.listTree(cwd);
+
+        expect(result.truncated).toBe(false);
+        expect(result.entries).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ path: "apps", kind: "directory" }),
+            expect.objectContaining({ path: "apps/web", kind: "directory", parentPath: "apps" }),
+            expect.objectContaining({
+              path: "apps/web/src/main.tsx",
+              kind: "file",
+              parentPath: "apps/web/src",
+            }),
+            expect.objectContaining({ path: "README.md", kind: "file" }),
+          ]),
+        );
+        expect(result.entries.every((entry) => !("normalizedPath" in entry))).toBe(true);
+      }),
+    );
+  });
 });

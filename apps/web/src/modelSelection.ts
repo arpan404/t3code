@@ -56,6 +56,13 @@ const PROVIDER_CUSTOM_MODEL_CONFIG: Record<ProviderKind, ProviderCustomModelConf
     placeholder: "your-copilot-model-slug",
     example: "gpt-5-mini",
   },
+  cursor: {
+    provider: "cursor",
+    title: "Cursor",
+    description: "Save additional Cursor model slugs for the picker and `/model` command.",
+    placeholder: "your-cursor-model-slug",
+    example: "claude-4-sonnet",
+  },
 };
 
 export const MODEL_PROVIDER_SETTINGS = Object.values(PROVIDER_CUSTOM_MODEL_CONFIG);
@@ -181,6 +188,12 @@ export function getCustomModelOptionsByProvider(
       providers,
       "githubCopilot",
       selectedProvider === "githubCopilot" ? selectedModel : undefined,
+    ),
+    cursor: getAppModelOptions(
+      settings,
+      providers,
+      "cursor",
+      selectedProvider === "cursor" ? selectedModel : undefined,
     ),
   };
 }

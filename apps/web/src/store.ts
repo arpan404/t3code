@@ -515,7 +515,8 @@ function toLegacyProvider(providerName: string | null): ProviderKind {
   if (
     providerName === "codex" ||
     providerName === "claudeAgent" ||
-    providerName === "githubCopilot"
+    providerName === "githubCopilot" ||
+    providerName === "cursor"
   ) {
     return providerName;
   }

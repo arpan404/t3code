@@ -32,6 +32,7 @@ export const ProviderModelOptions = Schema.Struct({
   codex: Schema.optional(CodexModelOptions),
   claudeAgent: Schema.optional(ClaudeModelOptions),
   githubCopilot: Schema.optional(GitHubCopilotModelOptions),
+  cursor: Schema.optional(Schema.Struct({})),
 });
 export type ProviderModelOptions = typeof ProviderModelOptions.Type;
 
@@ -62,6 +63,7 @@ export const DEFAULT_MODEL_BY_PROVIDER: Record<ProviderKind, string> = {
   codex: "gpt-5.4",
   claudeAgent: "claude-sonnet-4-6",
   githubCopilot: "gpt-5",
+  cursor: "auto",
 };
 
 export const DEFAULT_MODEL = DEFAULT_MODEL_BY_PROVIDER.codex;
@@ -71,6 +73,7 @@ export const DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER: Record<ProviderKind,
   codex: "gpt-5.4-mini",
   claudeAgent: "claude-haiku-4-5",
   githubCopilot: "gpt-5-mini",
+  cursor: "auto",
 };
 
 export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string, string>> = {
@@ -105,6 +108,14 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string,
     sonnet: "claude-sonnet-4.5",
     "claude-sonnet-4-5": "claude-sonnet-4.5",
   },
+  cursor: {
+    composer: "composer-2-fast",
+    "composer-2-fast": "composer-2-fast",
+    "composer-2": "composer-2",
+    sonnet: "claude-4-sonnet",
+    "sonnet-4": "claude-4-sonnet",
+    "sonnet-4-thinking": "claude-4-sonnet-thinking",
+  },
 };
 
 // ── Provider display names ────────────────────────────────────────────
@@ -113,4 +124,5 @@ export const PROVIDER_DISPLAY_NAMES: Record<ProviderKind, string> = {
   codex: "Codex",
   claudeAgent: "Claude",
   githubCopilot: "Copilot",
+  cursor: "Cursor",
 };

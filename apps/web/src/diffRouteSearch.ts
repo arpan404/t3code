@@ -1,9 +1,11 @@
 import { TurnId } from "@t3tools/contracts";
+import { normalizeThreadWorkspaceMode, type ThreadWorkspaceMode } from "./threadWorkspaceMode";
 
 export interface DiffRouteSearch {
   diff?: "1" | undefined;
   diffTurnId?: TurnId | undefined;
   diffFilePath?: string | undefined;
+  mode?: ThreadWorkspaceMode | undefined;
 }
 
 function isDiffOpenValue(value: unknown): boolean {
@@ -30,8 +32,10 @@ export function parseDiffRouteSearch(search: Record<string, unknown>): DiffRoute
   const diffTurnIdRaw = diff ? normalizeSearchString(search.diffTurnId) : undefined;
   const diffTurnId = diffTurnIdRaw ? TurnId.makeUnsafe(diffTurnIdRaw) : undefined;
   const diffFilePath = diff && diffTurnId ? normalizeSearchString(search.diffFilePath) : undefined;
+  const mode = normalizeThreadWorkspaceMode(search.mode);
 
   return {
+    ...(mode === "editor" ? { mode } : {}),
     ...(diff ? { diff } : {}),
     ...(diffTurnId ? { diffTurnId } : {}),
     ...(diffFilePath ? { diffFilePath } : {}),

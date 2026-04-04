@@ -407,7 +407,12 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
 }
 
 function normalizeProviderKind(value: unknown): ProviderKind | null {
-  return value === "codex" || value === "claudeAgent" || value === "githubCopilot" ? value : null;
+  return value === "codex" ||
+    value === "claudeAgent" ||
+    value === "githubCopilot" ||
+    value === "cursor"
+    ? value
+    : null;
 }
 
 function normalizeProviderModelOptions(
@@ -534,6 +539,10 @@ function buildModelSelectionForProvider(
   options?: ProviderModelOptions["githubCopilot"],
 ): Extract<ModelSelection, { provider: "githubCopilot" }>;
 function buildModelSelectionForProvider(
+  provider: "cursor",
+  model: string,
+): Extract<ModelSelection, { provider: "cursor" }>;
+function buildModelSelectionForProvider(
   provider: ProviderKind,
   model: string,
   options?: ProviderModelOptions[ProviderKind],
@@ -562,6 +571,11 @@ function buildModelSelectionForProvider(
         model,
         ...(options ? { options: options as ProviderModelOptions["githubCopilot"] } : {}),
       } as Extract<ModelSelection, { provider: "githubCopilot" }>;
+    case "cursor":
+      return {
+        provider,
+        model,
+      } as Extract<ModelSelection, { provider: "cursor" }>;
   }
 }
 
@@ -597,7 +611,9 @@ function normalizeModelSelection(
       ? modelOptions?.codex
       : provider === "claudeAgent"
         ? modelOptions?.claudeAgent
-        : modelOptions?.githubCopilot;
+        : provider === "githubCopilot"
+          ? modelOptions?.githubCopilot
+          : undefined;
   return buildModelSelectionForProvider(provider, model, options);
 }
 
@@ -655,7 +671,7 @@ function legacyToModelSelectionByProvider(
   const result: Partial<Record<ProviderKind, ModelSelection>> = {};
   // Add entries from the options bag (for non-active providers)
   if (modelOptions) {
-    for (const provider of ["codex", "claudeAgent", "githubCopilot"] as const) {
+    for (const provider of ["codex", "claudeAgent", "githubCopilot", "cursor"] as const) {
       const options = modelOptions[provider];
       if (options && Object.keys(options).length > 0) {
         result[provider] = buildModelSelectionForProvider(
@@ -1736,7 +1752,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           }
           const base = existing ?? createEmptyThreadDraft();
           const nextMap = { ...base.modelSelectionByProvider };
-          for (const provider of ["codex", "claudeAgent", "githubCopilot"] as const) {
+          for (const provider of ["codex", "claudeAgent", "githubCopilot", "cursor"] as const) {
             // Only touch providers explicitly present in the input
             if (!normalizedOpts || !(provider in normalizedOpts)) continue;
             const opts = normalizedOpts[provider];

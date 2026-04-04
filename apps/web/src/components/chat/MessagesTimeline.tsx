@@ -412,19 +412,23 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       isThinkingWorkRow(row) && isStreamingAssistantMessageRow(nextRow);
     const attachStreamingAssistantToThinking =
       isStreamingAssistantMessageRow(row) && isThinkingWorkRow(previousRow);
+    const attachWorkToFollowUp = isWorkContainerRow(row) && isWorkFollowUpRow(nextRow);
+    const attachFollowUpToWork = isWorkFollowUpRow(row) && isWorkContainerRow(previousRow);
 
     return (
       <div
         className={cn(
           "pb-4",
+          attachWorkToFollowUp && "pb-1",
           attachThinkingToStreamingAssistant && "pb-1",
-          attachStreamingAssistantToThinking && "-mt-1 pb-4",
+          (attachStreamingAssistantToThinking || attachFollowUpToWork) && "-mt-1 pb-4",
         )}
         data-timeline-row-kind={row.kind}
         data-message-id={row.kind === "message" ? row.message.id : undefined}
         data-message-role={row.kind === "message" ? row.message.role : undefined}
         data-thinking-attached={attachThinkingToStreamingAssistant ? "true" : undefined}
         data-assistant-attached={attachStreamingAssistantToThinking ? "true" : undefined}
+        data-work-followup-attached={attachFollowUpToWork ? "true" : undefined}
         data-intent-disclosure-open={
           row.kind === "intent-work"
             ? String(
@@ -625,7 +629,14 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           })()}
 
         {row.kind === "intent" && (
-          <div className="min-w-0 px-1 py-0.5" data-intent-message="true">
+          <div
+            className={cn(
+              "min-w-0 px-1 py-0.5",
+              attachFollowUpToWork &&
+                "ml-3 rounded-xl border border-border/35 bg-card/10 px-3 py-2.5 shadow-sm",
+            )}
+            data-intent-message="true"
+          >
             <p className="wrap-break-word px-0.5 text-[13px] leading-6 text-foreground/84">
               <span className="mr-2 text-[10px] uppercase tracking-[0.16em] text-muted-foreground/55">
                 Message
@@ -735,7 +746,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                 <div
                   className={cn(
                     "min-w-0 px-1 py-0.5",
-                    attachStreamingAssistantToThinking &&
+                    (attachStreamingAssistantToThinking || attachFollowUpToWork) &&
                       "rounded-xl border border-border/35 bg-card/8 px-3 py-2.5",
                   )}
                 >
@@ -1009,6 +1020,10 @@ function isThinkingWorkRow(row: TimelineRow | undefined): boolean {
   return row?.kind === "work" && row.groupedEntries.every((entry) => entry.tone === "thinking");
 }
 
+function isWorkContainerRow(row: TimelineRow | undefined): boolean {
+  return row?.kind === "work" || row?.kind === "intent-work";
+}
+
 function canGroupAdjacentWorkEntries(
   previous: TimelineWorkEntry | undefined,
   next: TimelineWorkEntry,
@@ -1022,6 +1037,10 @@ function canGroupAdjacentWorkEntries(
 
 function isStreamingAssistantMessageRow(row: TimelineRow | undefined): boolean {
   return row?.kind === "message" && row.message.role === "assistant" && row.message.streaming;
+}
+
+function isWorkFollowUpRow(row: TimelineRow | undefined): boolean {
+  return row?.kind === "intent" || (row?.kind === "message" && row.message.role === "assistant");
 }
 
 function shouldHideCompletedIntentWithToolCalls(

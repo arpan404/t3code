@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { PROJECT_READ_FILE_MAX_BYTES } from "@t3tools/contracts";
 import { it, describe, expect } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Path } from "effect";
 
@@ -130,6 +131,68 @@ it.layer(TestLayer)("WorkspaceFileSystemLive", (it) => {
           .stat(escapedPath)
           .pipe(Effect.catch(() => Effect.succeed(null)));
         expect(escapedStat).toBeNull();
+      }),
+    );
+  });
+
+  describe("readFile", () => {
+    it.effect("reads UTF-8 files relative to the workspace root", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "src/editor.ts", "export const value = 1;\n");
+
+        const result = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "src/editor.ts",
+        });
+
+        expect(result).toEqual({
+          relativePath: "src/editor.ts",
+          contents: "export const value = 1;\n",
+          sizeBytes: Buffer.byteLength("export const value = 1;\n"),
+        });
+      }),
+    );
+
+    it.effect("rejects binary files", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const absolutePath = path.join(cwd, "assets/icon.bin");
+
+        yield* fileSystem
+          .makeDirectory(path.dirname(absolutePath), { recursive: true })
+          .pipe(Effect.orDie);
+        yield* fileSystem.writeFile(absolutePath, new Uint8Array([0, 255, 10])).pipe(Effect.orDie);
+
+        const error = yield* workspaceFileSystem
+          .readFile({
+            cwd,
+            relativePath: "assets/icon.bin",
+          })
+          .pipe(Effect.flip);
+
+        expect(error.message).toContain("Binary files are not supported");
+      }),
+    );
+
+    it.effect("rejects oversized files", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "src/huge.ts", "a".repeat(PROJECT_READ_FILE_MAX_BYTES + 1));
+
+        const error = yield* workspaceFileSystem
+          .readFile({
+            cwd,
+            relativePath: "src/huge.ts",
+          })
+          .pipe(Effect.flip);
+
+        expect(error.message).toContain("Files larger than");
       }),
     );
   });

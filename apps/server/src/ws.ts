@@ -9,6 +9,8 @@ import {
   OrchestrationGetTurnDiffError,
   ORCHESTRATION_WS_METHODS,
   ProjectSearchEntriesError,
+  ProjectListTreeError,
+  ProjectReadFileError,
   ProjectWriteFileError,
   OrchestrationReplayEventsError,
   type TerminalEvent,
@@ -207,6 +209,28 @@ const WsRpcLayer = WsRpcGroup.toLayer(
                 cause,
               }),
           ),
+        ),
+      [WS_METHODS.projectsListTree]: (input) =>
+        workspaceEntries.listTree(input.cwd).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProjectListTreeError({
+                message: `Failed to load workspace tree: ${cause.detail}`,
+                cause,
+              }),
+          ),
+        ),
+      [WS_METHODS.projectsReadFile]: (input) =>
+        workspaceFileSystem.readFile(input).pipe(
+          Effect.mapError((cause) => {
+            const message = Schema.is(WorkspacePathOutsideRootError)(cause)
+              ? "Workspace file path must stay within the project root."
+              : cause.detail;
+            return new ProjectReadFileError({
+              message,
+              cause,
+            });
+          }),
         ),
       [WS_METHODS.projectsWriteFile]: (input) =>
         workspaceFileSystem.writeFile(input).pipe(

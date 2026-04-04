@@ -8,11 +8,14 @@ import { Effect, Equal, Layer, PubSub, Ref, Stream } from "effect";
 
 import { ClaudeProviderLive } from "./ClaudeProvider";
 import { CodexProviderLive } from "./CodexProvider";
+import { CursorProviderLive } from "./CursorProvider";
 import { GitHubCopilotProviderLive } from "./GitHubCopilotProvider";
 import type { ClaudeProviderShape } from "../Services/ClaudeProvider";
 import { ClaudeProvider } from "../Services/ClaudeProvider";
 import type { CodexProviderShape } from "../Services/CodexProvider";
 import { CodexProvider } from "../Services/CodexProvider";
+import type { CursorProviderShape } from "../Services/CursorProvider";
+import { CursorProvider } from "../Services/CursorProvider";
 import type { GitHubCopilotProviderShape } from "../Services/GitHubCopilotProvider";
 import { GitHubCopilotProvider } from "../Services/GitHubCopilotProvider";
 import { ProviderRegistry, type ProviderRegistryShape } from "../Services/ProviderRegistry";
@@ -21,9 +24,15 @@ const loadProviders = (
   codexProvider: CodexProviderShape,
   claudeProvider: ClaudeProviderShape,
   gitHubCopilotProvider: GitHubCopilotProviderShape,
-): Effect.Effect<readonly [ServerProvider, ServerProvider, ServerProvider]> =>
+  cursorProvider: CursorProviderShape,
+): Effect.Effect<readonly [ServerProvider, ServerProvider, ServerProvider, ServerProvider]> =>
   Effect.all(
-    [codexProvider.getSnapshot, claudeProvider.getSnapshot, gitHubCopilotProvider.getSnapshot],
+    [
+      codexProvider.getSnapshot,
+      claudeProvider.getSnapshot,
+      gitHubCopilotProvider.getSnapshot,
+      cursorProvider.getSnapshot,
+    ],
     {
       concurrency: "unbounded",
     },
@@ -40,19 +49,25 @@ export const ProviderRegistryLive = Layer.effect(
     const codexProvider = yield* CodexProvider;
     const claudeProvider = yield* ClaudeProvider;
     const gitHubCopilotProvider = yield* GitHubCopilotProvider;
+    const cursorProvider = yield* CursorProvider;
     const changesPubSub = yield* Effect.acquireRelease(
       PubSub.unbounded<ReadonlyArray<ServerProvider>>(),
       PubSub.shutdown,
     );
     const providersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>(
-      yield* loadProviders(codexProvider, claudeProvider, gitHubCopilotProvider),
+      yield* loadProviders(codexProvider, claudeProvider, gitHubCopilotProvider, cursorProvider),
     );
 
     const syncProviders = Effect.fn("syncProviders")(function* (options?: {
       readonly publish?: boolean;
     }) {
       const previousProviders = yield* Ref.get(providersRef);
-      const providers = yield* loadProviders(codexProvider, claudeProvider, gitHubCopilotProvider);
+      const providers = yield* loadProviders(
+        codexProvider,
+        claudeProvider,
+        gitHubCopilotProvider,
+        cursorProvider,
+      );
       yield* Ref.set(providersRef, providers);
 
       if (options?.publish !== false && haveProvidersChanged(previousProviders, providers)) {
@@ -71,6 +86,9 @@ export const ProviderRegistryLive = Layer.effect(
     yield* Stream.runForEach(gitHubCopilotProvider.streamChanges, () => syncProviders()).pipe(
       Effect.forkScoped,
     );
+    yield* Stream.runForEach(cursorProvider.streamChanges, () => syncProviders()).pipe(
+      Effect.forkScoped,
+    );
 
     const refresh = Effect.fn("refresh")(function* (provider?: ProviderKind) {
       switch (provider) {
@@ -83,9 +101,17 @@ export const ProviderRegistryLive = Layer.effect(
         case "githubCopilot":
           yield* gitHubCopilotProvider.refresh;
           break;
+        case "cursor":
+          yield* cursorProvider.refresh;
+          break;
         default:
           yield* Effect.all(
-            [codexProvider.refresh, claudeProvider.refresh, gitHubCopilotProvider.refresh],
+            [
+              codexProvider.refresh,
+              claudeProvider.refresh,
+              gitHubCopilotProvider.refresh,
+              cursorProvider.refresh,
+            ],
             {
               concurrency: "unbounded",
             },
@@ -114,4 +140,5 @@ export const ProviderRegistryLive = Layer.effect(
   Layer.provideMerge(CodexProviderLive),
   Layer.provideMerge(ClaudeProviderLive),
   Layer.provideMerge(GitHubCopilotProviderLive),
+  Layer.provideMerge(CursorProviderLive),
 );

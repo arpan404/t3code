@@ -21,7 +21,7 @@ import type {
 } from "./types";
 import { compareActivityLifecycleRank, compareSequenceThenCreatedAt } from "./lib/activityOrder";
 
-export type ProviderPickerKind = ProviderKind | "cursor";
+export type ProviderPickerKind = ProviderKind;
 
 export const PROVIDER_OPTIONS: Array<{
   value: ProviderPickerKind;
@@ -31,7 +31,7 @@ export const PROVIDER_OPTIONS: Array<{
   { value: "codex", label: "Codex", available: true },
   { value: "claudeAgent", label: "Claude", available: true },
   { value: "githubCopilot", label: "Copilot", available: true },
-  { value: "cursor", label: "Cursor", available: false },
+  { value: "cursor", label: "Cursor", available: true },
 ];
 
 export interface WorkLogEntry {
@@ -977,7 +977,7 @@ export function deriveTimelineEntries(
     normalizedEntries.push(entry);
   }
 
-  return mergeShortIntentPreamblesIntoAssistantMessages(normalizedEntries);
+  return normalizedEntries;
 }
 
 function compareTimelineEntriesByOrder(
@@ -1019,48 +1019,6 @@ function compareTimelineEntriesByOrder(
     left.sourceIndex - right.sourceIndex ||
     left.timelineEntry.id.localeCompare(right.timelineEntry.id)
   );
-}
-
-function mergeShortIntentPreamblesIntoAssistantMessages(entries: TimelineEntry[]): TimelineEntry[] {
-  const mergedEntries: TimelineEntry[] = [];
-
-  for (let index = 0; index < entries.length; index += 1) {
-    const entry = entries[index];
-    if (!entry) {
-      continue;
-    }
-
-    if (!isShortIntentTimelineEntry(entry)) {
-      mergedEntries.push(entry);
-      continue;
-    }
-
-    const intentEntries = [entry];
-    let cursor = index + 1;
-    while (cursor < entries.length && isShortIntentTimelineEntry(entries[cursor])) {
-      intentEntries.push(entries[cursor] as Extract<TimelineEntry, { kind: "intent" }>);
-      cursor += 1;
-    }
-
-    const nextEntry = entries[cursor];
-    if (nextEntry?.kind === "message" && nextEntry.message.role === "assistant") {
-      const mergedPreamble = intentEntries.map((intentEntry) => intentEntry.text).join("\n");
-      mergedEntries.push({
-        ...nextEntry,
-        message: {
-          ...nextEntry.message,
-          text: prependIntentPreambleToAssistantMessage(mergedPreamble, nextEntry.message.text),
-        },
-      });
-      index = cursor;
-      continue;
-    }
-
-    mergedEntries.push(...intentEntries);
-    index = cursor - 1;
-  }
-
-  return mergedEntries;
 }
 
 function normalizeIntentToolLabel(value: string | undefined): string | null {
@@ -1118,31 +1076,6 @@ function normalizeIntentDisplayText(value: string): string {
   }
 
   return compact;
-}
-
-function isShortIntentTimelineEntry(
-  entry: TimelineEntry | undefined,
-): entry is Extract<TimelineEntry, { kind: "intent" }> {
-  if (entry?.kind !== "intent") {
-    return false;
-  }
-
-  return entry.text.length <= 72 && entry.text.split(/\s+/).filter(Boolean).length <= 8;
-}
-
-function prependIntentPreambleToAssistantMessage(intentText: string, messageText: string): string {
-  const preamble = intentText.trim();
-  const content = messageText.trim();
-
-  if (!preamble) {
-    return messageText;
-  }
-
-  if (!content) {
-    return preamble;
-  }
-
-  return `${preamble}\n\n${content}`;
 }
 
 export function deriveCompletionDividerBeforeEntryId(

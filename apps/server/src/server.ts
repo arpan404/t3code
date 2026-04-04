@@ -14,6 +14,7 @@ import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionD
 import { ProviderSessionRuntimeRepositoryLive } from "./persistence/Layers/ProviderSessionRuntime";
 import { makeCodexAdapterLive } from "./provider/Layers/CodexAdapter";
 import { makeClaudeAdapterLive } from "./provider/Layers/ClaudeAdapter";
+import { CursorAdapterLive } from "./provider/Layers/CursorAdapter";
 import { makeGitHubCopilotAdapterLive } from "./provider/Layers/GitHubCopilotAdapter";
 import { ProviderAdapterRegistryLive } from "./provider/Layers/ProviderAdapterRegistry";
 import { makeProviderServiceLive } from "./provider/Layers/ProviderService";
@@ -150,6 +151,7 @@ const ProviderLayerLive = Layer.unwrap(
       Layer.provide(codexAdapterLayer),
       Layer.provide(claudeAdapterLayer),
       Layer.provide(gitHubCopilotAdapterLayer),
+      Layer.provide(CursorAdapterLive),
       Layer.provideMerge(providerSessionDirectoryLayer),
     );
     return makeProviderServiceLive(

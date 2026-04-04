@@ -148,6 +148,10 @@ export function buildProviderModelSelection(
   options?: ProviderModelOptions["githubCopilot"],
 ): Extract<ModelSelection, { provider: "githubCopilot" }>;
 export function buildProviderModelSelection(
+  provider: "cursor",
+  model: string,
+): Extract<ModelSelection, { provider: "cursor" }>;
+export function buildProviderModelSelection(
   provider: ProviderKind,
   model: string,
   options?: ProviderModelOptions[ProviderKind],
@@ -176,6 +180,11 @@ export function buildProviderModelSelection(
         model,
         ...(options ? { options: options as ProviderModelOptions["githubCopilot"] } : {}),
       } as Extract<ModelSelection, { provider: "githubCopilot" }>;
+    case "cursor":
+      return {
+        provider,
+        model,
+      } as Extract<ModelSelection, { provider: "cursor" }>;
   }
 }
 

@@ -75,7 +75,9 @@ function getProviderStateFromCapabilities(
       ? normalizeCodexModelOptionsWithCapabilities(caps, modelOptions?.codex)
       : provider === "claudeAgent"
         ? normalizeClaudeModelOptionsWithCapabilities(caps, modelOptions?.claudeAgent)
-        : normalizeGitHubCopilotModelOptionsWithCapabilities(caps, modelOptions?.githubCopilot);
+        : provider === "githubCopilot"
+          ? normalizeGitHubCopilotModelOptionsWithCapabilities(caps, modelOptions?.githubCopilot)
+          : undefined;
 
   // Ultrathink styling (driven by capabilities data, not provider identity)
   const ultrathinkActive =
@@ -191,6 +193,15 @@ const composerProviderRegistry: Record<ProviderKind, ProviderRegistryEntry> = {
         onPromptChange={onPromptChange}
       />
     ),
+  },
+  cursor: {
+    getState: (input) => ({
+      provider: input.provider,
+      promptEffort: null,
+      modelOptionsForDispatch: undefined,
+    }),
+    renderTraitsMenuContent: () => null,
+    renderTraitsPicker: () => null,
   },
 };
 

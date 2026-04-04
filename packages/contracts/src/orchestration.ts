@@ -23,7 +23,7 @@ export const ORCHESTRATION_WS_METHODS = {
   replayEvents: "orchestration.replayEvents",
 } as const;
 
-export const ProviderKind = Schema.Literals(["codex", "claudeAgent", "githubCopilot"]);
+export const ProviderKind = Schema.Literals(["codex", "claudeAgent", "githubCopilot", "cursor"]);
 export type ProviderKind = typeof ProviderKind.Type;
 export const ProviderApprovalPolicy = Schema.Literals([
   "untrusted",
@@ -62,10 +62,18 @@ export const GitHubCopilotModelSelection = Schema.Struct({
 });
 export type GitHubCopilotModelSelection = typeof GitHubCopilotModelSelection.Type;
 
+export const CursorModelSelection = Schema.Struct({
+  provider: Schema.Literal("cursor"),
+  model: TrimmedNonEmptyString,
+  options: Schema.optionalKey(Schema.Struct({})),
+});
+export type CursorModelSelection = typeof CursorModelSelection.Type;
+
 export const ModelSelection = Schema.Union([
   CodexModelSelection,
   ClaudeModelSelection,
   GitHubCopilotModelSelection,
+  CursorModelSelection,
 ]);
 export type ModelSelection = typeof ModelSelection.Type;
 

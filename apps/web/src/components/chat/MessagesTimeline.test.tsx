@@ -692,6 +692,67 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("lucide-chevron-down");
   });
 
+  it("visually attaches assistant follow-ups beneath the preceding work row", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking={false}
+        activeTurnInProgress
+        activeTurnStartedAt="2026-03-17T19:12:31.000Z"
+        scrollContainer={null}
+        timelineEntries={[
+          {
+            id: "work-tool-followup",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:31.000Z",
+            entry: {
+              id: "work-tool-followup",
+              createdAt: "2026-03-17T19:12:31.000Z",
+              label: "Read file",
+              toolTitle: "Read file",
+              detail: "apps/web/src/session-logic.ts",
+              tone: "tool",
+            },
+          },
+          {
+            id: "assistant-followup",
+            kind: "message",
+            createdAt: "2026-03-17T19:12:32.000Z",
+            message: {
+              id: MessageId.makeUnsafe("assistant-followup"),
+              role: "assistant",
+              text: "Found the next grouping edge case.",
+              turnId: TurnId.makeUnsafe("turn-followup"),
+              createdAt: "2026-03-17T19:12:32.000Z",
+              completedAt: "2026-03-17T19:12:33.000Z",
+              streaming: false,
+            },
+          },
+        ]}
+        completionDividerBeforeEntryId={null}
+        completionSummary={null}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        nowIso="2026-03-17T19:12:34.000Z"
+        expandedWorkGroups={{}}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup).toContain('data-work-followup-attached="true"');
+    expect(markup).toContain("Found the next grouping edge case.");
+    expect(markup).toContain("bg-card/8");
+  });
+
   it("hides completed intent and tool activity after completion", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(

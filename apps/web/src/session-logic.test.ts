@@ -1266,7 +1266,7 @@ describe("deriveTimelineEntries", () => {
     });
   });
 
-  it("merges short consecutive intent rows into the following assistant message", () => {
+  it("keeps short consecutive intent rows separate from the following assistant message", () => {
     const entries = deriveTimelineEntries(
       [
         {
@@ -1298,11 +1298,19 @@ describe("deriveTimelineEntries", () => {
       ],
     );
 
-    expect(entries).toHaveLength(1);
+    expect(entries).toHaveLength(3);
     expect(entries[0]).toMatchObject({
+      kind: "intent",
+      text: "Exploring codebase",
+    });
+    expect(entries[1]).toMatchObject({
+      kind: "intent",
+      text: "Tracing timeline state",
+    });
+    expect(entries[2]).toMatchObject({
       kind: "message",
       message: {
-        text: "Exploring codebase\nTracing timeline state\n\nI found the root cause in the timeline renderer.",
+        text: "I found the root cause in the timeline renderer.",
       },
     });
   });

@@ -71,4 +71,18 @@ describe("parseDiffRouteSearch", () => {
       diff: "1",
     });
   });
+
+  it("preserves editor mode when present", () => {
+    const parsed = parseDiffRouteSearch({
+      mode: "editor",
+      diff: "1",
+      diffTurnId: "turn-1",
+    });
+
+    expect(parsed).toEqual({
+      mode: "editor",
+      diff: "1",
+      diffTurnId: "turn-1",
+    });
+  });
 });

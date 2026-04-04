@@ -6,6 +6,7 @@ import { Effect, Layer, Stream } from "effect";
 
 import { ClaudeAdapter, ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import { CodexAdapter, CodexAdapterShape } from "../Services/CodexAdapter.ts";
+import { CursorAdapter, type CursorAdapterShape } from "../Services/CursorAdapter.ts";
 import {
   GitHubCopilotAdapter,
   type GitHubCopilotAdapterShape,
@@ -66,6 +67,23 @@ const fakeGitHubCopilotAdapter: GitHubCopilotAdapterShape = {
   streamEvents: Stream.empty,
 };
 
+const fakeCursorAdapter: CursorAdapterShape = {
+  provider: "cursor",
+  capabilities: { sessionModelSwitch: "restart-session" },
+  startSession: vi.fn(),
+  sendTurn: vi.fn(),
+  interruptTurn: vi.fn(),
+  respondToRequest: vi.fn(),
+  respondToUserInput: vi.fn(),
+  stopSession: vi.fn(),
+  listSessions: vi.fn(),
+  hasSession: vi.fn(),
+  readThread: vi.fn(),
+  rollbackThread: vi.fn(),
+  stopAll: vi.fn(),
+  streamEvents: Stream.empty,
+};
+
 const layer = it.layer(
   Layer.mergeAll(
     Layer.provide(
@@ -74,6 +92,7 @@ const layer = it.layer(
         Layer.succeed(CodexAdapter, fakeCodexAdapter),
         Layer.succeed(ClaudeAdapter, fakeClaudeAdapter),
         Layer.succeed(GitHubCopilotAdapter, fakeGitHubCopilotAdapter),
+        Layer.succeed(CursorAdapter, fakeCursorAdapter),
       ),
     ),
     NodeServices.layer,
@@ -90,7 +109,7 @@ layer("ProviderAdapterRegistryLive", (it) => {
       assert.equal(claude, fakeClaudeAdapter);
 
       const providers = yield* registry.listProviders();
-      assert.deepEqual(providers, ["codex", "claudeAgent", "githubCopilot"]);
+      assert.deepEqual(providers, ["codex", "claudeAgent", "githubCopilot", "cursor"]);
     }),
   );
 

@@ -554,6 +554,11 @@ export function GeneralSettingsPanel() {
         DEFAULT_UNIFIED_SETTINGS.providers.githubCopilot.binaryPath ||
       settings.providers.githubCopilot.customModels.length > 0,
     ),
+    cursor: Boolean(
+      settings.providers.cursor.binaryPath !==
+        DEFAULT_UNIFIED_SETTINGS.providers.cursor.binaryPath ||
+      settings.providers.cursor.customModels.length > 0,
+    ),
   });
   const [customModelInputByProvider, setCustomModelInputByProvider] = useState<
     Record<ProviderKind, string>
@@ -561,6 +566,7 @@ export function GeneralSettingsPanel() {
     codex: "",
     claudeAgent: "",
     githubCopilot: "",
+    cursor: "",
   });
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
     Partial<Record<ProviderKind, string | null>>

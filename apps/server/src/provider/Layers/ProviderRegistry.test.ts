@@ -30,6 +30,7 @@ import {
   readCodexConfigModelProvider,
 } from "./CodexProvider";
 import { checkClaudeProviderStatus, parseClaudeAuthStatusFromOutput } from "./ClaudeProvider";
+import { checkCursorProviderStatus, parseCursorModelsOutput } from "./CursorProvider";
 import { haveProvidersChanged, ProviderRegistryLive } from "./ProviderRegistry";
 import { ServerSettingsService, type ServerSettingsShape } from "../../serverSettings";
 import { ProviderRegistry } from "../Services/ProviderRegistry";
@@ -153,6 +154,18 @@ function withTempCodexHome(configContent?: string) {
     return { tmpDir } as const;
   });
 }
+
+const CURSOR_MODELS_OUTPUT = `Loading models…
+Available models
+
+auto - Auto
+composer-2-fast - Composer 2 Fast  (default)
+claude-4-sonnet - Sonnet 4
+claude-4-sonnet-thinking - Sonnet 4 Thinking  (current)
+gpt-5.4-nano-xhigh \u001b[2m- GPT-5.4 Nano Extra High
+
+Tip: use --model <id> (or /model <id> in interactive mode) to switch.
+`;
 
 it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
   "ProviderRegistry",
@@ -526,6 +539,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
                   if (command === "codex") {
                     return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
                   }
+                  return { stdout: "", stderr: "spawn ENOENT", code: 1 };
+                }
+                if (command === "cursor-agent") {
                   return { stdout: "", stderr: "spawn ENOENT", code: 1 };
                 }
                 if (joined === "login status") {
@@ -1052,6 +1068,69 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
         assert.strictEqual(parsed.status, "warning");
         assert.strictEqual(parsed.auth.status, "unknown");
       });
+    });
+
+    describe("parseCursorModelsOutput", () => {
+      it("extracts Cursor model ids and labels from cli output", () => {
+        const models = parseCursorModelsOutput(CURSOR_MODELS_OUTPUT);
+        assert.deepStrictEqual(
+          models.map(({ slug, name }) => ({ slug, name })),
+          [
+            { slug: "auto", name: "Auto" },
+            { slug: "composer-2-fast", name: "Composer 2 Fast" },
+            { slug: "claude-4-sonnet", name: "Sonnet 4" },
+            { slug: "claude-4-sonnet-thinking", name: "Sonnet 4 Thinking" },
+            { slug: "gpt-5.4-nano-xhigh", name: "GPT-5.4 Nano Extra High" },
+          ],
+        );
+      });
+    });
+
+    describe("checkCursorProviderStatus", () => {
+      it.effect("uses discovered Cursor models instead of the fallback placeholder list", () =>
+        Effect.gen(function* () {
+          const status = yield* checkCursorProviderStatus();
+          assert.strictEqual(status.provider, "cursor");
+          assert.strictEqual(status.status, "ready");
+          assert.strictEqual(status.installed, true);
+          assert.strictEqual(status.auth.status, "authenticated");
+          assert.strictEqual(
+            status.models.some((model) => model.slug === "composer-2-fast"),
+            true,
+          );
+          assert.strictEqual(
+            status.models.some((model) => model.slug === "gpt-5.4-nano-xhigh"),
+            true,
+          );
+          assert.strictEqual(
+            status.models.some((model) => model.slug === "gpt-5"),
+            false,
+          );
+        }).pipe(
+          Effect.provide(
+            mockCommandSpawnerLayer((command, args) => {
+              const joined = args.join(" ");
+              if (command !== "cursor-agent") {
+                throw new Error(`Unexpected command: ${command}`);
+              }
+              if (joined === "--version") {
+                return { stdout: "cursor-agent 1.0.0\n", stderr: "", code: 0 };
+              }
+              if (joined === "models") {
+                return { stdout: CURSOR_MODELS_OUTPUT, stderr: "", code: 0 };
+              }
+              if (joined === "about") {
+                return {
+                  stdout: "Cursor Agent\nUser Email cursor@example.com\n",
+                  stderr: "",
+                  code: 0,
+                };
+              }
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
     });
   },
 );

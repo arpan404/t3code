@@ -697,6 +697,19 @@ function resolveWsRpc(body: NormalizedWsRpcRequestBody): unknown {
       truncated: false,
     };
   }
+  if (tag === WS_METHODS.projectsListTree) {
+    return {
+      entries: [],
+      truncated: false,
+    };
+  }
+  if (tag === WS_METHODS.projectsReadFile) {
+    return {
+      relativePath: "README.md",
+      contents: "",
+      sizeBytes: 0,
+    };
+  }
   if (tag === WS_METHODS.shellOpenInEditor) {
     return null;
   }
