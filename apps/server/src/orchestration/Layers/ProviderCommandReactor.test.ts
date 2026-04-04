@@ -97,7 +97,7 @@ describe("ProviderCommandReactor", () => {
   async function createHarness(input?: {
     readonly baseDir?: string;
     readonly threadModelSelection?: ModelSelection;
-    readonly sessionModelSwitch?: "unsupported" | "in-session";
+    readonly sessionModelSwitch?: "unsupported" | "in-session" | "restart-session";
   }) {
     const now = new Date().toISOString();
     const baseDir = input?.baseDir ?? fs.mkdtempSync(path.join(os.tmpdir(), "t3code-reactor-"));
@@ -1070,6 +1070,74 @@ describe("ProviderCommandReactor", () => {
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
+  });
+
+  it("restarts restart-session providers before a follow-up turn on an idle thread", async () => {
+    const harness = await createHarness({
+      threadModelSelection: { provider: "githubCopilot", model: "gpt-4.1" },
+      sessionModelSwitch: "restart-session",
+    });
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-copilot-idle-1"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-copilot-idle-1"),
+          role: "user",
+          text: "first copilot turn",
+          attachments: [],
+        },
+        modelSelection: {
+          provider: "githubCopilot",
+          model: "gpt-4.1",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-copilot-idle-2"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-copilot-idle-2"),
+          role: "user",
+          text: "second copilot turn",
+          attachments: [],
+        },
+        modelSelection: {
+          provider: "githubCopilot",
+          model: "gpt-4.1",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 2);
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+
+    expect(harness.stopSession.mock.calls.length).toBe(0);
+    expect(harness.startSession.mock.calls[1]?.[1]).toMatchObject({
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      provider: "githubCopilot",
+      resumeCursor: { opaque: "resume-1" },
+      modelSelection: {
+        provider: "githubCopilot",
+        model: "gpt-4.1",
+      },
+      runtimeMode: "approval-required",
+    });
   });
 
   it("does not inject derived model options when restarting claude on runtime mode changes", async () => {

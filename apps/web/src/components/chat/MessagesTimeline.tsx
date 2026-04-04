@@ -23,6 +23,8 @@ import {
   BotIcon,
   CheckIcon,
   CircleAlertIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
   EyeIcon,
   GlobeIcon,
   HammerIcon,
@@ -460,9 +462,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
               hiddenCount > 0 &&
               groupedEntries.length >= LARGE_TOOL_GROUP_SUMMARY_THRESHOLD &&
               !isExpanded;
-            const thinkingPreview = onlyThinkingEntries
-              ? summarizeThinkingGroupPreview(groupedEntries)
-              : null;
             const showHeader = !useToolSummaryRow && (hasOverflow || !onlyToolEntries);
             const compactGroup = onlyToolEntries && groupedEntries.length >= 8;
             const groupLabel = onlyToolEntries
@@ -470,6 +469,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
               : onlyThinkingEntries
                 ? "Thinking"
                 : "Work log";
+            const thinkingSummary = onlyThinkingEntries
+              ? summarizeThinkingDisclosure(groupedEntries, nowIso, isLiveWorkGroup)
+              : null;
+            const ThinkingDisclosureIcon = isExpanded ? ChevronDownIcon : ChevronRightIcon;
 
             return (
               <div
@@ -489,18 +492,25 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                     data-thinking-disclosure-open={String(isExpanded)}
                   >
                     <div className="flex items-center justify-between gap-3">
-                      <p className="text-[9px] uppercase tracking-[0.16em] text-muted-foreground/55">
-                        {groupLabel} ({groupedEntries.length})
-                      </p>
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className="flex size-5 shrink-0 items-center justify-center rounded-md border border-amber-500/20 bg-background/35 text-muted-foreground/60">
+                          <ThinkingDisclosureIcon className="size-3.5" />
+                        </span>
+                        <div className="min-w-0">
+                          <p className="text-[11px] font-medium text-foreground/82">
+                            {thinkingSummary}
+                          </p>
+                          <p className="text-[9px] uppercase tracking-[0.14em] text-muted-foreground/52">
+                            {groupedEntries.length === 1
+                              ? "1 thinking step"
+                              : `${groupedEntries.length} thinking steps`}
+                          </p>
+                        </div>
+                      </div>
                       <span className="text-[9px] uppercase tracking-[0.12em] text-muted-foreground/60">
-                        {isExpanded ? "Hide" : "Open"}
+                        {isExpanded ? "Hide" : "Show"}
                       </span>
                     </div>
-                    {!isExpanded && thinkingPreview && (
-                      <p className="mt-1.5 pr-6 font-mono text-[10px] italic leading-4 text-muted-foreground/68 line-clamp-2">
-                        {thinkingPreview}
-                      </p>
-                    )}
                   </button>
                 ) : (
                   showHeader && (
@@ -1262,19 +1272,46 @@ function workEntryPreview(
     : `${firstPath} +${workEntry.changedFiles!.length - 1} more`;
 }
 
-function summarizeThinkingGroupPreview(entries: ReadonlyArray<TimelineWorkEntry>): string | null {
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const entry = entries[index];
-    if (!entry) {
-      continue;
-    }
-    const preview = workEntryPreview(entry);
-    if (preview) {
-      return preview;
-    }
+function summarizeThinkingDisclosure(
+  entries: ReadonlyArray<TimelineWorkEntry>,
+  nowIso: string,
+  isLive: boolean,
+): string {
+  const firstEntry = entries[0];
+  const lastEntry = entries.at(-1);
+  const duration =
+    firstEntry && lastEntry
+      ? formatThoughtTimer(firstEntry.createdAt, isLive ? nowIso : lastEntry.createdAt)
+      : null;
+
+  if (!duration) {
+    return isLive ? "Thinking" : "Thought";
   }
 
-  return null;
+  return isLive ? `Thinking for ${duration}` : `Thought for ${duration}`;
+}
+
+function formatThoughtTimer(startIso: string, endIso: string): string | null {
+  const startedAtMs = Date.parse(startIso);
+  const endedAtMs = Date.parse(endIso);
+  if (!Number.isFinite(startedAtMs) || !Number.isFinite(endedAtMs)) {
+    return null;
+  }
+
+  const elapsedSeconds = Math.max(1, Math.ceil((endedAtMs - startedAtMs) / 1000));
+  if (elapsedSeconds < 60) {
+    return `${elapsedSeconds}s`;
+  }
+
+  const hours = Math.floor(elapsedSeconds / 3600);
+  const minutes = Math.floor((elapsedSeconds % 3600) / 60);
+  const seconds = elapsedSeconds % 60;
+
+  if (hours > 0) {
+    return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+  }
+
+  return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
 }
 
 function normalizeWorkCommandPreview(command: string | undefined): string | null {

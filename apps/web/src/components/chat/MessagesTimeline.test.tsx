@@ -544,6 +544,18 @@ describe("MessagesTimeline", () => {
               tone: "thinking",
             },
           },
+          {
+            id: "thinking-collapsed-2",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:33.500Z",
+            entry: {
+              id: "thinking-collapsed-2",
+              createdAt: "2026-03-17T19:12:33.500Z",
+              label: "Reasoning",
+              detail: "Comparing the grouped timeline behavior after the patch.",
+              tone: "thinking",
+            },
+          },
         ]}
         completionDividerBeforeEntryId={null}
         completionSummary={null}
@@ -565,9 +577,12 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain('data-thinking-disclosure="true"');
     expect(markup).toContain('data-thinking-disclosure-open="false"');
-    expect(markup).toContain("Thinking (1)");
-    expect(markup).toContain("Inspecting package scripts before patching the renderer.");
+    expect(markup).toContain("Thought for 2s");
+    expect(markup).toContain("2 thinking steps");
+    expect(markup).toContain("lucide-chevron-right");
+    expect(markup).not.toContain("Inspecting package scripts before patching the renderer.");
     expect(markup).not.toContain('data-work-entry-id="thinking-collapsed"');
+    expect(markup).not.toContain('data-work-entry-id="thinking-collapsed-2"');
   });
 
   it("visually attaches live thinking rows to a streaming assistant response", async () => {
@@ -673,6 +688,8 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("border-dashed");
     expect(markup).not.toContain("bg-amber-500/[0.035]");
     expect(markup).toContain('data-work-entry-tone="thinking"');
+    expect(markup).toContain("Thought for 1s");
+    expect(markup).toContain("lucide-chevron-down");
   });
 
   it("hides completed intent and tool activity after completion", async () => {
