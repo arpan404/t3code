@@ -1,39 +1,56 @@
-import { describe, expect, it, vi } from "vitest";
+import os from "node:os";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
 
-import { fixPath } from "./os-jank";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { expect, it } from "@effect/vitest";
+import { Effect, FileSystem } from "effect";
+import { afterEach, vi } from "vitest";
 
-describe("fixPath", () => {
-  it("hydrates PATH on linux using the resolved login shell", () => {
-    const env: NodeJS.ProcessEnv = {
-      SHELL: "/bin/zsh",
-      PATH: "/usr/bin",
-    };
-    const readPath = vi.fn(() => "/opt/homebrew/bin:/usr/bin");
+import { resolveBaseDir } from "./os-jank";
 
-    fixPath({
-      env,
-      platform: "linux",
-      readPath,
-    });
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
-    expect(readPath).toHaveBeenCalledWith("/bin/zsh");
-    expect(env.PATH).toBe("/opt/homebrew/bin:/usr/bin");
-  });
+it.layer(NodeServices.layer)("resolveBaseDir", (it) => {
+  it.effect("migrates legacy .t3 state into the default .ace base dir", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const fakeHome = mkdtempSync(path.join(os.tmpdir(), "ace-os-jank-home-"));
+      const legacyBaseDir = path.join(fakeHome, ".t3");
+      mkdirSync(path.join(legacyBaseDir, "userdata"), { recursive: true });
+      mkdirSync(path.join(legacyBaseDir, "worktrees"), { recursive: true });
+      writeFileSync(path.join(legacyBaseDir, "userdata", "state.sqlite"), "legacy-db");
+      writeFileSync(path.join(legacyBaseDir, "worktrees", "thread.txt"), "legacy-thread");
 
-  it("does nothing outside macOS and linux even when SHELL is set", () => {
-    const env: NodeJS.ProcessEnv = {
-      SHELL: "C:/Program Files/Git/bin/bash.exe",
-      PATH: "C:\\Windows\\System32",
-    };
-    const readPath = vi.fn(() => "/usr/local/bin:/usr/bin");
+      vi.spyOn(os, "homedir").mockReturnValue(fakeHome);
 
-    fixPath({
-      env,
-      platform: "win32",
-      readPath,
-    });
+      const resolved = yield* resolveBaseDir(undefined);
+      expect(resolved).toBe(path.join(fakeHome, ".ace"));
+      expect(yield* fs.exists(path.join(resolved, "userdata", "state.sqlite"))).toBe(true);
+      expect(yield* fs.exists(path.join(resolved, "worktrees", "thread.txt"))).toBe(true);
+    }),
+  );
 
-    expect(readPath).not.toHaveBeenCalled();
-    expect(env.PATH).toBe("C:\\Windows\\System32");
-  });
+  it.effect("merges missing legacy files into an existing .ace base dir", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const fakeHome = mkdtempSync(path.join(os.tmpdir(), "ace-os-jank-merge-home-"));
+      const legacyBaseDir = path.join(fakeHome, ".t3");
+      const aceBaseDir = path.join(fakeHome, ".ace");
+
+      mkdirSync(path.join(legacyBaseDir, "userdata"), { recursive: true });
+      mkdirSync(path.join(aceBaseDir, "userdata"), { recursive: true });
+      writeFileSync(path.join(legacyBaseDir, "userdata", "state.sqlite"), "legacy-db");
+      writeFileSync(path.join(aceBaseDir, "userdata", "settings.json"), "{}");
+
+      vi.spyOn(os, "homedir").mockReturnValue(fakeHome);
+
+      const resolved = yield* resolveBaseDir(undefined);
+      expect(resolved).toBe(aceBaseDir);
+      expect(yield* fs.exists(path.join(resolved, "userdata", "state.sqlite"))).toBe(true);
+      expect(yield* fs.exists(path.join(resolved, "userdata", "settings.json"))).toBe(true);
+    }),
+  );
 });

@@ -10,9 +10,9 @@
  *
  * @module CodexAdapter
  */
-import { ServiceMap } from "effect";
 
 import type { ProviderAdapterError } from "../Errors.ts";
+import { createProviderAdapterTag } from "./createProviderAdapterTag.ts";
 import type { ProviderAdapterShape } from "./ProviderAdapter.ts";
 
 /**
@@ -25,6 +25,6 @@ export interface CodexAdapterShape extends ProviderAdapterShape<ProviderAdapterE
 /**
  * CodexAdapter - Service tag for Codex provider adapter operations.
  */
-export class CodexAdapter extends ServiceMap.Service<CodexAdapter, CodexAdapterShape>()(
+export class CodexAdapter extends createProviderAdapterTag<CodexAdapter, CodexAdapterShape>(
   "ace/provider/Services/CodexAdapter",
 ) {}

@@ -32,6 +32,7 @@ import type { ContextMenuItem } from "@ace/contracts";
 import { NetService } from "@ace/shared/Net";
 import { RotatingFileSink } from "@ace/shared/logging";
 import { showDesktopConfirmDialog } from "./confirmDialog";
+import { resolveDesktopBaseDir, resolveDesktopUserDataPath } from "./stateMigration";
 import { syncShellEnvironment } from "./syncShellEnvironment";
 import { getAutoUpdateDisabledReason, shouldBroadcastDownloadProgress } from "./updateState";
 import {
@@ -67,7 +68,7 @@ const GET_WS_URL_CHANNEL = "desktop:get-ws-url";
 const BROWSER_OPEN_URL_CHANNEL = "desktop:browser-open-url";
 const BROWSER_CONTEXT_MENU_SHOWN_CHANNEL = "desktop:browser-context-menu-shown";
 const BROWSER_SHORTCUT_ACTION_CHANNEL = "desktop:browser-shortcut-action";
-const BASE_DIR = process.env.ACE_HOME?.trim() || Path.join(OS.homedir(), ".ace");
+const BASE_DIR = process.env.ACE_HOME?.trim() || resolveDesktopBaseDir();
 const STATE_DIR = Path.join(BASE_DIR, "userdata");
 const DESKTOP_SCHEME = "ace";
 const ROOT_DIR = Path.resolve(__dirname, "../../..");
@@ -77,7 +78,9 @@ const APP_USER_MODEL_ID = "com.ace.ace";
 const LINUX_DESKTOP_ENTRY_NAME = isDevelopment ? "ace-dev.desktop" : "ace.desktop";
 const LINUX_WM_CLASS = isDevelopment ? "ace-dev" : "ace";
 const USER_DATA_DIR_NAME = isDevelopment ? "ace-dev" : "ace";
-const LEGACY_USER_DATA_DIR_NAME = isDevelopment ? "ace (Dev)" : "ace (Alpha)";
+const LEGACY_USER_DATA_DIR_NAMES = isDevelopment
+  ? ["ace (Dev)", "T3 Code (Dev)", "t3code-dev"]
+  : ["ace (Alpha)", "T3 Code (Alpha)", "t3code"];
 const COMMIT_HASH_PATTERN = /^[0-9a-f]{7,40}$/i;
 const COMMIT_HASH_DISPLAY_LENGTH = 12;
 const LOG_DIR = Path.join(STATE_DIR, "logs");
@@ -750,24 +753,16 @@ function resolveIconPath(ext: "ico" | "icns" | "png"): string | null {
  * parentheses (e.g. `~/.config/ace (Alpha)` on Linux). This is
  * unfriendly for shell usage and violates Linux naming conventions.
  *
- * We override it to a clean lowercase name (`ace`). If the legacy
- * directory already exists we keep using it so existing users don't
- * lose their Chromium profile data (localStorage, cookies, sessions).
+ * We override it to a clean lowercase name (`ace`) and migrate any
+ * missing profile data from older branded directories so Chromium
+ * profile state (localStorage, cookies, sessions) is preserved.
  */
 function resolveUserDataPath(): string {
-  const appDataBase =
-    process.platform === "win32"
-      ? process.env.APPDATA || Path.join(OS.homedir(), "AppData", "Roaming")
-      : process.platform === "darwin"
-        ? Path.join(OS.homedir(), "Library", "Application Support")
-        : process.env.XDG_CONFIG_HOME || Path.join(OS.homedir(), ".config");
-
-  const legacyPath = Path.join(appDataBase, LEGACY_USER_DATA_DIR_NAME);
-  if (FS.existsSync(legacyPath)) {
-    return legacyPath;
-  }
-
-  return Path.join(appDataBase, USER_DATA_DIR_NAME);
+  return resolveDesktopUserDataPath({
+    platform: process.platform,
+    userDataDirName: USER_DATA_DIR_NAME,
+    legacyUserDataDirNames: LEGACY_USER_DATA_DIR_NAMES,
+  });
 }
 
 function configureAppIdentity(): void {
@@ -1399,56 +1394,46 @@ function getIconOption(): { icon: string } | Record<string, never> {
   return iconPath ? { icon: iconPath } : {};
 }
 
-function createWindow(): BrowserWindow {
-  const window = new BrowserWindow({
-    width: 1100,
-    height: 780,
-    minWidth: 840,
-    minHeight: 620,
-    show: false,
-    autoHideMenuBar: true,
-    ...getIconOption(),
-    title: APP_DISPLAY_NAME,
-    titleBarStyle: "hiddenInset",
-    trafficLightPosition: { x: 16, y: 18 },
-    webPreferences: {
-      preload: Path.join(__dirname, "preload.js"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      webviewTag: true,
-    },
+function attachWebContentsContextMenu(input: {
+  targetContents: Electron.WebContents;
+  window: BrowserWindow;
+  onMenuShown?: () => void;
+}): void {
+  input.targetContents.on("context-menu", (event, params) => {
+    event.preventDefault();
+    input.onMenuShown?.();
+
+    const linkUrl = getSafeExternalUrl(params.linkURL);
+    const menuTemplate = buildWebContentsContextMenuTemplate(
+      {
+        dictionarySuggestions: params.dictionarySuggestions,
+        editFlags: params.editFlags,
+        misspelledWord: params.misspelledWord,
+      },
+      {
+        ...(linkUrl
+          ? {
+              onCopyLink: () => clipboard.writeText(linkUrl),
+              onOpenLink: () => {
+                void shell.openExternal(linkUrl);
+              },
+            }
+          : {}),
+        onReplaceMisspelling: (suggestion) => {
+          input.targetContents.replaceMisspelling(suggestion);
+        },
+      },
+    );
+
+    Menu.buildFromTemplate(menuTemplate).popup({ window: input.window });
   });
+}
 
-  const attachWindowContextMenu = (targetContents: Electron.WebContents) => {
-    targetContents.on("context-menu", (event, params) => {
-      event.preventDefault();
-
-      const linkUrl = getSafeExternalUrl(params.linkURL);
-      const menuTemplate = buildWebContentsContextMenuTemplate(
-        {
-          dictionarySuggestions: params.dictionarySuggestions,
-          editFlags: params.editFlags,
-          misspelledWord: params.misspelledWord,
-        },
-        {
-          ...(linkUrl
-            ? {
-                onCopyLink: () => clipboard.writeText(linkUrl),
-                onOpenLink: () => {
-                  void shell.openExternal(linkUrl);
-                },
-              }
-            : {}),
-          onReplaceMisspelling: (suggestion) => {
-            targetContents.replaceMisspelling(suggestion);
-          },
-        },
-      );
-
-      Menu.buildFromTemplate(menuTemplate).popup({ window });
-    });
-  };
+function setupWebViewEventHandlers(window: BrowserWindow): void {
+  attachWebContentsContextMenu({
+    targetContents: window.webContents,
+    window,
+  });
 
   window.webContents.on("will-attach-webview", (event, webPreferences, params) => {
     const safeInitialUrl = getSafeExternalUrl(params.src);
@@ -1481,37 +1466,38 @@ function createWindow(): BrowserWindow {
       event.preventDefault();
       window.webContents.send(BROWSER_SHORTCUT_ACTION_CHANNEL, action);
     });
-    guestContents.on("context-menu", (event, params) => {
-      event.preventDefault();
-      window.webContents.send(BROWSER_CONTEXT_MENU_SHOWN_CHANNEL);
-
-      const linkUrl = getSafeExternalUrl(params.linkURL);
-      const menuTemplate = buildWebContentsContextMenuTemplate(
-        {
-          dictionarySuggestions: params.dictionarySuggestions,
-          editFlags: params.editFlags,
-          misspelledWord: params.misspelledWord,
-        },
-        {
-          ...(linkUrl
-            ? {
-                onCopyLink: () => clipboard.writeText(linkUrl),
-                onOpenLink: () => {
-                  void shell.openExternal(linkUrl);
-                },
-              }
-            : {}),
-          onReplaceMisspelling: (suggestion) => {
-            guestContents.replaceMisspelling(suggestion);
-          },
-        },
-      );
-
-      Menu.buildFromTemplate(menuTemplate).popup({ window });
+    attachWebContentsContextMenu({
+      targetContents: guestContents,
+      window,
+      onMenuShown: () => {
+        window.webContents.send(BROWSER_CONTEXT_MENU_SHOWN_CHANNEL);
+      },
     });
   });
+}
 
-  attachWindowContextMenu(window.webContents);
+function createWindow(): BrowserWindow {
+  const window = new BrowserWindow({
+    width: 1100,
+    height: 780,
+    minWidth: 840,
+    minHeight: 620,
+    show: false,
+    autoHideMenuBar: true,
+    ...getIconOption(),
+    title: APP_DISPLAY_NAME,
+    titleBarStyle: "hiddenInset",
+    trafficLightPosition: { x: 16, y: 18 },
+    webPreferences: {
+      preload: Path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webviewTag: true,
+    },
+  });
+
+  setupWebViewEventHandlers(window);
 
   window.webContents.setWindowOpenHandler(({ url }) => {
     const externalUrl = getSafeExternalUrl(url);

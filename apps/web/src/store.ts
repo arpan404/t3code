@@ -668,75 +668,7 @@ function updateThreadState(
   };
 }
 
-// ── Pure state transition functions ────────────────────────────────────
-
-export function syncServerReadModel(
-  state: AppState,
-  readModel: OrchestrationReadModel,
-  options?: SnapshotSyncOptions,
-): AppState {
-  const projects = readModel.projects
-    .filter((project) => project.deletedAt === null)
-    .map(mapProject);
-  const threads = readModel.threads
-    .filter((thread) => thread.deletedAt === null)
-    .map((thread) => mapThread(thread, options));
-  const sidebarThreadsById = buildSidebarThreadsById(threads);
-  const threadIdsByProjectId = buildThreadIdsByProjectId(threads);
-  return {
-    ...state,
-    projects,
-    threads,
-    sidebarThreadsById,
-    threadIdsByProjectId,
-    bootstrapComplete: true,
-  };
-}
-
-export function hydrateThreadFromReadModel(
-  state: AppState,
-  readModelThread: OrchestrationReadModel["threads"][number],
-): AppState {
-  if (readModelThread.deletedAt !== null) {
-    return state;
-  }
-
-  const nextThread = mapThread(readModelThread, { hydrateThreadId: readModelThread.id });
-  const existingThread = state.threads.find((thread) => thread.id === nextThread.id);
-  const threads = existingThread
-    ? state.threads.map((thread) => (thread.id === nextThread.id ? nextThread : thread))
-    : [...state.threads, nextThread];
-  const nextSummary = buildSidebarThreadSummary(nextThread);
-  const previousSummary = state.sidebarThreadsById[nextThread.id];
-  const sidebarThreadsById = sidebarThreadSummariesEqual(previousSummary, nextSummary)
-    ? state.sidebarThreadsById
-    : {
-        ...state.sidebarThreadsById,
-        [nextThread.id]: nextSummary,
-      };
-  const nextThreadIdsByProjectId =
-    existingThread !== undefined && existingThread.projectId !== nextThread.projectId
-      ? removeThreadIdByProjectId(
-          state.threadIdsByProjectId,
-          existingThread.projectId,
-          existingThread.id,
-        )
-      : state.threadIdsByProjectId;
-  const threadIdsByProjectId = appendThreadIdByProjectId(
-    nextThreadIdsByProjectId,
-    nextThread.projectId,
-    nextThread.id,
-  );
-
-  return {
-    ...state,
-    threads,
-    sidebarThreadsById,
-    threadIdsByProjectId,
-  };
-}
-
-export function applyOrchestrationEvent(state: AppState, event: OrchestrationEvent): AppState {
+function applyProjectEvent(state: AppState, event: OrchestrationEvent): AppState | null {
   switch (event.type) {
     case "project.created": {
       const existingIndex = state.projects.findIndex(
@@ -787,6 +719,13 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
       return projects.length === state.projects.length ? state : { ...state, projects };
     }
 
+    default:
+      return null;
+  }
+}
+
+function applyThreadEvent(state: AppState, event: OrchestrationEvent): AppState | null {
+  switch (event.type) {
     case "thread.created": {
       const existing = state.threads.find((thread) => thread.id === event.payload.threadId);
       const nextThread = mapThread({
@@ -1249,9 +1188,88 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
     case "thread.approval-response-requested":
     case "thread.user-input-response-requested":
       return state;
+
+    default:
+      return null;
+  }
+}
+
+// ── Pure state transition functions ────────────────────────────────────
+
+export function syncServerReadModel(
+  state: AppState,
+  readModel: OrchestrationReadModel,
+  options?: SnapshotSyncOptions,
+): AppState {
+  const projects = readModel.projects
+    .filter((project) => project.deletedAt === null)
+    .map(mapProject);
+  const threads = readModel.threads
+    .filter((thread) => thread.deletedAt === null)
+    .map((thread) => mapThread(thread, options));
+  const sidebarThreadsById = buildSidebarThreadsById(threads);
+  const threadIdsByProjectId = buildThreadIdsByProjectId(threads);
+  return {
+    ...state,
+    projects,
+    threads,
+    sidebarThreadsById,
+    threadIdsByProjectId,
+    bootstrapComplete: true,
+  };
+}
+
+export function hydrateThreadFromReadModel(
+  state: AppState,
+  readModelThread: OrchestrationReadModel["threads"][number],
+): AppState {
+  if (readModelThread.deletedAt !== null) {
+    return state;
   }
 
-  return state;
+  const nextThread = mapThread(readModelThread, { hydrateThreadId: readModelThread.id });
+  const existingThread = state.threads.find((thread) => thread.id === nextThread.id);
+  const threads = existingThread
+    ? state.threads.map((thread) => (thread.id === nextThread.id ? nextThread : thread))
+    : [...state.threads, nextThread];
+  const nextSummary = buildSidebarThreadSummary(nextThread);
+  const previousSummary = state.sidebarThreadsById[nextThread.id];
+  const sidebarThreadsById = sidebarThreadSummariesEqual(previousSummary, nextSummary)
+    ? state.sidebarThreadsById
+    : {
+        ...state.sidebarThreadsById,
+        [nextThread.id]: nextSummary,
+      };
+  const nextThreadIdsByProjectId =
+    existingThread !== undefined && existingThread.projectId !== nextThread.projectId
+      ? removeThreadIdByProjectId(
+          state.threadIdsByProjectId,
+          existingThread.projectId,
+          existingThread.id,
+        )
+      : state.threadIdsByProjectId;
+  const threadIdsByProjectId = appendThreadIdByProjectId(
+    nextThreadIdsByProjectId,
+    nextThread.projectId,
+    nextThread.id,
+  );
+
+  return {
+    ...state,
+    threads,
+    sidebarThreadsById,
+    threadIdsByProjectId,
+  };
+}
+
+export function applyOrchestrationEvent(state: AppState, event: OrchestrationEvent): AppState {
+  const projectState = applyProjectEvent(state, event);
+  if (projectState !== null) {
+    return projectState;
+  }
+
+  const threadState = applyThreadEvent(state, event);
+  return threadState ?? state;
 }
 
 export function applyOrchestrationEvents(

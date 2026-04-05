@@ -100,15 +100,9 @@ import { basenameOfPath } from "../vscode-icons";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useTheme } from "../hooks/useTheme";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
-import BranchToolbar from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
-import PlanSidebar from "./PlanSidebar";
-import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import {
   BotIcon,
-  ChevronDownIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
   CircleAlertIcon,
   ListTodoIcon,
   LockIcon,
@@ -166,14 +160,15 @@ import {
 } from "~/lib/composer/footerLayout";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
-import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
-import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
+import { ChatConversationExtras } from "./chat/ChatConversationExtras";
+import { ChatMessagesPane } from "./chat/ChatMessagesPane";
 import { ContextWindowMeter } from "./chat/ContextWindowMeter";
-import { buildExpandedImagePreview, ExpandedImagePreview } from "./chat/ExpandedImagePreview";
+import { ChatViewPanels } from "./chat/ChatViewPanels";
+import { buildExpandedImagePreview, type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NewThreadLanding } from "./chat/NewThreadLanding";
 import { AVAILABLE_PROVIDER_OPTIONS, ProviderModelPicker } from "./chat/ProviderModelPicker";
-import { InAppBrowser, type InAppBrowserController, type InAppBrowserMode } from "./InAppBrowser";
+import { type InAppBrowserController, type InAppBrowserMode } from "./InAppBrowser";
 import { ComposerCommandItem, ComposerCommandMenu } from "./chat/ComposerCommandMenu";
 import { ComposerPendingApprovalActions } from "./chat/ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./chat/CompactComposerControlsMenu";
@@ -4732,10 +4727,154 @@ export default function ChatView({ threadId }: ChatViewProps) {
     void onRevertToTurnCount(targetTurnCount);
   };
 
-  // Empty state: no active thread
   if (!activeThread) {
     return <NewThreadLanding />;
   }
+
+  const messagesTimelineProps = {
+    hasMessages: timelineEntries.length > 0,
+    isWorking,
+    activeTurnInProgress: isWorking || !latestTurnSettled,
+    activeTurnStartedAt: activeWorkStartedAt,
+    scrollContainer: messagesScrollElement,
+    timelineEntries,
+    completionDividerBeforeEntryId,
+    completionSummary,
+    turnDiffSummaryByAssistantMessageId,
+    nowIso,
+    expandedWorkGroups,
+    onToggleWorkGroup,
+    onOpenTurnDiff,
+    revertTurnCountByUserMessageId,
+    onRevertUserMessage,
+    revertActionTitle: checkpointRestoreActionTitle(activeThread.session?.provider),
+    isRevertingCheckpoint,
+    onImageExpand: onExpandTimelineImage,
+    markdownCwd: gitCwd ?? undefined,
+    resolvedTheme,
+    timestampFormat,
+    workspaceRoot: activeProject?.cwd ?? undefined,
+  };
+  const branchToolbarProps = isGitRepo
+    ? {
+        threadId: activeThread.id,
+        onEnvModeChange,
+        envLocked,
+        onComposerFocusRequest: scheduleComposerFocus,
+        ...(canCheckoutPullRequestIntoThread
+          ? { onCheckoutPullRequestRequest: openPullRequestDialog }
+          : {}),
+      }
+    : null;
+  const pullRequestDialogProps = pullRequestDialogState
+    ? {
+        open: true,
+        cwd: activeProject?.cwd ?? null,
+        initialReference: pullRequestDialogState.initialReference,
+        onOpenChange: (open: boolean) => {
+          if (!open) {
+            closePullRequestDialog();
+          }
+        },
+        onPrepared: handlePreparedPullRequestThread,
+      }
+    : null;
+  const planSidebarProps =
+    workspaceMode === "chat" && planSidebarOpen
+      ? {
+          activePlan,
+          activeProposedPlan: sidebarProposedPlan,
+          markdownCwd: gitCwd ?? undefined,
+          workspaceRoot: activeProject?.cwd ?? undefined,
+          timestampFormat,
+          onClose: () => {
+            setPlanSidebarOpen(false);
+            const turnKey = activePlan?.turnId ?? sidebarProposedPlan?.turnId ?? null;
+            if (turnKey) {
+              planSidebarDismissedForTurnRef.current = turnKey;
+            }
+          },
+        }
+      : null;
+  const browserPanel =
+    browserOpen && isElectron
+      ? {
+          mode: browserMode,
+          splitWidth: browserSplitWidth,
+          onResizePointerDown: handleBrowserSplitResizePointerDown,
+          inAppBrowserProps: {
+            open: browserOpen,
+            mode: browserMode,
+            onClose: closeBrowser,
+            onMinimize: minimizeBrowser,
+            onRestore: restoreBrowser,
+            onSplit: openSplitBrowser,
+            onControllerChange: setBrowserController,
+            onActiveRuntimeStateChange: (state: { devToolsOpen: boolean }) => {
+              setBrowserDevToolsOpen(state.devToolsOpen);
+            },
+            backShortcutLabel: browserBackShortcutLabel,
+            devToolsShortcutLabel: browserDevToolsShortcutLabel,
+            forwardShortcutLabel: browserForwardShortcutLabel,
+            reloadShortcutLabel: browserReloadShortcutLabel,
+            viewportRef: chatViewportRef,
+          },
+        }
+      : null;
+  const terminalDrawerProps =
+    terminalState.terminalOpen && activeProject
+      ? {
+          threadId: activeThread.id,
+          cwd: gitCwd ?? activeProject.cwd,
+          runtimeEnv: threadTerminalRuntimeEnv,
+          height: terminalState.terminalHeight,
+          sidebarWidth: terminalState.terminalSidebarWidth,
+          sidebarDensity: terminalState.terminalSidebarDensity,
+          terminalIds: terminalState.terminalIds,
+          activeTerminalId: terminalState.activeTerminalId,
+          terminalGroups: terminalState.terminalGroups,
+          activeTerminalGroupId: terminalState.activeTerminalGroupId,
+          runningTerminalIds: terminalState.runningTerminalIds,
+          customTerminalTitlesById: terminalState.customTerminalTitlesById,
+          autoTerminalTitlesById: terminalState.autoTerminalTitlesById,
+          terminalIconsById: terminalState.terminalIconsById,
+          terminalColorsById: terminalState.terminalColorsById,
+          splitRatiosByGroupId: terminalState.splitRatiosByGroupId,
+          focusRequestId: terminalFocusRequestId,
+          onSplitTerminal: splitTerminal,
+          onNewTerminal: createNewTerminal,
+          splitShortcutLabel: splitTerminalShortcutLabel ?? undefined,
+          newShortcutLabel: newTerminalShortcutLabel ?? undefined,
+          closeShortcutLabel: closeTerminalShortcutLabel ?? undefined,
+          onActiveTerminalChange: activateTerminal,
+          onMoveTerminal: moveTerminal,
+          onMoveTerminalToNewGroup: moveTerminalToNewGroup,
+          onDuplicateTerminal: duplicateTerminal,
+          onRenameTerminal: renameTerminal,
+          onClearTerminal: clearTerminal,
+          onClearAllTerminals: clearAllTerminals,
+          onRestartTerminal: restartTerminal,
+          onCloseAllTerminals: closeAllTerminals,
+          onAutoTerminalTitleChange: setTerminalAutoTitle,
+          onTerminalIconChange: setTerminalIcon,
+          onTerminalColorChange: setTerminalColor,
+          onSplitRatiosChange: setTerminalGroupSplitRatios,
+          onCloseTerminal: closeTerminal,
+          onHeightChange: setTerminalHeight,
+          onSidebarWidthChange: setTerminalSidebarWidth,
+          onSidebarDensityChange: setTerminalSidebarDensity,
+          onAddTerminalContext: addTerminalContextToDraft,
+        }
+      : null;
+  const expandedImageOverlay =
+    expandedImage && expandedImageItem
+      ? {
+          expandedImage,
+          expandedImageItem,
+          closeExpandedImage,
+          navigateExpandedImage,
+        }
+      : null;
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
@@ -4821,63 +4960,22 @@ export default function ChatView({ threadId }: ChatViewProps) {
           ) : (
             <>
               {/* Messages Wrapper */}
-              <div className="relative flex min-h-0 flex-1 flex-col">
-                {/* Messages */}
-                <div
-                  ref={setMessagesScrollContainerRef}
-                  className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain px-3 py-3 sm:px-5 sm:py-4"
-                  onScroll={onMessagesScroll}
-                  onClickCapture={onMessagesClickCapture}
-                  onWheel={onMessagesWheel}
-                  onPointerDown={onMessagesPointerDown}
-                  onPointerUp={onMessagesPointerUp}
-                  onPointerCancel={onMessagesPointerCancel}
-                  onTouchStart={onMessagesTouchStart}
-                  onTouchMove={onMessagesTouchMove}
-                  onTouchEnd={onMessagesTouchEnd}
-                  onTouchCancel={onMessagesTouchEnd}
-                >
-                  <MessagesTimeline
-                    key={activeThread.id}
-                    hasMessages={timelineEntries.length > 0}
-                    isWorking={isWorking}
-                    activeTurnInProgress={isWorking || !latestTurnSettled}
-                    activeTurnStartedAt={activeWorkStartedAt}
-                    scrollContainer={messagesScrollElement}
-                    timelineEntries={timelineEntries}
-                    completionDividerBeforeEntryId={completionDividerBeforeEntryId}
-                    completionSummary={completionSummary}
-                    turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
-                    nowIso={nowIso}
-                    expandedWorkGroups={expandedWorkGroups}
-                    onToggleWorkGroup={onToggleWorkGroup}
-                    onOpenTurnDiff={onOpenTurnDiff}
-                    revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
-                    onRevertUserMessage={onRevertUserMessage}
-                    revertActionTitle={checkpointRestoreActionTitle(activeThread.session?.provider)}
-                    isRevertingCheckpoint={isRevertingCheckpoint}
-                    onImageExpand={onExpandTimelineImage}
-                    markdownCwd={gitCwd ?? undefined}
-                    resolvedTheme={resolvedTheme}
-                    timestampFormat={timestampFormat}
-                    workspaceRoot={activeProject?.cwd ?? undefined}
-                  />
-                </div>
-
-                {/* scroll to bottom pill — shown when user has scrolled away from the bottom */}
-                {showScrollToBottom && (
-                  <div className="pointer-events-none absolute bottom-1 left-1/2 z-30 flex -translate-x-1/2 justify-center py-1.5">
-                    <button
-                      type="button"
-                      onClick={() => scrollMessagesToBottom("smooth")}
-                      className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border/60 bg-card px-3 py-1 text-muted-foreground text-xs shadow-sm transition-colors hover:border-border hover:text-foreground hover:cursor-pointer"
-                    >
-                      <ChevronDownIcon className="size-3.5" />
-                      Scroll to bottom
-                    </button>
-                  </div>
-                )}
-              </div>
+              <ChatMessagesPane
+                messagesContainerRef={setMessagesScrollContainerRef}
+                messagesTimelineProps={messagesTimelineProps}
+                onMessagesClickCapture={onMessagesClickCapture}
+                onMessagesPointerCancel={onMessagesPointerCancel}
+                onMessagesPointerDown={onMessagesPointerDown}
+                onMessagesPointerUp={onMessagesPointerUp}
+                onMessagesScroll={onMessagesScroll}
+                onMessagesTouchEnd={onMessagesTouchEnd}
+                onMessagesTouchMove={onMessagesTouchMove}
+                onMessagesTouchStart={onMessagesTouchStart}
+                onMessagesWheel={onMessagesWheel}
+                scrollMessagesToBottom={scrollMessagesToBottom}
+                showScrollToBottom={showScrollToBottom}
+                timelineKey={activeThread.id}
+              />
 
               {/* Input bar */}
               <div
@@ -5280,222 +5378,25 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 </form>
               </div>
 
-              {isGitRepo && (
-                <BranchToolbar
-                  threadId={activeThread.id}
-                  onEnvModeChange={onEnvModeChange}
-                  envLocked={envLocked}
-                  onComposerFocusRequest={scheduleComposerFocus}
-                  {...(canCheckoutPullRequestIntoThread
-                    ? { onCheckoutPullRequestRequest: openPullRequestDialog }
-                    : {})}
-                />
-              )}
-              {pullRequestDialogState ? (
-                <PullRequestThreadDialog
-                  key={pullRequestDialogState.key}
-                  open
-                  cwd={activeProject?.cwd ?? null}
-                  initialReference={pullRequestDialogState.initialReference}
-                  onOpenChange={(open) => {
-                    if (!open) {
-                      closePullRequestDialog();
-                    }
-                  }}
-                  onPrepared={handlePreparedPullRequestThread}
-                />
-              ) : null}
+              <ChatConversationExtras
+                branchToolbarProps={branchToolbarProps}
+                pullRequestDialogKey={pullRequestDialogState?.key ?? null}
+                pullRequestDialogProps={pullRequestDialogProps}
+              />
             </>
           )}
         </div>
         {/* end chat column */}
 
-        {/* Plan sidebar */}
-        {workspaceMode === "chat" && planSidebarOpen ? (
-          <PlanSidebar
-            activePlan={activePlan}
-            activeProposedPlan={sidebarProposedPlan}
-            markdownCwd={gitCwd ?? undefined}
-            workspaceRoot={activeProject?.cwd ?? undefined}
-            timestampFormat={timestampFormat}
-            onClose={() => {
-              setPlanSidebarOpen(false);
-              // Track that the user explicitly dismissed for this turn so auto-open won't fight them.
-              const turnKey = activePlan?.turnId ?? sidebarProposedPlan?.turnId ?? null;
-              if (turnKey) {
-                planSidebarDismissedForTurnRef.current = turnKey;
-              }
-            }}
-          />
-        ) : null}
-        {browserOpen && isElectron ? (
-          <>
-            {browserMode === "split" ? (
-              <div
-                role="separator"
-                aria-orientation="vertical"
-                aria-label="Resize browser panel"
-                className="group relative z-20 w-3 shrink-0 cursor-col-resize touch-none select-none"
-                onPointerDown={handleBrowserSplitResizePointerDown}
-              >
-                <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border/80 transition-colors group-hover:bg-primary/55" />
-                <div className="absolute inset-y-0 left-1/2 w-2 -translate-x-1/2 rounded-full bg-transparent group-hover:bg-primary/10" />
-              </div>
-            ) : null}
-            <div
-              className={cn(
-                browserMode === "split" ? "min-h-0 shrink-0 overflow-hidden" : "contents",
-              )}
-              style={
-                browserMode === "split"
-                  ? {
-                      width: `${browserSplitWidth}px`,
-                      minWidth: `${browserSplitWidth}px`,
-                    }
-                  : undefined
-              }
-            >
-              <InAppBrowser
-                open={browserOpen}
-                mode={browserMode}
-                onClose={closeBrowser}
-                onMinimize={minimizeBrowser}
-                onRestore={restoreBrowser}
-                onSplit={openSplitBrowser}
-                onControllerChange={setBrowserController}
-                onActiveRuntimeStateChange={(state) => {
-                  setBrowserDevToolsOpen(state.devToolsOpen);
-                }}
-                backShortcutLabel={browserBackShortcutLabel}
-                devToolsShortcutLabel={browserDevToolsShortcutLabel}
-                forwardShortcutLabel={browserForwardShortcutLabel}
-                reloadShortcutLabel={browserReloadShortcutLabel}
-                viewportRef={chatViewportRef}
-              />
-            </div>
-          </>
-        ) : null}
+        <ChatViewPanels
+          browserPanel={browserPanel}
+          expandedImageOverlay={expandedImageOverlay}
+          planSidebarProps={planSidebarProps}
+          terminalDrawerKey={terminalState.terminalOpen && activeProject ? activeThread.id : null}
+          terminalDrawerProps={terminalDrawerProps}
+        />
       </div>
       {/* end horizontal flex container */}
-
-      {(() => {
-        if (!terminalState.terminalOpen || !activeProject) {
-          return null;
-        }
-        return (
-          <ThreadTerminalDrawer
-            key={activeThread.id}
-            threadId={activeThread.id}
-            cwd={gitCwd ?? activeProject.cwd}
-            runtimeEnv={threadTerminalRuntimeEnv}
-            height={terminalState.terminalHeight}
-            sidebarWidth={terminalState.terminalSidebarWidth}
-            sidebarDensity={terminalState.terminalSidebarDensity}
-            terminalIds={terminalState.terminalIds}
-            activeTerminalId={terminalState.activeTerminalId}
-            terminalGroups={terminalState.terminalGroups}
-            activeTerminalGroupId={terminalState.activeTerminalGroupId}
-            runningTerminalIds={terminalState.runningTerminalIds}
-            customTerminalTitlesById={terminalState.customTerminalTitlesById}
-            autoTerminalTitlesById={terminalState.autoTerminalTitlesById}
-            terminalIconsById={terminalState.terminalIconsById}
-            terminalColorsById={terminalState.terminalColorsById}
-            splitRatiosByGroupId={terminalState.splitRatiosByGroupId}
-            focusRequestId={terminalFocusRequestId}
-            onSplitTerminal={splitTerminal}
-            onNewTerminal={createNewTerminal}
-            splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
-            newShortcutLabel={newTerminalShortcutLabel ?? undefined}
-            closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
-            onActiveTerminalChange={activateTerminal}
-            onMoveTerminal={moveTerminal}
-            onMoveTerminalToNewGroup={moveTerminalToNewGroup}
-            onDuplicateTerminal={duplicateTerminal}
-            onRenameTerminal={renameTerminal}
-            onClearTerminal={clearTerminal}
-            onClearAllTerminals={clearAllTerminals}
-            onRestartTerminal={restartTerminal}
-            onCloseAllTerminals={closeAllTerminals}
-            onAutoTerminalTitleChange={setTerminalAutoTitle}
-            onTerminalIconChange={setTerminalIcon}
-            onTerminalColorChange={setTerminalColor}
-            onSplitRatiosChange={setTerminalGroupSplitRatios}
-            onCloseTerminal={closeTerminal}
-            onHeightChange={setTerminalHeight}
-            onSidebarWidthChange={setTerminalSidebarWidth}
-            onSidebarDensityChange={setTerminalSidebarDensity}
-            onAddTerminalContext={addTerminalContextToDraft}
-          />
-        );
-      })()}
-
-      {expandedImage && expandedImageItem && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 px-4 py-6 [-webkit-app-region:no-drag]"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Expanded image preview"
-        >
-          <button
-            type="button"
-            className="absolute inset-0 z-0 cursor-zoom-out"
-            aria-label="Close image preview"
-            onClick={closeExpandedImage}
-          />
-          {expandedImage.images.length > 1 && (
-            <Button
-              type="button"
-              size="icon"
-              variant="ghost"
-              className="absolute left-2 top-1/2 z-20 -translate-y-1/2 text-white/90 hover:bg-white/10 hover:text-white sm:left-6"
-              aria-label="Previous image"
-              onClick={() => {
-                navigateExpandedImage(-1);
-              }}
-            >
-              <ChevronLeftIcon className="size-5" />
-            </Button>
-          )}
-          <div className="relative isolate z-10 max-h-[92vh] max-w-[92vw]">
-            <Button
-              type="button"
-              size="icon-xs"
-              variant="ghost"
-              className="absolute right-2 top-2"
-              onClick={closeExpandedImage}
-              aria-label="Close image preview"
-            >
-              <XIcon />
-            </Button>
-            <img
-              src={expandedImageItem.src}
-              alt={expandedImageItem.name}
-              className="max-h-[86vh] max-w-[92vw] select-none rounded-lg border border-border/70 bg-background object-contain shadow-2xl"
-              draggable={false}
-            />
-            <p className="mt-2 max-w-[92vw] truncate text-center text-xs text-muted-foreground/80">
-              {expandedImageItem.name}
-              {expandedImage.images.length > 1
-                ? ` (${expandedImage.index + 1}/${expandedImage.images.length})`
-                : ""}
-            </p>
-          </div>
-          {expandedImage.images.length > 1 && (
-            <Button
-              type="button"
-              size="icon"
-              variant="ghost"
-              className="absolute right-2 top-1/2 z-20 -translate-y-1/2 text-white/90 hover:bg-white/10 hover:text-white sm:right-6"
-              aria-label="Next image"
-              onClick={() => {
-                navigateExpandedImage(1);
-              }}
-            >
-              <ChevronRightIcon className="size-5" />
-            </Button>
-          )}
-        </div>
-      )}
     </div>
   );
 }

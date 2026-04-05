@@ -45,6 +45,17 @@ interface LocalStorageChangeDetail {
   key: string;
 }
 
+function toLocalStorageError(key: string, operation: string, error: unknown): Error {
+  const detail = error instanceof Error ? error.message : String(error);
+  return new Error(`Failed to ${operation} localStorage key "${key}": ${detail}`);
+}
+
+function reportLocalStorageError(key: string, operation: string, error: unknown): Error {
+  const normalized = toLocalStorageError(key, operation, error);
+  console.error("[LOCALSTORAGE] Error:", normalized);
+  return normalized;
+}
+
 function dispatchLocalStorageChange(key: string) {
   if (typeof window === "undefined") return;
   window.dispatchEvent(
@@ -58,17 +69,20 @@ export function useLocalStorage<T, E>(
   key: string,
   initialValue: T,
   schema: Schema.Codec<T, E>,
-): [T, (value: T | ((val: T) => T)) => void] {
-  // Get the initial value from localStorage or use the provided initialValue
-  const [storedValue, setStoredValue] = useState<T>(() => {
+): [T, (value: T | ((val: T) => T)) => void, Error | null] {
+  let initialStorageError: Error | null = null;
+  const initialStoredValue = (() => {
     try {
       const item = getLocalStorageItem(key, schema);
       return item ?? initialValue;
     } catch (error) {
-      console.error("[LOCALSTORAGE] Error:", error);
+      initialStorageError = reportLocalStorageError(key, "read", error);
       return initialValue;
     }
-  });
+  })();
+
+  const [storageError, setStorageError] = useState<Error | null>(initialStorageError);
+  const [storedValue, setStoredValue] = useState<T>(initialStoredValue);
 
   // Return a wrapped version of useState's setter function that persists the new value to localStorage
   const setValue = useCallback(
@@ -83,10 +97,11 @@ export function useLocalStorage<T, E>(
           }
           // Dispatch event after state update completes to avoid nested state updates
           queueMicrotask(() => dispatchLocalStorageChange(key));
+          setStorageError(null);
           return valueToStore;
         });
       } catch (error) {
-        console.error("[LOCALSTORAGE] Error:", error);
+        setStorageError(reportLocalStorageError(key, "write", error));
       }
     },
     [key, schema],
@@ -101,8 +116,9 @@ export function useLocalStorage<T, E>(
       try {
         const newValue = getLocalStorageItem(key, schema);
         setStoredValue(newValue ?? initialValue);
+        setStorageError(null);
       } catch (error) {
-        console.error("[LOCALSTORAGE] Error:", error);
+        setStorageError(reportLocalStorageError(key, "re-sync", error));
       }
     }
   }, [key, initialValue, schema]);
@@ -113,8 +129,9 @@ export function useLocalStorage<T, E>(
       try {
         const newValue = getLocalStorageItem(key, schema);
         setStoredValue(newValue ?? initialValue);
+        setStorageError(null);
       } catch (error) {
-        console.error("[LOCALSTORAGE] Error:", error);
+        setStorageError(reportLocalStorageError(key, "sync", error));
       }
     };
 
@@ -139,5 +156,5 @@ export function useLocalStorage<T, E>(
     };
   }, [key, initialValue, schema]);
 
-  return [storedValue, setValue];
+  return [storedValue, setValue, storageError];
 }

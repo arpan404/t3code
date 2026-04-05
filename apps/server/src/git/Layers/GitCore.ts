@@ -336,6 +336,11 @@ interface Trace2Monitor {
   readonly flush: Effect.Effect<void, never>;
 }
 
+interface TraceTailReader {
+  readonly readTraceDelta: Effect.Effect<void, never>;
+  readonly finalizeTrace2Monitor: Effect.Effect<void, never>;
+}
+
 function trace2ChildKey(record: Record<string, unknown>): string | null {
   const childId = record.child_id;
   if (typeof childId === "number" || typeof childId === "string") {
@@ -347,33 +352,14 @@ function trace2ChildKey(record: Record<string, unknown>): string | null {
 
 const Trace2Record = Schema.Record(Schema.String, Schema.Unknown);
 
-const createTrace2Monitor = Effect.fn("createTrace2Monitor")(function* (
+const createTraceTailReader = Effect.fn("createTraceTailReader")(function* (
+  fs: FileSystem.FileSystem,
+  traceFilePath: string,
   input: Pick<ExecuteGitInput, "operation" | "cwd" | "args">,
   progress: ExecuteGitProgress | undefined,
-): Effect.fn.Return<
-  Trace2Monitor,
-  PlatformError.PlatformError,
-  Scope.Scope | FileSystem.FileSystem | Path.Path
-> {
-  if (!progress?.onHookStarted && !progress?.onHookFinished) {
-    return {
-      env: {},
-      flush: Effect.void,
-    };
-  }
-
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const traceFilePath = yield* fs.makeTempFileScoped({
-    prefix: `ace-git-trace2-${process.pid}-`,
-    suffix: ".json",
-  });
-  const hookStartByChildKey = new Map<string, { hookName: string; startedAtMs: number }>();
-  const traceTailState = yield* Ref.make<TraceTailState>({
-    processedChars: 0,
-    remainder: "",
-  });
-
+  hookStartByChildKey: Map<string, { hookName: string; startedAtMs: number }>,
+  traceTailState: Ref.Ref<TraceTailState>,
+): Effect.fn.Return<TraceTailReader, never> {
   const handleTraceLine = Effect.fn("handleTraceLine")(function* (line: string) {
     const trimmedLine = line.trim();
     if (trimmedLine.length === 0) {
@@ -408,7 +394,7 @@ const createTrace2Monitor = Effect.fn("createTrace2Monitor")(function* (
 
     if (event === "child_start") {
       hookStartByChildKey.set(childKey, { hookName, startedAtMs: Date.now() });
-      if (progress.onHookStarted) {
+      if (progress?.onHookStarted) {
         yield* progress.onHookStarted(hookName);
       }
       return;
@@ -416,7 +402,7 @@ const createTrace2Monitor = Effect.fn("createTrace2Monitor")(function* (
 
     if (event === "child_exit") {
       hookStartByChildKey.delete(childKey);
-      if (progress.onHookFinished) {
+      if (progress?.onHookFinished) {
         const code = traceRecord.success.code;
         yield* progress.onHookFinished({
           hookName: started?.hookName ?? hookName,
@@ -457,18 +443,8 @@ const createTrace2Monitor = Effect.fn("createTrace2Monitor")(function* (
       Effect.ignore({ log: true }),
     ),
   );
-  const traceFileName = path.basename(traceFilePath);
-  yield* Stream.runForEach(fs.watch(traceFilePath), (event) => {
-    const eventPath = event.path;
-    const isTargetTraceEvent =
-      eventPath === traceFilePath ||
-      eventPath === traceFileName ||
-      path.basename(eventPath) === traceFileName;
-    if (!isTargetTraceEvent) return Effect.void;
-    return readTraceDelta;
-  }).pipe(Effect.ignoreCause({ log: true }), Effect.forkScoped);
 
-  const finalizeTrace2Monitor = Effect.fn("finalizeTrace2Monitor")(function* () {
+  const finalizeTrace2Monitor = Effect.gen(function* () {
     yield* readTraceDelta;
     const finalLine = yield* Ref.modify(traceTailState, ({ processedChars, remainder }) => [
       remainder.trim(),
@@ -482,7 +458,58 @@ const createTrace2Monitor = Effect.fn("createTrace2Monitor")(function* (
     }
   });
 
-  yield* Effect.addFinalizer(finalizeTrace2Monitor);
+  return {
+    readTraceDelta,
+    finalizeTrace2Monitor,
+  };
+});
+
+const createTrace2Monitor = Effect.fn("createTrace2Monitor")(function* (
+  input: Pick<ExecuteGitInput, "operation" | "cwd" | "args">,
+  progress: ExecuteGitProgress | undefined,
+): Effect.fn.Return<
+  Trace2Monitor,
+  PlatformError.PlatformError,
+  Scope.Scope | FileSystem.FileSystem | Path.Path
+> {
+  if (!progress?.onHookStarted && !progress?.onHookFinished) {
+    return {
+      env: {},
+      flush: Effect.void,
+    };
+  }
+
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const traceFilePath = yield* fs.makeTempFileScoped({
+    prefix: `ace-git-trace2-${process.pid}-`,
+    suffix: ".json",
+  });
+  const hookStartByChildKey = new Map<string, { hookName: string; startedAtMs: number }>();
+  const traceTailState = yield* Ref.make<TraceTailState>({
+    processedChars: 0,
+    remainder: "",
+  });
+  const { readTraceDelta, finalizeTrace2Monitor } = yield* createTraceTailReader(
+    fs,
+    traceFilePath,
+    input,
+    progress,
+    hookStartByChildKey,
+    traceTailState,
+  );
+  const traceFileName = path.basename(traceFilePath);
+  yield* Stream.runForEach(fs.watch(traceFilePath), (event) => {
+    const eventPath = event.path;
+    const isTargetTraceEvent =
+      eventPath === traceFilePath ||
+      eventPath === traceFileName ||
+      path.basename(eventPath) === traceFileName;
+    if (!isTargetTraceEvent) return Effect.void;
+    return readTraceDelta;
+  }).pipe(Effect.ignoreCause({ log: true }), Effect.forkScoped);
+
+  yield* Effect.addFinalizer(() => finalizeTrace2Monitor);
 
   return {
     env: {
