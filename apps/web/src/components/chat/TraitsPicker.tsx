@@ -3,6 +3,7 @@ import {
   type CodexModelOptions,
   type CursorModelOptions,
   type GitHubCopilotModelOptions,
+  type OpenCodeModelOptions,
   type ProviderKind,
   type ProviderModelOptions,
   type ServerProviderModel,
@@ -51,18 +52,24 @@ function getRawEffort(
   provider: ProviderKind,
   modelOptions: ProviderOptions | null | undefined,
 ): string | null {
-  if (provider === "codex" || provider === "githubCopilot" || provider === "cursor") {
-    return trimOrNull(
-      (
-        modelOptions as
-          | CodexModelOptions
-          | GitHubCopilotModelOptions
-          | CursorModelOptions
-          | undefined
-      )?.reasoningEffort,
-    );
+  switch (provider) {
+    case "codex":
+    case "githubCopilot":
+    case "cursor":
+      return trimOrNull(
+        (
+          modelOptions as
+            | CodexModelOptions
+            | GitHubCopilotModelOptions
+            | CursorModelOptions
+            | undefined
+        )?.reasoningEffort,
+      );
+    case "claudeAgent":
+      return trimOrNull((modelOptions as ClaudeModelOptions | undefined)?.effort);
+    case "opencode":
+      return null;
   }
-  return trimOrNull((modelOptions as ClaudeModelOptions | undefined)?.effort);
 }
 
 function getRawContextWindow(
@@ -80,28 +87,32 @@ function buildNextOptions(
   modelOptions: ProviderOptions | null | undefined,
   patch: Record<string, unknown>,
 ): ProviderOptions {
-  if (provider === "codex") {
-    return {
-      ...(modelOptions as CodexModelOptions | undefined),
-      ...patch,
-    } as CodexModelOptions;
+  switch (provider) {
+    case "codex":
+      return {
+        ...(modelOptions as CodexModelOptions | undefined),
+        ...patch,
+      } as CodexModelOptions;
+    case "githubCopilot":
+      return {
+        ...(modelOptions as GitHubCopilotModelOptions | undefined),
+        ...patch,
+      } as GitHubCopilotModelOptions;
+    case "cursor":
+      return {
+        ...(modelOptions as CursorModelOptions | undefined),
+        ...patch,
+      } as CursorModelOptions;
+    case "claudeAgent":
+      return {
+        ...(modelOptions as ClaudeModelOptions | undefined),
+        ...patch,
+      } as ClaudeModelOptions;
+    case "opencode":
+      return {
+        ...(modelOptions as OpenCodeModelOptions | undefined),
+      } as OpenCodeModelOptions;
   }
-  if (provider === "githubCopilot") {
-    return {
-      ...(modelOptions as GitHubCopilotModelOptions | undefined),
-      ...patch,
-    } as GitHubCopilotModelOptions;
-  }
-  if (provider === "cursor") {
-    return {
-      ...(modelOptions as CursorModelOptions | undefined),
-      ...patch,
-    } as CursorModelOptions;
-  }
-  return {
-    ...(modelOptions as ClaudeModelOptions | undefined),
-    ...patch,
-  } as ClaudeModelOptions;
 }
 
 function getSelectedTraits(

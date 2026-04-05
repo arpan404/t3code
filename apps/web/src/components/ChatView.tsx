@@ -1307,6 +1307,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       githubCopilot:
         providerStatuses.find((provider) => provider.provider === "githubCopilot")?.models ?? [],
       cursor: providerStatuses.find((provider) => provider.provider === "cursor")?.models ?? [],
+      opencode: providerStatuses.find((provider) => provider.provider === "opencode")?.models ?? [],
     }),
     [providerStatuses],
   );

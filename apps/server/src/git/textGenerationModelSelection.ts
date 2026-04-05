@@ -11,7 +11,7 @@ import { Equal } from "effect";
  */
 export function resolveTextGenerationModelSelection(input: {
   serverSettings: ServerSettings;
-  fallbackModelSelection?: ModelSelection | null;
+  fallbackModelSelection?: ModelSelection | null | undefined;
 }): ModelSelection {
   const settingsSelection = input.serverSettings.textGenerationModelSelection;
   if (!Equal.equals(settingsSelection, DEFAULT_SERVER_SETTINGS.textGenerationModelSelection)) {

@@ -140,6 +140,9 @@ describe("WsRpcAtomClient", () => {
         cursor: {
           ...DEFAULT_SERVER_SETTINGS.providers.cursor,
         },
+        opencode: {
+          ...DEFAULT_SERVER_SETTINGS.providers.opencode,
+        },
       },
     };
     const requestPromise = runRpc((client) => client(WS_METHODS.serverGetSettings, {}));
@@ -195,6 +198,9 @@ describe("WsRpcAtomClient", () => {
         },
         cursor: {
           ...DEFAULT_SERVER_SETTINGS.providers.cursor,
+        },
+        opencode: {
+          ...DEFAULT_SERVER_SETTINGS.providers.opencode,
         },
       },
     };

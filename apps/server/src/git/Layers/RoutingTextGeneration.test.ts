@@ -26,4 +26,16 @@ describe("normalizeTextGenerationModelSelection", () => {
       model: "claude-4-sonnet",
     });
   });
+
+  it("falls back OpenCode selections to the default Codex text-generation model", () => {
+    expect(
+      normalizeTextGenerationModelSelection({
+        provider: "opencode",
+        model: "auto",
+      }),
+    ).toEqual({
+      provider: "codex",
+      model: "gpt-5.4-mini",
+    });
+  });
 });

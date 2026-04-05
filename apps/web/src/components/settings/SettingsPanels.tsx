@@ -122,6 +122,12 @@ const PROVIDER_SETTINGS: readonly InstallProviderSettings[] = [
     cliUrlDescription:
       "Optional: connect to an external headless Copilot CLI server instead of spawning per session.",
   },
+  {
+    provider: "opencode",
+    title: "OpenCode",
+    binaryPlaceholder: "OpenCode binary path",
+    binaryDescription: "Path to the OpenCode binary",
+  },
 ] as const;
 
 const PROVIDER_STATUS_STYLES = {
@@ -567,6 +573,11 @@ export function GeneralSettingsPanel() {
         DEFAULT_UNIFIED_SETTINGS.providers.cursor.binaryPath ||
       settings.providers.cursor.customModels.length > 0,
     ),
+    opencode: Boolean(
+      settings.providers.opencode.binaryPath !==
+        DEFAULT_UNIFIED_SETTINGS.providers.opencode.binaryPath ||
+      settings.providers.opencode.customModels.length > 0,
+    ),
   });
   const [customModelInputByProvider, setCustomModelInputByProvider] = useState<
     Record<ProviderKind, string>
@@ -575,6 +586,7 @@ export function GeneralSettingsPanel() {
     claudeAgent: "",
     githubCopilot: "",
     cursor: "",
+    opencode: "",
   });
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
     Partial<Record<ProviderKind, string | null>>
@@ -1479,7 +1491,9 @@ export function GeneralSettingsPanel() {
                               ? "gpt-6.7-codex-ultra-preview"
                               : providerCard.provider === "claudeAgent"
                                 ? "claude-sonnet-5-0"
-                                : "gpt-5-mini"
+                                : providerCard.provider === "opencode"
+                                  ? "anthropic/claude-3-5-sonnet-20241022"
+                                  : "gpt-5-mini"
                           }
                           spellCheck={false}
                         />

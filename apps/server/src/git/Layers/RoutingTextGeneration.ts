@@ -7,7 +7,11 @@
  *
  * @module RoutingTextGeneration
  */
-import type { ModelSelection, ProviderKind } from "@t3tools/contracts";
+import {
+  DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER,
+  type ModelSelection,
+  type ProviderKind,
+} from "@t3tools/contracts";
 import { Effect, Layer, ServiceMap } from "effect";
 
 import {
@@ -40,14 +44,32 @@ class CursorTextGen extends ServiceMap.Service<CursorTextGen, TextGenerationShap
   "t3/git/Layers/RoutingTextGeneration/CursorTextGen",
 ) {}
 
-const toTextGenerationProvider = (provider: ProviderKind): TextGenerationProvider => provider;
+const isTextGenerationProvider = (provider: ProviderKind): provider is TextGenerationProvider =>
+  provider === "codex" ||
+  provider === "claudeAgent" ||
+  provider === "githubCopilot" ||
+  provider === "cursor";
+
+const toTextGenerationProvider = (provider: ProviderKind): TextGenerationProvider =>
+  isTextGenerationProvider(provider) ? provider : "codex";
 
 type TextGenerationModelSelection = Extract<ModelSelection, { provider: TextGenerationProvider }>;
 
 export function normalizeTextGenerationModelSelection(
   selection: ModelSelection,
 ): TextGenerationModelSelection {
-  return selection;
+  switch (selection.provider) {
+    case "codex":
+    case "claudeAgent":
+    case "githubCopilot":
+    case "cursor":
+      return selection;
+    case "opencode":
+      return {
+        provider: "codex",
+        model: DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER.codex,
+      };
+  }
 }
 
 // ---------------------------------------------------------------------------
