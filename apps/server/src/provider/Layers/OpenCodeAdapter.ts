@@ -30,6 +30,7 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { meaningfulErrorMessage } from "../errorCause.ts";
+import { runLoggedEffect } from "../fireAndForget.ts";
 import {
   buildBootstrapPromptFromReplayTurns,
   cloneReplayTurns,
@@ -46,6 +47,7 @@ import {
   parseOpenCodeModelSlug,
   resolveOpenCodeModelForPrompt,
 } from "../opencodeSdk.ts";
+import { asFiniteNumber as asNumber, asObject as asRecord, asString } from "../unknown.ts";
 import { type OpenCodeAdapterShape, OpenCodeAdapter } from "../Services/OpenCodeAdapter.ts";
 
 const PROVIDER = "opencode" as const;
@@ -205,20 +207,6 @@ function toMessage(cause: unknown, fallback: string): string {
   return meaningfulErrorMessage(cause, fallback);
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}
-
-function asNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
 export function openCodeTimestampToIso(value: unknown): string | undefined {
   if (typeof value === "number" && Number.isFinite(value)) {
     if (Math.abs(value) < 1_000_000_000) {
@@ -364,7 +352,9 @@ export function mapOpenCodeTodoStatus(
   }
 }
 
-function buildOpenCodeToolDetail(state: Record<string, unknown> | null): string | undefined {
+function buildOpenCodeToolDetail(
+  state: Record<string, unknown> | null | undefined,
+): string | undefined {
   if (!state) {
     return undefined;
   }
@@ -477,7 +467,12 @@ const makeOpenCodeAdapter = Effect.fn("makeOpenCodeAdapter")(function* () {
   const sessions = new Map<ThreadId, OpenCodeSessionContext>();
 
   const emit = (event: ProviderRuntimeEvent): void => {
-    void runPromise(Queue.offer(runtimeEventQueue, event)).catch(() => undefined);
+    runLoggedEffect({
+      runPromise,
+      effect: Queue.offer(runtimeEventQueue, event).pipe(Effect.asVoid),
+      message: "Failed to emit OpenCode runtime event.",
+      metadata: { eventId: event.eventId, threadId: event.threadId, type: event.type },
+    });
   };
 
   const baseEvent = <TType extends ProviderRuntimeEvent["type"]>(

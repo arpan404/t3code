@@ -97,4 +97,17 @@ describe("createOrchestrationRecoveryCoordinator", () => {
       reason: "replay-failed",
     });
   });
+
+  it("supports replay recovery after websocket reconnects", () => {
+    const coordinator = createOrchestrationRecoveryCoordinator();
+
+    coordinator.beginSnapshotRecovery("bootstrap");
+    coordinator.completeSnapshotRecovery(3);
+
+    expect(coordinator.beginReplayRecovery("transport-reconnected")).toBe(true);
+    expect(coordinator.getState().inFlight).toEqual({
+      kind: "replay",
+      reason: "transport-reconnected",
+    });
+  });
 });

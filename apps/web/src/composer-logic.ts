@@ -260,3 +260,15 @@ export function replaceTextRange(
   const nextText = `${text.slice(0, safeStart)}${replacement}${text.slice(safeEnd)}`;
   return { text: nextText, cursor: safeStart + replacement.length };
 }
+
+/** Extends a replacement range end to consume a trailing space in `text` when `replacement` already ends with one, preventing double spaces after autocomplete. */
+export function extendReplacementRangeForTrailingSpace(
+  text: string,
+  rangeEnd: number,
+  replacement: string,
+): number {
+  if (!replacement.endsWith(" ")) {
+    return rangeEnd;
+  }
+  return text[rangeEnd] === " " ? rangeEnd + 1 : rangeEnd;
+}

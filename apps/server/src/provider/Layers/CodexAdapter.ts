@@ -32,6 +32,12 @@ import {
   ProviderAdapterValidationError,
   type ProviderAdapterError,
 } from "../Errors.ts";
+import {
+  asFiniteNumber as asNumber,
+  asObject,
+  asReadonlyArray as asArray,
+  asString,
+} from "../unknown.ts";
 import { CodexAdapter, type CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import {
   CodexAppServerManager,
@@ -91,25 +97,6 @@ function toRequestError(threadId: ThreadId, method: string, cause: unknown): Pro
     detail: toMessage(cause, `${method} failed`),
     cause,
   });
-}
-
-function asObject(value: unknown): Record<string, unknown> | undefined {
-  if (!value || typeof value !== "object") {
-    return undefined;
-  }
-  return value as Record<string, unknown>;
-}
-
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}
-
-function asArray(value: unknown): unknown[] | undefined {
-  return Array.isArray(value) ? value : undefined;
-}
-
-function asNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 const FATAL_CODEX_STDERR_SNIPPETS = ["failed to connect to websocket"];

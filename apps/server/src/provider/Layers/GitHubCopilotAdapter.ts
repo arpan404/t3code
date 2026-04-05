@@ -28,6 +28,7 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { meaningfulErrorMessage } from "../errorCause.ts";
+import { runLoggedEffect } from "../fireAndForget.ts";
 import {
   buildBootstrapPromptFromReplayTurns,
   cloneReplayTurns,
@@ -733,7 +734,12 @@ const makeGitHubCopilotAdapter = Effect.fn("makeGitHubCopilotAdapter")(function*
     });
 
   const emitRuntimeEvent = (event: ProviderRuntimeEvent): void => {
-    void runPromise(offerRuntimeEvent(event)).catch(() => undefined);
+    runLoggedEffect({
+      runPromise,
+      effect: offerRuntimeEvent(event).pipe(Effect.asVoid),
+      message: "Failed to emit GitHub Copilot runtime event.",
+      metadata: { eventId: event.eventId, threadId: event.threadId, type: event.type },
+    });
   };
 
   const makeBaseEvent = <TType extends ProviderRuntimeEvent["type"]>(

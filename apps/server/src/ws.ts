@@ -22,7 +22,11 @@ import {
   WS_METHODS,
   WsRpcGroup,
 } from "@ace/contracts";
-import { extractWebSocketAuthTokenFromProtocolHeader } from "@ace/shared/wsAuth";
+import {
+  extractWebSocketAuthTokenFromProtocolHeader,
+  extractWebSocketClientSessionIdFromProtocolHeader,
+  extractWebSocketConnectionIdFromProtocolHeader,
+} from "@ace/shared/wsAuth";
 import { clamp } from "effect/Number";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
@@ -54,8 +58,68 @@ import {
 
 const WS_UPGRADE_RATE_LIMIT_WINDOW_MS = 60_000;
 const WS_UPGRADE_RATE_LIMIT_MAX_ATTEMPTS = 30;
+const WS_CLIENT_SESSION_TTL_MS = 15 * 60_000;
+
+type WsClientSessionRecord = {
+  readonly connectionId: string;
+  readonly generation: number;
+  readonly updatedAt: number;
+};
+
+const wsClientSessions = new Map<string, WsClientSessionRecord>();
+
+function pruneWsClientSessions(now = Date.now()): void {
+  for (const [clientSessionId, record] of wsClientSessions.entries()) {
+    if (record.updatedAt + WS_CLIENT_SESSION_TTL_MS <= now) {
+      wsClientSessions.delete(clientSessionId);
+    }
+  }
+}
+
+function registerWsClientSession(
+  clientSessionId: string,
+  connectionId: string,
+  now = Date.now(),
+): WsClientSessionRecord {
+  pruneWsClientSessions(now);
+  const existing = wsClientSessions.get(clientSessionId);
+  const nextRecord: WsClientSessionRecord =
+    existing && existing.connectionId === connectionId
+      ? {
+          ...existing,
+          updatedAt: now,
+        }
+      : {
+          connectionId,
+          generation: (existing?.generation ?? 0) + 1,
+          updatedAt: now,
+        };
+  wsClientSessions.set(clientSessionId, nextRecord);
+  return nextRecord;
+}
+
+function isCurrentWsClientSession(clientSessionId?: string, connectionId?: string): boolean {
+  if (!clientSessionId || !connectionId) {
+    return true;
+  }
+  const current = wsClientSessions.get(clientSessionId);
+  return current?.connectionId === connectionId;
+}
+
+function disconnectWsClientSession(clientSessionId: string, connectionId: string): void {
+  const current = wsClientSessions.get(clientSessionId);
+  if (current?.connectionId === connectionId) {
+    wsClientSessions.delete(clientSessionId);
+  }
+}
 
 function resolveWsRateLimitKey(headers: Record<string, string | undefined>): string {
+  const clientSessionId = extractWebSocketClientSessionIdFromProtocolHeader(
+    headers["sec-websocket-protocol"],
+  );
+  if (clientSessionId) {
+    return `ws-client:${clientSessionId}`;
+  }
   const forwardedFor = headers["x-forwarded-for"]?.split(",")[0]?.trim();
   if (forwardedFor) {
     return forwardedFor;
@@ -102,6 +166,25 @@ const WsRpcLayer = WsRpcGroup.toLayer(
         availableEditors: resolveAvailableEditors(),
         settings,
       };
+    });
+
+    const filterCurrentClientStream = <TValue, TError, TContext>(
+      input: {
+        readonly clientSessionId: string | undefined;
+        readonly connectionId: string | undefined;
+      },
+      stream: Stream.Stream<TValue, TError, TContext>,
+    ): Stream.Stream<TValue, TError, TContext> =>
+      stream.pipe(
+        Stream.filter(() => isCurrentWsClientSession(input.clientSessionId, input.connectionId)),
+      );
+
+    const normalizeStreamIdentity = (input: {
+      readonly clientSessionId?: string | undefined;
+      readonly connectionId?: string | undefined;
+    }) => ({
+      clientSessionId: input.clientSessionId,
+      connectionId: input.connectionId,
     });
 
     return WsRpcGroup.of({
@@ -164,7 +247,7 @@ const WsRpcLayer = WsRpcGroup.toLayer(
               }),
           ),
         ),
-      [WS_METHODS.subscribeOrchestrationDomainEvents]: (_input) =>
+      [WS_METHODS.subscribeOrchestrationDomainEvents]: (input) =>
         Stream.unwrap(
           Effect.gen(function* () {
             const snapshot = yield* orchestrationEngine.getReadModel();
@@ -186,38 +269,41 @@ const WsRpcLayer = WsRpcGroup.toLayer(
               pendingBySequence: new Map<number, OrchestrationEvent>(),
             });
 
-            return source.pipe(
-              Stream.mapEffect((event) =>
-                Ref.modify(
-                  state,
-                  ({
-                    nextSequence,
-                    pendingBySequence,
-                  }): [Array<OrchestrationEvent>, SequenceState] => {
-                    if (event.sequence < nextSequence || pendingBySequence.has(event.sequence)) {
-                      return [[], { nextSequence, pendingBySequence }];
-                    }
-
-                    const updatedPending = new Map(pendingBySequence);
-                    updatedPending.set(event.sequence, event);
-
-                    const emit: Array<OrchestrationEvent> = [];
-                    let expected = nextSequence;
-                    for (;;) {
-                      const expectedEvent = updatedPending.get(expected);
-                      if (!expectedEvent) {
-                        break;
+            return filterCurrentClientStream(
+              normalizeStreamIdentity(input),
+              source.pipe(
+                Stream.mapEffect((event) =>
+                  Ref.modify(
+                    state,
+                    ({
+                      nextSequence,
+                      pendingBySequence,
+                    }): [Array<OrchestrationEvent>, SequenceState] => {
+                      if (event.sequence < nextSequence || pendingBySequence.has(event.sequence)) {
+                        return [[], { nextSequence, pendingBySequence }];
                       }
-                      emit.push(expectedEvent);
-                      updatedPending.delete(expected);
-                      expected += 1;
-                    }
 
-                    return [emit, { nextSequence: expected, pendingBySequence: updatedPending }];
-                  },
+                      const updatedPending = new Map(pendingBySequence);
+                      updatedPending.set(event.sequence, event);
+
+                      const emit: Array<OrchestrationEvent> = [];
+                      let expected = nextSequence;
+                      for (;;) {
+                        const expectedEvent = updatedPending.get(expected);
+                        if (!expectedEvent) {
+                          break;
+                        }
+                        emit.push(expectedEvent);
+                        updatedPending.delete(expected);
+                        expected += 1;
+                      }
+
+                      return [emit, { nextSequence: expected, pendingBySequence: updatedPending }];
+                    },
+                  ),
                 ),
+                Stream.flatMap((events) => Stream.fromIterable(events)),
               ),
-              Stream.flatMap((events) => Stream.fromIterable(events)),
             );
           }),
         ),
@@ -259,6 +345,11 @@ const WsRpcLayer = WsRpcGroup.toLayer(
         }),
       [WS_METHODS.serverGetSettings]: (_input) => serverSettings.getSettings,
       [WS_METHODS.serverUpdateSettings]: ({ patch }) => serverSettings.updateSettings(patch),
+      [WS_METHODS.serverDisconnect]: (input) =>
+        Effect.sync(() => {
+          disconnectWsClientSession(input.clientSessionId, input.connectionId);
+          return {};
+        }),
       [WS_METHODS.projectsSearchEntries]: (input) =>
         workspaceEntries.search(input).pipe(
           Effect.mapError(
@@ -403,14 +494,17 @@ const WsRpcLayer = WsRpcGroup.toLayer(
       [WS_METHODS.terminalClear]: (input) => terminalManager.clear(input),
       [WS_METHODS.terminalRestart]: (input) => terminalManager.restart(input),
       [WS_METHODS.terminalClose]: (input) => terminalManager.close(input),
-      [WS_METHODS.subscribeTerminalEvents]: (_input) =>
-        Stream.callback<TerminalEvent>((queue) =>
-          Effect.acquireRelease(
-            terminalManager.subscribe((event) => Queue.offer(queue, event)),
-            (unsubscribe) => Effect.sync(unsubscribe),
+      [WS_METHODS.subscribeTerminalEvents]: (input) =>
+        filterCurrentClientStream(
+          normalizeStreamIdentity(input),
+          Stream.callback<TerminalEvent>((queue) =>
+            Effect.acquireRelease(
+              terminalManager.subscribe((event) => Queue.offer(queue, event)),
+              (unsubscribe) => Effect.sync(unsubscribe),
+            ),
           ),
         ),
-      [WS_METHODS.subscribeServerConfig]: (_input) =>
+      [WS_METHODS.subscribeServerConfig]: (input) =>
         Stream.unwrap(
           Effect.gen(function* () {
             const keybindingsUpdates = keybindings.streamChanges.pipe(
@@ -437,17 +531,20 @@ const WsRpcLayer = WsRpcGroup.toLayer(
               })),
             );
 
-            return Stream.concat(
-              Stream.make({
-                version: 1 as const,
-                type: "snapshot" as const,
-                config: yield* loadServerConfig,
-              }),
-              Stream.merge(keybindingsUpdates, Stream.merge(providerStatuses, settingsUpdates)),
+            return filterCurrentClientStream(
+              normalizeStreamIdentity(input),
+              Stream.concat(
+                Stream.make({
+                  version: 1 as const,
+                  type: "snapshot" as const,
+                  config: yield* loadServerConfig,
+                }),
+                Stream.merge(keybindingsUpdates, Stream.merge(providerStatuses, settingsUpdates)),
+              ),
             );
           }),
         ),
-      [WS_METHODS.subscribeServerLifecycle]: (_input) =>
+      [WS_METHODS.subscribeServerLifecycle]: (input) =>
         Stream.unwrap(
           Effect.gen(function* () {
             const snapshot = yield* lifecycleEvents.snapshot;
@@ -457,7 +554,10 @@ const WsRpcLayer = WsRpcGroup.toLayer(
             const liveEvents = lifecycleEvents.stream.pipe(
               Stream.filter((event) => event.sequence > snapshot.sequence),
             );
-            return Stream.concat(Stream.fromIterable(snapshotEvents), liveEvents);
+            return filterCurrentClientStream(
+              normalizeStreamIdentity(input),
+              Stream.concat(Stream.fromIterable(snapshotEvents), liveEvents),
+            );
           }),
         ),
     });
@@ -527,6 +627,18 @@ export const websocketRpcRouteLayer = Layer.unwrap(
           if (token !== config.authToken) {
             return HttpServerResponse.text("Unauthorized WebSocket connection", { status: 401 });
           }
+        }
+        const clientSessionId = extractWebSocketClientSessionIdFromProtocolHeader(
+          request.headers["sec-websocket-protocol"],
+        );
+        const connectionId = extractWebSocketConnectionIdFromProtocolHeader(
+          request.headers["sec-websocket-protocol"],
+        );
+        if ((clientSessionId && !connectionId) || (!clientSessionId && connectionId)) {
+          return HttpServerResponse.text("Invalid WebSocket client identity", { status: 400 });
+        }
+        if (clientSessionId && connectionId) {
+          registerWsClientSession(clientSessionId, connectionId);
         }
         return yield* rpcWebSocketHttpEffect;
       }),

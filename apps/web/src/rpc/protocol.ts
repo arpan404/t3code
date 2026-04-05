@@ -12,7 +12,12 @@ type RpcClientFactory = typeof makeWsRpcProtocolClient;
 export type WsRpcProtocolClient =
   RpcClientFactory extends Effect.Effect<infer Client, any, any> ? Client : never;
 
-export function createWsRpcProtocolLayer(url?: string) {
+export interface WsClientConnectionIdentity {
+  readonly clientSessionId: string;
+  readonly connectionId: string;
+}
+
+export function createWsRpcProtocolLayer(url?: string, identity?: WsClientConnectionIdentity) {
   const resolvedTarget = resolveServerUrl({
     url,
     protocol: window.location.protocol === "https:" ? "wss" : "ws",
@@ -20,6 +25,9 @@ export function createWsRpcProtocolLayer(url?: string) {
   });
   const connection = resolveWebSocketAuthConnection(resolvedTarget, {
     baseUrl: window.location.origin,
+    ...(identity
+      ? { clientSessionId: identity.clientSessionId, connectionId: identity.connectionId }
+      : {}),
   });
   const socketOptions = connection.protocols ? { protocols: [...connection.protocols] } : undefined;
   const socketLayer = Socket.layerWebSocket(connection.url, socketOptions).pipe(

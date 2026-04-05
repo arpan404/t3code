@@ -1,5 +1,9 @@
 import { WS_METHODS } from "@ace/contracts";
-import { buildWebSocketAuthProtocol } from "@ace/shared/wsAuth";
+import {
+  buildWebSocketAuthProtocol,
+  extractWebSocketClientSessionIdFromProtocolHeader,
+  extractWebSocketConnectionIdFromProtocolHeader,
+} from "@ace/shared/wsAuth";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { WsTransport } from "./wsTransport";
@@ -92,6 +96,7 @@ async function waitFor(assertion: () => void, timeoutMs = 1_000): Promise<void> 
 
 beforeEach(() => {
   sockets.length = 0;
+  const sessionStorageState = new Map<string, string>();
 
   Object.defineProperty(globalThis, "window", {
     configurable: true,
@@ -101,6 +106,12 @@ beforeEach(() => {
         hostname: "localhost",
         port: "3020",
         protocol: "http:",
+      },
+      sessionStorage: {
+        getItem: (key: string) => sessionStorageState.get(key) ?? null,
+        setItem: (key: string, value: string) => {
+          sessionStorageState.set(key, value);
+        },
       },
       desktopBridge: undefined,
     },
@@ -122,8 +133,16 @@ describe("WsTransport", () => {
       expect(sockets).toHaveLength(1);
     });
 
-    expect(getSocket().url).toBe("ws://localhost:3020/ws");
-    expect(getSocket().protocols).toEqual([buildWebSocketAuthProtocol("secret-token")]);
+    const socket = getSocket();
+    expect(socket.url).toBe("ws://localhost:3020/ws");
+    const header = Array.isArray(socket.protocols)
+      ? socket.protocols.join(",")
+      : String(socket.protocols);
+    expect(socket.protocols).toEqual(
+      expect.arrayContaining([buildWebSocketAuthProtocol("secret-token")]),
+    );
+    expect(extractWebSocketClientSessionIdFromProtocolHeader(header)).toBeTruthy();
+    expect(extractWebSocketConnectionIdFromProtocolHeader(header)).toBeTruthy();
     await transport.dispose();
   });
 
@@ -339,6 +358,62 @@ describe("WsTransport", () => {
       expect(listener).toHaveBeenLastCalledWith(secondEvent);
     });
 
+    unsubscribe();
+    await transport.dispose();
+  });
+
+  it("emits disconnect and reconnect notifications for resubscribed streams", async () => {
+    const transport = new WsTransport("ws://localhost:3020");
+    const listener = vi.fn();
+    const connectionListener = vi.fn();
+    const unsubscribeConnection = transport.onConnectionStateChange(connectionListener);
+
+    const unsubscribe = transport.subscribe(
+      (client) => client[WS_METHODS.subscribeServerLifecycle]({}),
+      listener,
+    );
+    await waitFor(() => {
+      expect(sockets).toHaveLength(1);
+    });
+
+    const socket = getSocket();
+    socket.open();
+
+    await waitFor(() => {
+      expect(socket.sent).toHaveLength(1);
+    });
+
+    const firstRequest = JSON.parse(socket.sent[0] ?? "{}") as { id: string };
+    socket.serverMessage(
+      JSON.stringify({
+        _tag: "Exit",
+        requestId: firstRequest.id,
+        exit: {
+          _tag: "Success",
+          value: null,
+        },
+      }),
+    );
+
+    await waitFor(() => {
+      expect(connectionListener).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: "disconnected",
+        }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(socket.sent.length).toBeGreaterThan(1);
+    });
+
+    await waitFor(() => {
+      expect(connectionListener).toHaveBeenCalledWith({
+        kind: "reconnected",
+      });
+    });
+
+    unsubscribeConnection();
     unsubscribe();
     await transport.dispose();
   });

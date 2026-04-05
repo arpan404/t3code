@@ -34,6 +34,7 @@ const orchestrationEventListeners = new Set<(event: OrchestrationEvent) => void>
 
 const rpcClientMock = {
   dispose: vi.fn(),
+  subscribeConnectionState: vi.fn(() => () => undefined),
   terminal: {
     open: vi.fn(),
     write: vi.fn(),
@@ -53,6 +54,10 @@ const rpcClientMock = {
     renameEntry: vi.fn(),
     searchEntries: vi.fn(),
     writeFile: vi.fn(),
+  },
+  workspaceEditor: {
+    syncBuffer: vi.fn(),
+    closeBuffer: vi.fn(),
   },
   shell: {
     openInEditor: vi.fn(),

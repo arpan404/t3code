@@ -141,6 +141,7 @@ export const WS_METHODS = {
   serverUpsertKeybinding: "server.upsertKeybinding",
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
+  serverDisconnect: "server.disconnect",
 
   // Streaming subscriptions
   subscribeOrchestrationDomainEvents: "subscribeOrchestrationDomainEvents",
@@ -148,6 +149,16 @@ export const WS_METHODS = {
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
 } as const;
+
+const WsClientStreamIdentity = Schema.Struct({
+  clientSessionId: Schema.optional(Schema.String),
+  connectionId: Schema.optional(Schema.String),
+});
+
+const WsClientDisconnectInput = Schema.Struct({
+  clientSessionId: Schema.String,
+  connectionId: Schema.String,
+});
 
 export const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
   payload: ServerUpsertKeybindingInput,
@@ -181,6 +192,11 @@ export const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSetting
   payload: Schema.Struct({ patch: ServerSettingsPatch }),
   success: ServerSettings,
   error: ServerSettingsError,
+});
+
+export const WsServerDisconnectRpc = Rpc.make(WS_METHODS.serverDisconnect, {
+  payload: WsClientDisconnectInput,
+  success: Schema.Struct({}),
 });
 
 export const WsProjectsSearchEntriesRpc = Rpc.make(WS_METHODS.projectsSearchEntries, {
@@ -376,27 +392,27 @@ export const WsOrchestrationReplayEventsRpc = Rpc.make(ORCHESTRATION_WS_METHODS.
 export const WsSubscribeOrchestrationDomainEventsRpc = Rpc.make(
   WS_METHODS.subscribeOrchestrationDomainEvents,
   {
-    payload: Schema.Struct({}),
+    payload: WsClientStreamIdentity,
     success: OrchestrationEvent,
     stream: true,
   },
 );
 
 export const WsSubscribeTerminalEventsRpc = Rpc.make(WS_METHODS.subscribeTerminalEvents, {
-  payload: Schema.Struct({}),
+  payload: WsClientStreamIdentity,
   success: TerminalEvent,
   stream: true,
 });
 
 export const WsSubscribeServerConfigRpc = Rpc.make(WS_METHODS.subscribeServerConfig, {
-  payload: Schema.Struct({}),
+  payload: WsClientStreamIdentity,
   success: ServerConfigStreamEvent,
   error: Schema.Union([KeybindingsConfigError, ServerSettingsError]),
   stream: true,
 });
 
 export const WsSubscribeServerLifecycleRpc = Rpc.make(WS_METHODS.subscribeServerLifecycle, {
-  payload: Schema.Struct({}),
+  payload: WsClientStreamIdentity,
   success: ServerLifecycleStreamEvent,
   stream: true,
 });
@@ -408,6 +424,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerUpsertKeybindingRpc,
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
+  WsServerDisconnectRpc,
   WsProjectsSearchEntriesRpc,
   WsProjectsListTreeRpc,
   WsProjectsCreateEntryRpc,

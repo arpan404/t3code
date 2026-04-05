@@ -17,6 +17,7 @@ import type {
   ServerProviderModel,
 } from "@ace/contracts";
 import { normalizeGitHubCopilotModelOptionsWithCapabilities } from "@ace/shared/model";
+import { Effect } from "effect";
 
 import { runProcess } from "../processRunner.ts";
 
@@ -211,6 +212,12 @@ export async function probeGitHubCopilotSdk(
       issues,
     };
   } finally {
-    await client.stop().catch(() => undefined);
+    await client.stop().catch((cause) =>
+      Effect.runPromise(
+        Effect.logWarning("Failed to stop GitHub Copilot client.", {
+          cause: cause instanceof Error ? cause.message : String(cause),
+        }),
+      ),
+    );
   }
 }
