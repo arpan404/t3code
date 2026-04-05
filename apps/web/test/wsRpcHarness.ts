@@ -1,4 +1,4 @@
-import { Effect, Exit, PubSub, Scope, Stream } from "effect";
+import { Cause, Effect, Exit, PubSub, Scope, Stream } from "effect";
 import { WS_METHODS, WsRpcGroup } from "@ace/contracts";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
@@ -49,6 +49,12 @@ function asEffect(result: UnaryResolverResult): Effect.Effect<unknown> {
   return Effect.succeed(result);
 }
 
+function reportScopeCloseFailure(message: string, exit: Exit.Exit<unknown, unknown>): void {
+  if (Exit.isFailure(exit)) {
+    console.warn(message, Cause.pretty(exit.cause));
+  }
+}
+
 export class BrowserWsRpcHarness {
   readonly requests: Array<NormalizedWsRpcRequestBody> = [];
 
@@ -62,6 +68,12 @@ export class BrowserWsRpcHarness {
   > = () => [];
   private streamPubSubs = new Map<string, PubSub.PubSub<unknown>>();
 
+  private closeScope(scope: Scope.Closeable, message: string): Promise<void> {
+    return Effect.runPromiseExit(Scope.close(scope, Exit.void)).then((exit) => {
+      reportScopeCloseFailure(message, exit);
+    });
+  }
+
   async reset(options?: BrowserWsRpcHarnessOptions): Promise<void> {
     await this.disconnect();
     this.requests.length = 0;
@@ -72,7 +84,9 @@ export class BrowserWsRpcHarness {
 
   connect(client: BrowserWsClient): void {
     if (this.scope) {
-      void Effect.runPromise(Scope.close(this.scope, Exit.void)).catch(() => undefined);
+      const scope = this.scope;
+      this.scope = null;
+      void this.closeScope(scope, "Failed to close BrowserWsRpcHarness scope before reconnect.");
     }
     if (this.streamPubSubs.size === 0) {
       this.initializeStreamPubSubs();
@@ -88,8 +102,9 @@ export class BrowserWsRpcHarness {
 
   async disconnect(): Promise<void> {
     if (this.scope) {
-      await Effect.runPromise(Scope.close(this.scope, Exit.void)).catch(() => undefined);
+      const scope = this.scope;
       this.scope = null;
+      await this.closeScope(scope, "Failed to close BrowserWsRpcHarness scope during disconnect.");
     }
     for (const pubsub of this.streamPubSubs.values()) {
       Effect.runSync(PubSub.shutdown(pubsub));

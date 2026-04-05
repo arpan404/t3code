@@ -113,6 +113,19 @@ function disconnectWsClientSession(clientSessionId: string, connectionId: string
   }
 }
 
+function normalizeStreamIdentity(input: {
+  readonly clientSessionId?: string | undefined;
+  readonly connectionId?: string | undefined;
+}): {
+  readonly clientSessionId: string | undefined;
+  readonly connectionId: string | undefined;
+} {
+  return {
+    clientSessionId: input.clientSessionId,
+    connectionId: input.connectionId,
+  };
+}
+
 function resolveWsRateLimitKey(headers: Record<string, string | undefined>): string {
   const clientSessionId = extractWebSocketClientSessionIdFromProtocolHeader(
     headers["sec-websocket-protocol"],
@@ -178,14 +191,6 @@ const WsRpcLayer = WsRpcGroup.toLayer(
       stream.pipe(
         Stream.filter(() => isCurrentWsClientSession(input.clientSessionId, input.connectionId)),
       );
-
-    const normalizeStreamIdentity = (input: {
-      readonly clientSessionId?: string | undefined;
-      readonly connectionId?: string | undefined;
-    }) => ({
-      clientSessionId: input.clientSessionId,
-      connectionId: input.connectionId,
-    });
 
     return WsRpcGroup.of({
       [ORCHESTRATION_WS_METHODS.getSnapshot]: (input) =>

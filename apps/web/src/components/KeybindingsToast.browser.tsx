@@ -408,7 +408,11 @@ describe("Keybindings update toast", () => {
 
       await remounted.cleanup();
     } catch (error) {
-      await mounted.cleanup().catch(() => {});
+      try {
+        await mounted.cleanup();
+      } catch (cleanupError) {
+        console.warn("Failed to clean up the mounted keybindings toast app.", cleanupError);
+      }
       throw error;
     }
   });

@@ -132,6 +132,40 @@ type OpenCodeReasoningItemState = {
   completed: boolean;
 };
 
+async function stopContext(ctx: OpenCodeSessionContext): Promise<void> {
+  if (ctx.stopped) {
+    return;
+  }
+  ctx.stopped = true;
+  ctx.sseAbort?.abort();
+
+  const cleanupErrors: Array<Error> = [];
+  try {
+    await ctx.client.session.delete({
+      sessionID: ctx.opencodeSessionId,
+      directory: ctx.cwd,
+    });
+  } catch (cause) {
+    cleanupErrors.push(
+      cause instanceof Error
+        ? cause
+        : new Error(`Failed to delete OpenCode session: ${String(cause)}`),
+    );
+  }
+  try {
+    await ctx.server.close();
+  } catch (cause) {
+    cleanupErrors.push(
+      cause instanceof Error
+        ? cause
+        : new Error(`Failed to stop OpenCode server: ${String(cause)}`),
+    );
+  }
+  if (cleanupErrors.length > 0) {
+    throw new AggregateError(cleanupErrors, "Failed to fully stop OpenCode session.");
+  }
+}
+
 type OpenCodeDeltaStreamKind = Extract<
   ProviderRuntimeEventByType<"content.delta">["payload"]["streamKind"],
   "assistant_text" | "reasoning_text" | "reasoning_summary_text"
@@ -1143,40 +1177,6 @@ const makeOpenCodeAdapter = Effect.fn("makeOpenCodeAdapter")(function* () {
         }
       }
     })();
-  };
-
-  const stopContext = async (ctx: OpenCodeSessionContext): Promise<void> => {
-    if (ctx.stopped) {
-      return;
-    }
-    ctx.stopped = true;
-    ctx.sseAbort?.abort();
-
-    const cleanupErrors: Array<Error> = [];
-    try {
-      await ctx.client.session.delete({
-        sessionID: ctx.opencodeSessionId,
-        directory: ctx.cwd,
-      });
-    } catch (cause) {
-      cleanupErrors.push(
-        cause instanceof Error
-          ? cause
-          : new Error(`Failed to delete OpenCode session: ${String(cause)}`),
-      );
-    }
-    try {
-      await ctx.server.close();
-    } catch (cause) {
-      cleanupErrors.push(
-        cause instanceof Error
-          ? cause
-          : new Error(`Failed to stop OpenCode server: ${String(cause)}`),
-      );
-    }
-    if (cleanupErrors.length > 0) {
-      throw new AggregateError(cleanupErrors, "Failed to fully stop OpenCode session.");
-    }
   };
 
   const startSession: OpenCodeAdapterShape["startSession"] = (input: ProviderSessionStartInput) =>

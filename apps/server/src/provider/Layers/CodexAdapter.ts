@@ -38,6 +38,7 @@ import {
   asReadonlyArray as asArray,
   asString,
 } from "../unknown.ts";
+import { meaningfulErrorMessage } from "../errorCause.ts";
 import { CodexAdapter, type CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import {
   CodexAppServerManager,
@@ -57,12 +58,7 @@ export interface CodexAdapterLiveOptions {
   readonly nativeEventLogger?: EventNdjsonLogger;
 }
 
-function toMessage(cause: unknown, fallback: string): string {
-  if (cause instanceof Error && cause.message.length > 0) {
-    return cause.message;
-  }
-  return fallback;
-}
+const toMessage = meaningfulErrorMessage;
 
 function toSessionError(
   threadId: ThreadId,

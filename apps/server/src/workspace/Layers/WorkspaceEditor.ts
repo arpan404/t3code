@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { Effect, Layer, Ref, Schema } from "effect";
+import { Effect, Exit, Layer, Ref, Schema } from "effect";
 import * as Semaphore from "effect/Semaphore";
 
 import {
@@ -198,26 +198,32 @@ function restoreConsoleMethods(snapshot: Map<string, unknown>): void {
 }
 
 function closeSession(session: WorkspaceEditorSession): Effect.Effect<void> {
-  return Effect.promise(async () => {
-    try {
-      await Promise.race([
-        session.nvim.command("qa!").catch(() => undefined),
-        new Promise<void>((resolve) => {
-          setTimeout(resolve, 150);
-        }),
-      ]);
-    } catch {
-      // ignore and fall back to process termination below
+  return Effect.gen(function* () {
+    const quitExit = yield* Effect.exit(
+      Effect.promise(() =>
+        Promise.race([
+          session.nvim.command("qa!"),
+          new Promise<void>((resolve) => {
+            setTimeout(resolve, 150);
+          }),
+        ]),
+      ),
+    );
+
+    if (Exit.isFailure(quitExit)) {
+      yield* Effect.logWarning("workspace editor failed to send Neovim quit command", {
+        cause: quitExit.cause,
+      });
     }
 
     if (session.proc.exitCode === null && !session.proc.killed) {
       session.proc.kill("SIGTERM");
-      await waitForProcessExit(session.proc, 500);
+      yield* Effect.promise(() => waitForProcessExit(session.proc, 500));
     }
 
     if (session.proc.exitCode === null && !session.proc.killed) {
       session.proc.kill("SIGKILL");
-      await waitForProcessExit(session.proc, 250);
+      yield* Effect.promise(() => waitForProcessExit(session.proc, 250));
     }
   });
 }
