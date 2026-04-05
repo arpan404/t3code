@@ -12,6 +12,7 @@ import {
 } from "@ace/contracts";
 import { Atom } from "effect/unstable/reactivity";
 
+import { reportBackgroundError } from "../lib/async";
 import type { WsRpcClient } from "../wsRpcClient";
 import { appAtomRegistry, resetAppAtomRegistryForTests } from "./atomRegistry";
 
@@ -181,7 +182,9 @@ export function startServerStateSync(client: ServerStateClient): () => void {
         }
         setServerConfigSnapshot(config);
       })
-      .catch(() => undefined);
+      .catch((error) => {
+        reportBackgroundError("Failed to read the initial server config snapshot.", error);
+      });
   }
 
   return () => {

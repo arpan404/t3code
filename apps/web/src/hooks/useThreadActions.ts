@@ -4,6 +4,7 @@ import { useNavigate, useParams } from "@tanstack/react-router";
 import { useCallback } from "react";
 
 import { getFallbackThreadIdAfterDelete } from "../lib/sidebar";
+import { reportBackgroundError } from "../lib/async";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useHandleNewThread } from "./useHandleNewThread";
 import { gitRemoveWorktreeMutationOptions } from "../lib/gitReactQuery";
@@ -101,7 +102,12 @@ export function useThreadActions() {
             threadId,
             createdAt: new Date().toISOString(),
           })
-          .catch(() => undefined);
+          .catch((error) => {
+            reportBackgroundError(
+              "Failed to stop the thread session before deleting the thread.",
+              error,
+            );
+          });
       }
 
       try {

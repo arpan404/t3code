@@ -49,6 +49,7 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { toastManager } from "../ui/toast";
+import { readExplorerEntryTransferPath, writeExplorerEntryTransfer } from "./dragTransfer";
 import WorkspaceEditorPane from "./WorkspaceEditorPane";
 
 let monacoConfigured = false;
@@ -484,18 +485,13 @@ const FileTreeRow = memo(function FileTreeRow(props: {
       }}
       onDragStart={(event) => {
         event.dataTransfer.effectAllowed = "move";
-        event.dataTransfer.setData(
-          "application/x-ace-explorer-entry",
-          JSON.stringify({
-            kind: props.row.entry.kind,
-            path: props.row.entry.path,
-          }),
-        );
-        event.dataTransfer.setData("text/plain", props.row.entry.path);
+        writeExplorerEntryTransfer(event.dataTransfer, {
+          kind: props.row.entry.kind,
+          path: props.row.entry.path,
+        });
       }}
       onDragOver={(event) => {
-        const payload = event.dataTransfer.getData("application/x-ace-explorer-entry");
-        if (payload.length === 0) {
+        if (!readExplorerEntryTransferPath(event.dataTransfer)) {
           return;
         }
         event.preventDefault();
@@ -506,21 +502,13 @@ const FileTreeRow = memo(function FileTreeRow(props: {
         props.onHoverDropTarget(null);
       }}
       onDrop={(event) => {
-        const payload = event.dataTransfer.getData("application/x-ace-explorer-entry");
-        if (payload.length === 0) {
+        const path = readExplorerEntryTransferPath(event.dataTransfer);
+        if (!path) {
           return;
         }
         event.preventDefault();
         props.onHoverDropTarget(null);
-        try {
-          const parsed = JSON.parse(payload) as { path?: string };
-          if (typeof parsed.path !== "string") {
-            return;
-          }
-          props.onDropEntry(parsed.path, dropTargetPath);
-        } catch {
-          return;
-        }
+        props.onDropEntry(path, dropTargetPath);
       }}
       onContextMenu={(event) => {
         event.preventDefault();
@@ -1965,8 +1953,7 @@ export default function ThreadWorkspaceEditor(props: {
             tabIndex={0}
             onKeyDown={handleExplorerKeyDown}
             onDragOver={(event) => {
-              const payload = event.dataTransfer.getData("application/x-ace-explorer-entry");
-              if (payload.length === 0) {
+              if (!readExplorerEntryTransferPath(event.dataTransfer)) {
                 return;
               }
               event.preventDefault();
@@ -1974,20 +1961,12 @@ export default function ThreadWorkspaceEditor(props: {
               setDragTargetParentPath(null);
             }}
             onDrop={(event) => {
-              const payload = event.dataTransfer.getData("application/x-ace-explorer-entry");
-              if (payload.length === 0) {
+              const path = readExplorerEntryTransferPath(event.dataTransfer);
+              if (!path) {
                 return;
               }
               event.preventDefault();
-              try {
-                const parsed = JSON.parse(payload) as { path?: string };
-                if (typeof parsed.path !== "string") {
-                  return;
-                }
-                moveExplorerEntry(parsed.path, null);
-              } catch {
-                return;
-              }
+              moveExplorerEntry(path, null);
             }}
             onContextMenu={(event) => {
               if (event.target !== event.currentTarget) {

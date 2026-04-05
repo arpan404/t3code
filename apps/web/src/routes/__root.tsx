@@ -15,6 +15,7 @@ import { AppSidebarLayout } from "../components/AppSidebarLayout";
 import { Button } from "../components/ui/button";
 import { AnchoredToastProvider, ToastProvider, toastManager } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
+import { runAsyncTask } from "../lib/async";
 import { readNativeApi } from "../nativeApi";
 import {
   type ServerConfigUpdateSource,
@@ -38,6 +39,7 @@ import { projectQueryKeys } from "../lib/projectReactQuery";
 import { collectActiveTerminalThreadIds } from "../lib/terminalStateCleanup";
 import { deriveOrchestrationBatchEffects } from "../orchestrationEventEffects";
 import { createOrchestrationRecoveryCoordinator } from "../orchestrationRecovery";
+import { getWsRpcClient } from "../wsRpcClient";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
@@ -224,30 +226,33 @@ function EventRouter() {
 
   const handleWelcome = useEffectEvent((payload: ServerLifecycleWelcomePayload) => {
     migrateLocalSettingsToServer();
-    void (async () => {
-      await bootstrapFromSnapshotRef.current();
-      if (disposedRef.current) {
-        return;
-      }
+    runAsyncTask(
+      (async () => {
+        await bootstrapFromSnapshotRef.current();
+        if (disposedRef.current) {
+          return;
+        }
 
-      if (!payload.bootstrapProjectId || !payload.bootstrapThreadId) {
-        return;
-      }
-      setProjectExpanded(payload.bootstrapProjectId, true);
+        if (!payload.bootstrapProjectId || !payload.bootstrapThreadId) {
+          return;
+        }
+        setProjectExpanded(payload.bootstrapProjectId, true);
 
-      if (pathnameRef.current !== "/") {
-        return;
-      }
-      if (handledBootstrapThreadIdRef.current === payload.bootstrapThreadId) {
-        return;
-      }
-      await navigate({
-        to: "/$threadId",
-        params: { threadId: payload.bootstrapThreadId },
-        replace: true,
-      });
-      handledBootstrapThreadIdRef.current = payload.bootstrapThreadId;
-    })().catch(() => undefined);
+        if (pathnameRef.current !== "/") {
+          return;
+        }
+        if (handledBootstrapThreadIdRef.current === payload.bootstrapThreadId) {
+          return;
+        }
+        await navigate({
+          to: "/$threadId",
+          params: { threadId: payload.bootstrapThreadId },
+          replace: true,
+        });
+        handledBootstrapThreadIdRef.current = payload.bootstrapThreadId;
+      })(),
+      "Failed to navigate to the bootstrap thread.",
+    );
   });
 
   const handleServerConfigUpdated = useEffectEvent(
@@ -317,6 +322,7 @@ function EventRouter() {
     let needsProviderInvalidation = false;
     const pendingDomainEvents: OrchestrationEvent[] = [];
     let flushPendingDomainEventsScheduled = false;
+    let reconnectRecoveryRequested = false;
 
     const reconcileSnapshotDerivedState = () => {
       const threads = useStore.getState().threads;
@@ -424,8 +430,10 @@ function EventRouter() {
       queueMicrotask(flushPendingDomainEvents);
     };
 
-    const recoverFromSequenceGap = async (): Promise<void> => {
-      if (!recovery.beginReplayRecovery("sequence-gap")) {
+    const recoverFromReplay = async (
+      reason: "sequence-gap" | "transport-reconnected",
+    ): Promise<void> => {
+      if (!recovery.beginReplayRecovery(reason)) {
         return;
       }
 
@@ -441,7 +449,7 @@ function EventRouter() {
       }
 
       if (!disposed && recovery.completeReplayRecovery()) {
-        void recoverFromSequenceGap();
+        void recoverFromReplay(reason);
       }
     };
 
@@ -460,7 +468,7 @@ function EventRouter() {
           });
           reconcileSnapshotDerivedState();
           if (recovery.completeSnapshotRecovery(snapshot.snapshotSequence)) {
-            void recoverFromSequenceGap();
+            void recoverFromReplay("sequence-gap");
           }
         }
       } catch {
@@ -477,6 +485,23 @@ function EventRouter() {
     const fallbackToSnapshotRecovery = async (): Promise<void> => {
       await runSnapshotRecovery("replay-failed");
     };
+    const unsubscribeConnectionState = getWsRpcClient().subscribeConnectionState((state) => {
+      if (disposed) {
+        return;
+      }
+      if (state.kind === "disconnected") {
+        reconnectRecoveryRequested = true;
+        pendingDomainEvents.length = 0;
+        flushPendingDomainEventsScheduled = false;
+        return;
+      }
+      if (!reconnectRecoveryRequested) {
+        return;
+      }
+      reconnectRecoveryRequested = false;
+      flushPendingDomainEvents();
+      void recoverFromReplay("transport-reconnected");
+    });
     const unsubDomainEvent = api.orchestration.onDomainEvent((event) => {
       const action = recovery.classifyDomainEvent(event.sequence);
       if (action === "apply") {
@@ -486,7 +511,7 @@ function EventRouter() {
       }
       if (action === "recover") {
         flushPendingDomainEvents();
-        void recoverFromSequenceGap();
+        void recoverFromReplay("sequence-gap");
       }
     });
     const unsubTerminalEvent = api.terminal.onEvent((event) => {
@@ -508,7 +533,9 @@ function EventRouter() {
       needsProviderInvalidation = false;
       flushPendingDomainEventsScheduled = false;
       pendingDomainEvents.length = 0;
+      reconnectRecoveryRequested = false;
       queryInvalidationThrottler.cancel();
+      unsubscribeConnectionState();
       unsubDomainEvent();
       unsubTerminalEvent();
     };

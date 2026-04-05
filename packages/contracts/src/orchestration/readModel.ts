@@ -1,7 +1,6 @@
 import { Schema } from "effect";
 import {
   CheckpointRef,
-  CommandId,
   EventId,
   IsoDateTime,
   MessageId,
@@ -12,14 +11,11 @@ import {
   TurnId,
 } from "../baseSchemas";
 import {
-  type ModelSelection,
   ChatAttachment,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   ModelSelection,
-  ProviderApprovalDecision,
   ProviderInteractionMode,
-  ProviderUserInputAnswers,
   QueuedComposerMessage,
   QueuedSteerRequest,
   RuntimeMode,
@@ -225,12 +221,3 @@ export const OrchestrationReadModel = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 export type OrchestrationReadModel = typeof OrchestrationReadModel.Type;
-
-export const ThreadUserInputResponseRequestedPayload = Schema.Struct({
-  threadId: ThreadId,
-  requestId: ApprovalRequestId,
-  answers: ProviderUserInputAnswers,
-  createdAt: IsoDateTime,
-});
-export type ThreadUserInputResponseRequestedPayload =
-  typeof ThreadUserInputResponseRequestedPayload.Type;

@@ -1,13 +1,16 @@
 import { type ContextMenuItem, type NativeApi } from "@ace/contracts";
 
 import { showContextMenuFallback } from "./contextMenuFallback";
+import { runAsyncTask } from "./lib/async";
 import { resetServerStateForTests } from "./rpc/serverState";
 import { __resetWsRpcClientForTests, getWsRpcClient } from "./wsRpcClient";
 
 let instance: { api: NativeApi } | null = null;
+let disposeHandlerRegistered = false;
 
 export function __resetWsNativeApiForTests() {
   instance = null;
+  disposeHandlerRegistered = false;
   __resetWsRpcClientForTests();
   resetServerStateForTests();
 }
@@ -18,6 +21,21 @@ export function createWsNativeApi(): NativeApi {
   }
 
   const rpcClient = getWsRpcClient();
+  if (
+    !disposeHandlerRegistered &&
+    typeof window !== "undefined" &&
+    typeof window.addEventListener === "function"
+  ) {
+    const disposeRpcClient = () => {
+      runAsyncTask(
+        rpcClient.dispose(),
+        "Failed to dispose the WebSocket RPC client during page teardown.",
+      );
+    };
+    window.addEventListener("pagehide", disposeRpcClient, { once: true });
+    window.addEventListener("beforeunload", disposeRpcClient, { once: true });
+    disposeHandlerRegistered = true;
+  }
 
   const api: NativeApi = {
     dialogs: {

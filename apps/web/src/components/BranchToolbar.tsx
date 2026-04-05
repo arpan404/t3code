@@ -2,6 +2,7 @@ import type { ThreadId } from "@ace/contracts";
 import { FolderIcon, GitForkIcon } from "lucide-react";
 import { useCallback } from "react";
 
+import { runAsyncTask } from "../lib/async";
 import { newCommandId } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
 import { useComposerDraftStore } from "../composerDraftStore";
@@ -61,14 +62,15 @@ export default function BranchToolbar({
       // If the effective cwd is about to change, stop the running session so the
       // next message creates a new one with the correct cwd.
       if (serverThread?.session && worktreePath !== activeWorktreePath && api) {
-        void api.orchestration
-          .dispatchCommand({
+        runAsyncTask(
+          api.orchestration.dispatchCommand({
             type: "thread.session.stop",
             commandId: newCommandId(),
             threadId: activeThreadId,
             createdAt: new Date().toISOString(),
-          })
-          .catch(() => undefined);
+          }),
+          "Failed to stop the previous session after switching thread environment mode.",
+        );
       }
       if (api && hasServerThread) {
         void api.orchestration.dispatchCommand({

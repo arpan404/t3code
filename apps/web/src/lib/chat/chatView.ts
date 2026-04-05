@@ -1,4 +1,14 @@
-import { ProjectId, type ModelSelection, type ThreadId, type TurnId } from "@ace/contracts";
+import {
+  ProjectId,
+  type ClaudeCodeEffort,
+  type ModelSelection,
+  type ProviderKind,
+  type ServerProvider,
+  type ThreadId,
+  type TurnId,
+} from "@ace/contracts";
+import { applyClaudePromptEffortPrefix } from "@ace/shared/model";
+import { getProviderModelCapabilities } from "../../providerModels";
 import { type ChatMessage, type SessionPhase, type Thread, type ThreadSession } from "../../types";
 import { randomUUID } from "~/lib/utils";
 import { type ComposerImageAttachment, type DraftThreadState } from "../../composerDraftStore";
@@ -334,4 +344,18 @@ export function hasServerAcknowledgedLocalDispatch(input: {
     input.localDispatch.sessionOrchestrationStatus !== (session?.orchestrationStatus ?? null) ||
     input.localDispatch.sessionUpdatedAt !== (session?.updatedAt ?? null)
   );
+}
+
+export function formatOutgoingPrompt(params: {
+  provider: ProviderKind;
+  model: string | null;
+  models: ReadonlyArray<ServerProvider["models"][number]>;
+  effort: string | null;
+  text: string;
+}): string {
+  const caps = getProviderModelCapabilities(params.models, params.model, params.provider);
+  if (params.effort && caps.promptInjectedEffortLevels.includes(params.effort)) {
+    return applyClaudePromptEffortPrefix(params.text, params.effort as ClaudeCodeEffort | null);
+  }
+  return params.text;
 }

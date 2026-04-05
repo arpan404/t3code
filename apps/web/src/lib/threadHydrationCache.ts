@@ -2,6 +2,7 @@ import { type OrchestrationReadModel, type ThreadId } from "@ace/contracts";
 import { DEFAULT_THREAD_HYDRATION_CACHE_MEMORY_MB } from "@ace/contracts/settings";
 
 import { ensureNativeApi } from "../nativeApi";
+import { runAsyncTask } from "./async";
 import { LRUCache } from "./lruCache";
 
 type HydratedReadModelThread = OrchestrationReadModel["threads"][number];
@@ -152,7 +153,7 @@ export function createThreadHydrationCache(
     threadId: ThreadId,
     options?: { readonly expectedUpdatedAt?: string | null },
   ): void => {
-    void hydrate(threadId, options).catch(() => undefined);
+    runAsyncTask(hydrate(threadId, options), "Failed to prefetch hydrated thread data.");
   };
 
   const clear = () => {

@@ -28,6 +28,7 @@ import { basenameOfPath } from "~/vscode-icons";
 
 import { VscodeEntryIcon } from "../chat/VscodeEntryIcon";
 import { Button } from "../ui/button";
+import { EDITOR_TAB_TRANSFER_TYPE, readEditorTabTransfer } from "./dragTransfer";
 
 interface WorkspaceEditorPaneProps {
   active: boolean;
@@ -76,7 +77,6 @@ function formatFileSize(sizeBytes: number): string {
   return `${Math.round(sizeBytes / 1024)} KB`;
 }
 
-const EDITOR_TAB_TRANSFER_TYPE = "application/x-ace-editor-tab";
 const WORKSPACE_EDITOR_MARKER_OWNER = "ace-workspace-editor";
 const MONACO_DIAGNOSTIC_OWNERS = [
   WORKSPACE_EDITOR_MARKER_OWNER,
@@ -482,32 +482,7 @@ export default function WorkspaceEditorPane(props: WorkspaceEditorPaneProps) {
   );
 
   const readDraggedTab = useCallback((event: ReactDragEvent<HTMLElement>) => {
-    const raw =
-      event.dataTransfer.getData(EDITOR_TAB_TRANSFER_TYPE) ||
-      event.dataTransfer.getData("text/plain");
-    if (raw.length === 0) {
-      return null;
-    }
-    try {
-      const parsed = JSON.parse(raw) as {
-        filePath?: string;
-        sourcePaneId?: string;
-      };
-      if (
-        typeof parsed.filePath !== "string" ||
-        parsed.filePath.trim().length === 0 ||
-        typeof parsed.sourcePaneId !== "string" ||
-        parsed.sourcePaneId.trim().length === 0
-      ) {
-        return null;
-      }
-      return {
-        filePath: parsed.filePath.trim(),
-        sourcePaneId: parsed.sourcePaneId.trim(),
-      };
-    } catch {
-      return null;
-    }
+    return readEditorTabTransfer(event.dataTransfer);
   }, []);
 
   const handleTabDrop = useCallback(

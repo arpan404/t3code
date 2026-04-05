@@ -18,6 +18,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import { openInPreferredEditor } from "../editorPreferences";
+import { runAsyncTask } from "../lib/async";
 import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
 import { fnv1a32 } from "../lib/diffRendering";
 import { LRUCache } from "../lib/lruCache";
@@ -139,9 +140,8 @@ function MarkdownCodeBlock({ code, children }: { code: string; children: ReactNo
     if (typeof navigator === "undefined" || navigator.clipboard == null) {
       return;
     }
-    void navigator.clipboard
-      .writeText(code)
-      .then(() => {
+    runAsyncTask(
+      navigator.clipboard.writeText(code).then(() => {
         if (copiedTimerRef.current != null) {
           clearTimeout(copiedTimerRef.current);
         }
@@ -150,8 +150,9 @@ function MarkdownCodeBlock({ code, children }: { code: string; children: ReactNo
           setCopied(false);
           copiedTimerRef.current = null;
         }, 1200);
-      })
-      .catch(() => undefined);
+      }),
+      "Failed to copy markdown code to the clipboard.",
+    );
   }, [code]);
 
   useEffect(

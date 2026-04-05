@@ -9,16 +9,12 @@ import {
 } from "../model";
 import {
   ApprovalRequestId,
-  CheckpointRef,
   CommandId,
-  EventId,
   IsoDateTime,
   MessageId,
   NonNegativeInt,
   ProviderItemId,
-  ThreadId,
   TrimmedNonEmptyString,
-  TurnId,
 } from "../baseSchemas";
 
 export const ORCHESTRATION_WS_METHODS = {

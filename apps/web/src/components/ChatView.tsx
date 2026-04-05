@@ -1,7 +1,6 @@
 import {
   type ApprovalRequestId,
   DEFAULT_MODEL_BY_PROVIDER,
-  type ClaudeCodeEffort,
   type MessageId,
   type ModelSelection,
   type ProjectScript,
@@ -21,11 +20,7 @@ import {
   TerminalOpenInput,
 } from "@ace/contracts";
 import * as Schema from "effect/Schema";
-import {
-  applyClaudePromptEffortPrefix,
-  buildProviderModelSelection,
-  normalizeModelSlug,
-} from "@ace/shared/model";
+import { buildProviderModelSelection, normalizeModelSlug } from "@ace/shared/model";
 import { truncate } from "@ace/shared/String";
 import {
   type PointerEvent as ReactPointerEvent,
@@ -51,6 +46,7 @@ import {
   collapseExpandedComposerCursor,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
+  extendReplacementRangeForTrailingSpace,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
 } from "../composer-logic";
@@ -79,7 +75,7 @@ import {
   setPendingUserInputCustomAnswer,
   type PendingUserInputDraftAnswer,
 } from "../pendingUserInput";
-import { getThreadById, getThreadsByIds, useStore } from "../store";
+import { getThreadById, useStore } from "../store";
 import { useProjectById, useThreadById } from "../storeSelectors";
 import { useUiStateStore } from "../uiStateStore";
 import {
@@ -95,11 +91,9 @@ import {
   MAX_TERMINALS_PER_GROUP,
   type ChatMessage,
   type QueuedComposerImageAttachment,
-  type SessionPhase,
   type Thread,
   type TurnDiffSummary,
 } from "../types";
-import { LRUCache } from "../lib/lruCache";
 import { hydrateThreadFromCache, readCachedHydratedThread } from "../lib/threadHydrationCache";
 
 import { basenameOfPath } from "../vscode-icons";
@@ -139,12 +133,9 @@ import {
 } from "~/projectScripts";
 import { newCommandId, newMessageId, newThreadId } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
+import { reportBackgroundError, runAsyncTask } from "~/lib/async";
 import { deriveTerminalTitleFromCommand } from "~/lib/terminalPresentation";
-import {
-  getProviderModelCapabilities,
-  getProviderModels,
-  resolveSelectableProvider,
-} from "../providerModels";
+import { getProviderModels, resolveSelectableProvider } from "../providerModels";
 import { useSettings } from "../hooks/useSettings";
 import { resolveAppModelSelection } from "../modelSelection";
 import { isTerminalFocused } from "../lib/terminalFocus";
@@ -161,6 +152,8 @@ import {
   formatTerminalContextLabel,
   insertInlineTerminalContextPlaceholder,
   removeInlineTerminalContextPlaceholder,
+  syncTerminalContextsByIds,
+  terminalContextIdListsEqual,
   type TerminalContextDraft,
   type TerminalContextSelection,
 } from "../lib/terminalContext";
@@ -202,14 +195,12 @@ import {
   buildTemporaryWorktreeBranchName,
   cloneComposerImageForRetry,
   collectUserMessageBlobPreviewUrls,
-  createLocalDispatchSnapshot,
   deriveComposerSendState,
+  formatOutgoingPrompt,
   queuedComposerImageToDraftAttachment,
   revokeComposerImagePreviewUrls,
-  hasServerAcknowledgedLocalDispatch,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
   LastInvokedScriptByProjectSchema,
-  type LocalDispatchSnapshot,
   PullRequestDialogState,
   readFileAsDataUrl,
   revokeBlobPreviewUrl,
@@ -217,6 +208,18 @@ import {
   threadHasStarted,
   waitForStartedServerThread,
 } from "~/lib/chat/chatView";
+import {
+  buildCheckpointRestoreConfirmation,
+  checkpointRestoreActionTitle,
+  checkpointRestoreFailureMessage,
+} from "~/lib/chat/checkpointRestore";
+import { useThreadPlanCatalog } from "~/lib/chat/threadPlanCatalog";
+import {
+  BROWSER_SPLIT_WIDTH_STORAGE_KEY,
+  DEFAULT_BROWSER_SPLIT_WIDTH,
+  clampBrowserSplitWidth,
+} from "~/lib/chat/browserSplit";
+import { useLocalDispatchState } from "~/hooks/useLocalDispatchState";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import {
   useServerAvailableEditors,
@@ -235,179 +238,12 @@ const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 const EMPTY_QUEUED_COMPOSER_MESSAGES: Thread["queuedComposerMessages"] = [];
-const TRANSCRIPT_REBUILD_PROVIDERS = new Set<ProviderKind>([
-  "githubCopilot",
-  "cursor",
-  "gemini",
-  "opencode",
-]);
 
-function usesTranscriptRebuildRestore(provider: ProviderKind | null | undefined): boolean {
-  return provider !== null && provider !== undefined && TRANSCRIPT_REBUILD_PROVIDERS.has(provider);
-}
-
-function buildCheckpointRestoreConfirmation(
-  provider: ProviderKind | null | undefined,
-  turnCount: number,
-): string {
-  if (usesTranscriptRebuildRestore(provider)) {
-    return [
-      `Restore this thread to checkpoint ${turnCount}?`,
-      "This will discard newer messages and turn diffs in this thread.",
-      "Files will be restored to that checkpoint, and the next provider turn will rebuild context from the saved transcript instead of rewinding remote history.",
-      "This action cannot be undone.",
-    ].join("\n");
-  }
-
-  return [
-    `Revert this thread to checkpoint ${turnCount}?`,
-    "This will discard newer messages and turn diffs in this thread.",
-    "This action cannot be undone.",
-  ].join("\n");
-}
-
-function checkpointRestoreActionTitle(provider: ProviderKind | null | undefined): string {
-  return usesTranscriptRebuildRestore(provider)
-    ? "Restore files and rebuild from this message"
-    : "Revert to this message";
-}
-
-function checkpointRestoreFailureMessage(provider: ProviderKind | null | undefined): string {
-  return usesTranscriptRebuildRestore(provider)
-    ? "Failed to restore thread state."
-    : "Failed to revert thread state.";
-}
-
-type ThreadPlanCatalogEntry = Pick<Thread, "id" | "proposedPlans">;
-
-type QueuedComposerMessage = Thread["queuedComposerMessages"][number];
-
-const MAX_THREAD_PLAN_CATALOG_CACHE_ENTRIES = 500;
-const MAX_THREAD_PLAN_CATALOG_CACHE_MEMORY_BYTES = 512 * 1024;
-const threadPlanCatalogCache = new LRUCache<{
-  proposedPlans: Thread["proposedPlans"];
-  entry: ThreadPlanCatalogEntry;
-}>(MAX_THREAD_PLAN_CATALOG_CACHE_ENTRIES, MAX_THREAD_PLAN_CATALOG_CACHE_MEMORY_BYTES);
-
-function estimateThreadPlanCatalogEntrySize(thread: Thread): number {
-  return Math.max(
-    64,
-    thread.id.length +
-      thread.proposedPlans.reduce(
-        (total, plan) =>
-          total +
-          plan.id.length +
-          plan.planMarkdown.length +
-          plan.updatedAt.length +
-          (plan.turnId?.length ?? 0),
-        0,
-      ),
-  );
-}
-
-function toThreadPlanCatalogEntry(thread: Thread): ThreadPlanCatalogEntry {
-  const cached = threadPlanCatalogCache.get(thread.id);
-  if (cached && cached.proposedPlans === thread.proposedPlans) {
-    return cached.entry;
-  }
-
-  const entry: ThreadPlanCatalogEntry = {
-    id: thread.id,
-    proposedPlans: thread.proposedPlans,
-  };
-  threadPlanCatalogCache.set(
-    thread.id,
-    {
-      proposedPlans: thread.proposedPlans,
-      entry,
-    },
-    estimateThreadPlanCatalogEntrySize(thread),
-  );
-  return entry;
-}
-
-function useThreadPlanCatalog(threadIds: readonly ThreadId[]): ThreadPlanCatalogEntry[] {
-  const selector = useMemo(() => {
-    let previousThreads: Array<Thread | undefined> | null = null;
-    let previousEntries: ThreadPlanCatalogEntry[] = [];
-
-    return (state: { threads: Thread[] }): ThreadPlanCatalogEntry[] => {
-      const nextThreads = getThreadsByIds(state.threads, threadIds);
-      const cachedThreads = previousThreads;
-      if (
-        cachedThreads &&
-        nextThreads.length === cachedThreads.length &&
-        nextThreads.every((thread, index) => thread === cachedThreads[index])
-      ) {
-        return previousEntries;
-      }
-
-      previousThreads = nextThreads;
-      previousEntries = nextThreads.flatMap((thread) =>
-        thread ? [toThreadPlanCatalogEntry(thread)] : [],
-      );
-      return previousEntries;
-    };
-  }, [threadIds]);
-
-  return useStore(selector);
-}
-
-function formatOutgoingPrompt(params: {
-  provider: ProviderKind;
-  model: string | null;
-  models: ReadonlyArray<ServerProvider["models"][number]>;
-  effort: string | null;
-  text: string;
-}): string {
-  const caps = getProviderModelCapabilities(params.models, params.model, params.provider);
-  if (params.effort && caps.promptInjectedEffortLevels.includes(params.effort)) {
-    return applyClaudePromptEffortPrefix(params.text, params.effort as ClaudeCodeEffort | null);
-  }
-  return params.text;
-}
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
-const BROWSER_SPLIT_WIDTH_STORAGE_KEY = "ace:browser:split-width:v1";
-const DEFAULT_BROWSER_SPLIT_WIDTH = 720;
-const MIN_BROWSER_SPLIT_WIDTH = 420;
-const MIN_CHAT_SPLIT_WIDTH = 420;
 
-const clampBrowserSplitWidth = (width: number, viewportWidth: number): number => {
-  const safeViewportWidth = Number.isFinite(viewportWidth) && viewportWidth > 0 ? viewportWidth : 0;
-  const maxWidth = Math.max(MIN_BROWSER_SPLIT_WIDTH, safeViewportWidth - MIN_CHAT_SPLIT_WIDTH);
-  const normalizedWidth = Number.isFinite(width) ? Math.round(width) : DEFAULT_BROWSER_SPLIT_WIDTH;
-  return Math.min(maxWidth, Math.max(MIN_BROWSER_SPLIT_WIDTH, normalizedWidth));
-};
-
-const extendReplacementRangeForTrailingSpace = (
-  text: string,
-  rangeEnd: number,
-  replacement: string,
-): number => {
-  if (!replacement.endsWith(" ")) {
-    return rangeEnd;
-  }
-  return text[rangeEnd] === " " ? rangeEnd + 1 : rangeEnd;
-};
-
-const syncTerminalContextsByIds = (
-  contexts: ReadonlyArray<TerminalContextDraft>,
-  ids: ReadonlyArray<string>,
-): TerminalContextDraft[] => {
-  const contextsById = new Map(contexts.map((context) => [context.id, context]));
-  return ids.flatMap((id) => {
-    const context = contextsById.get(id);
-    return context ? [context] : [];
-  });
-};
-
-const terminalContextIdListsEqual = (
-  contexts: ReadonlyArray<TerminalContextDraft>,
-  ids: ReadonlyArray<string>,
-): boolean =>
-  contexts.length === ids.length && contexts.every((context, index) => context.id === ids[index]);
+type QueuedComposerMessage = Thread["queuedComposerMessages"][number];
 
 interface ChatViewProps {
   threadId: ThreadId;
@@ -417,73 +253,6 @@ interface PendingPullRequestSetupRequest {
   threadId: ThreadId;
   worktreePath: string;
   scriptId: string;
-}
-
-function useLocalDispatchState(input: {
-  activeThread: Thread | undefined;
-  activeLatestTurn: Thread["latestTurn"] | null;
-  phase: SessionPhase;
-  activePendingApproval: ApprovalRequestId | null;
-  activePendingUserInput: ApprovalRequestId | null;
-  threadError: string | null | undefined;
-}) {
-  const [localDispatch, setLocalDispatch] = useState<LocalDispatchSnapshot | null>(null);
-
-  const beginLocalDispatch = useCallback(
-    (options?: { preparingWorktree?: boolean }) => {
-      const preparingWorktree = Boolean(options?.preparingWorktree);
-      setLocalDispatch((current) => {
-        if (current) {
-          return current.preparingWorktree === preparingWorktree
-            ? current
-            : { ...current, preparingWorktree };
-        }
-        return createLocalDispatchSnapshot(input.activeThread, options);
-      });
-    },
-    [input.activeThread],
-  );
-
-  const resetLocalDispatch = useCallback(() => {
-    setLocalDispatch(null);
-  }, []);
-
-  const serverAcknowledgedLocalDispatch = useMemo(
-    () =>
-      hasServerAcknowledgedLocalDispatch({
-        localDispatch,
-        phase: input.phase,
-        latestTurn: input.activeLatestTurn,
-        session: input.activeThread?.session ?? null,
-        hasPendingApproval: input.activePendingApproval !== null,
-        hasPendingUserInput: input.activePendingUserInput !== null,
-        threadError: input.threadError,
-      }),
-    [
-      input.activeLatestTurn,
-      input.activePendingApproval,
-      input.activePendingUserInput,
-      input.activeThread?.session,
-      input.phase,
-      input.threadError,
-      localDispatch,
-    ],
-  );
-
-  useEffect(() => {
-    if (!serverAcknowledgedLocalDispatch) {
-      return;
-    }
-    resetLocalDispatch();
-  }, [resetLocalDispatch, serverAcknowledgedLocalDispatch]);
-
-  return {
-    beginLocalDispatch,
-    resetLocalDispatch,
-    localDispatchStartedAt: localDispatch?.startedAt ?? null,
-    isPreparingWorktree: localDispatch?.preparingWorktree ?? false,
-    isSendBusy: localDispatch !== null && !serverAcknowledgedLocalDispatch,
-  };
 }
 
 export default function ChatView({ threadId }: ChatViewProps) {
@@ -2341,7 +2110,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
       const api = readNativeApi();
       if (!activeThreadId || !api) return;
       storeSetTerminalAutoTitle(activeThreadId, terminalId, null);
-      void api.terminal.clear({ threadId: activeThreadId, terminalId }).catch(() => undefined);
+      runAsyncTask(
+        api.terminal.clear({ threadId: activeThreadId, terminalId }),
+        "Failed to clear the terminal from ChatView.",
+      );
     },
     [activeThreadId, storeSetTerminalAutoTitle],
   );
@@ -2361,7 +2133,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
         .then(() => {
           setTerminalFocusRequestId((value) => value + 1);
         })
-        .catch(() => undefined);
+        .catch((err: unknown) => {
+          reportBackgroundError("Failed to restart the terminal from ChatView.", err);
+        });
     },
     [activeProject, activeThreadId, gitCwd, threadTerminalRuntimeEnv],
   );
@@ -2440,15 +2214,19 @@ export default function ChatView({ threadId }: ChatViewProps) {
     if (!activeThreadId || !api) return;
     for (const terminalId of terminalState.terminalIds) {
       storeSetTerminalAutoTitle(activeThreadId, terminalId, null);
-      void api.terminal.clear({ threadId: activeThreadId, terminalId }).catch(() => undefined);
+      runAsyncTask(
+        api.terminal.clear({ threadId: activeThreadId, terminalId }),
+        "Failed to clear a terminal while clearing all terminals from ChatView.",
+      );
     }
   }, [activeThreadId, storeSetTerminalAutoTitle, terminalState.terminalIds]);
   const closeAllTerminals = useCallback(() => {
     const api = readNativeApi();
     if (!activeThreadId || !api) return;
-    void api.terminal
-      .close({ threadId: activeThreadId, deleteHistory: true })
-      .catch(() => undefined);
+    runAsyncTask(
+      api.terminal.close({ threadId: activeThreadId, deleteHistory: true }),
+      "Failed to close all terminals from ChatView.",
+    );
     storeClearTerminalState(activeThreadId);
     setTerminalFocusRequestId((value) => value + 1);
   }, [activeThreadId, storeClearTerminalState]);
@@ -2460,13 +2238,21 @@ export default function ChatView({ threadId }: ChatViewProps) {
       const fallbackExitWrite = () =>
         api.terminal
           .write({ threadId: activeThreadId, terminalId, data: "exit\n" })
-          .catch(() => undefined);
+          .catch((error) => {
+            reportBackgroundError(
+              "Failed to write the terminal exit fallback from ChatView.",
+              error,
+            );
+          });
       if ("close" in api.terminal && typeof api.terminal.close === "function") {
         void (async () => {
           if (isFinalTerminal) {
-            await api.terminal
-              .clear({ threadId: activeThreadId, terminalId })
-              .catch(() => undefined);
+            await api.terminal.clear({ threadId: activeThreadId, terminalId }).catch((error) => {
+              reportBackgroundError(
+                "Failed to clear the final terminal before closing it from ChatView.",
+                error,
+              );
+            });
           }
           await api.terminal.close({
             threadId: activeThreadId,
@@ -3882,7 +3668,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
               commandId: newCommandId(),
               threadId: threadIdForSend,
             })
-            .catch(() => undefined);
+            .catch((cleanupErr: unknown) => {
+              reportBackgroundError("Failed to clean up thread after send failure.", cleanupErr);
+            });
         }
         if (
           !turnStartSucceeded &&
@@ -4548,7 +4336,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
             commandId: newCommandId(),
             threadId: nextThreadId,
           })
-          .catch(() => undefined);
+          .catch((cleanupErr: unknown) => {
+            reportBackgroundError(
+              "Failed to clean up thread after plan implementation failure.",
+              cleanupErr,
+            );
+          });
         toastManager.add({
           type: "error",
           title: "Could not start implementation thread",

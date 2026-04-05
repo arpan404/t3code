@@ -20,6 +20,7 @@ import {
   gitStatusQueryOptions,
   invalidateGitQueries,
 } from "../lib/gitReactQuery";
+import { reportBackgroundError } from "../lib/async";
 import { readNativeApi } from "../nativeApi";
 import { parsePullRequestReference } from "../pullRequestReference";
 import {
@@ -159,8 +160,12 @@ export function BranchToolbarBranchSelector({
 
   const runBranchAction = (action: () => Promise<void>) => {
     startBranchActionTransition(async () => {
-      await action().catch(() => undefined);
-      await invalidateGitQueries(queryClient).catch(() => undefined);
+      await action().catch((error) => {
+        reportBackgroundError("Failed to run the selected branch action.", error);
+      });
+      await invalidateGitQueries(queryClient).catch((error) => {
+        reportBackgroundError("Failed to refresh git queries after the branch action.", error);
+      });
     });
   };
 

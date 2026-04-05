@@ -54,6 +54,7 @@ import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import { type SidebarProjectSortOrder, type SidebarThreadSortOrder } from "@ace/contracts/settings";
 import { isElectron } from "../env";
 import { APP_STAGE_LABEL, APP_VERSION } from "../branding";
+import { reportBackgroundError } from "../lib/async";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isLinuxPlatform, isMacPlatform, newCommandId, newProjectId } from "../lib/utils";
 import { useStore } from "../store";
@@ -867,7 +868,9 @@ export default function Sidebar() {
         });
         await handleNewThread(projectId, {
           envMode: appSettings.defaultThreadEnvMode,
-        }).catch(() => undefined);
+        }).catch((error) => {
+          reportBackgroundError("Failed to create the initial thread for the new project.", error);
+        });
       } catch (error) {
         const description =
           error instanceof Error ? error.message : "An error occurred while adding the project.";
@@ -1933,7 +1936,9 @@ export default function Sidebar() {
         if (disposed || receivedSubscriptionUpdate) return;
         setDesktopUpdateState(nextState);
       })
-      .catch(() => undefined);
+      .catch((error) => {
+        reportBackgroundError("Failed to read the desktop update state.", error);
+      });
 
     return () => {
       disposed = true;

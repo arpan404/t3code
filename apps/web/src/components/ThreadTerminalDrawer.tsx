@@ -63,6 +63,7 @@ import {
   type ThreadTerminalGroup,
 } from "../types";
 import { readNativeApi } from "~/nativeApi";
+import { reportBackgroundError, runAsyncTask } from "~/lib/async";
 import {
   TERMINAL_COLOR_OPTIONS,
   TERMINAL_ICON_OPTIONS,
@@ -122,8 +123,11 @@ async function waitForTerminalFontReady(fontFamily: string, fontSize: number): P
     fontCandidates.find((candidate) => fontSet.check(`${fontSize}px "${candidate}"`)) ??
     fontCandidates[0];
   if (!resolvedFont) return;
+  const fontLoadPromise = fontSet.load(`${fontSize}px "${resolvedFont}"`).catch((error) => {
+    reportBackgroundError("Failed to load the terminal font.", error);
+  });
   await Promise.race([
-    fontSet.load(`${fontSize}px "${resolvedFont}"`).catch(() => undefined),
+    fontLoadPromise,
     new Promise<void>((resolve) => {
       window.setTimeout(resolve, TERMINAL_FONT_LOAD_TIMEOUT_MS);
     }),
@@ -860,14 +864,15 @@ function TerminalViewport({
       if (wasAtBottom) {
         activeTerminal.scrollToBottom();
       }
-      void api.terminal
-        .resize({
+      runAsyncTask(
+        api.terminal.resize({
           threadId,
           terminalId,
           cols: activeTerminal.cols,
           rows: activeTerminal.rows,
-        })
-        .catch(() => undefined);
+        }),
+        "Failed to resize the terminal after fitting the viewport.",
+      );
     }, 30);
     void openTerminal();
 
@@ -916,14 +921,15 @@ function TerminalViewport({
       if (wasAtBottom) {
         terminal.scrollToBottom();
       }
-      void api.terminal
-        .resize({
+      runAsyncTask(
+        api.terminal.resize({
           threadId,
           terminalId,
           cols: terminal.cols,
           rows: terminal.rows,
-        })
-        .catch(() => undefined);
+        }),
+        "Failed to resize the terminal after drawer layout changed.",
+      );
     });
     return () => {
       window.cancelAnimationFrame(frame);

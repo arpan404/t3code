@@ -2,6 +2,7 @@ import { WorkerPoolContextProvider, useWorkerPool } from "@pierre/diffs/react";
 import DiffsWorker from "@pierre/diffs/worker/worker.js?worker";
 import { useEffect, useMemo, type ReactNode } from "react";
 import { useTheme } from "../hooks/useTheme";
+import { runAsyncTask } from "../lib/async";
 import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
 
 function DiffWorkerThemeSync({ themeName }: { themeName: DiffThemeName }) {
@@ -17,12 +18,13 @@ function DiffWorkerThemeSync({ themeName }: { themeName: DiffThemeName }) {
       return;
     }
 
-    void workerPool
-      .setRenderOptions({
+    runAsyncTask(
+      workerPool.setRenderOptions({
         ...current,
         theme: themeName,
-      })
-      .catch(() => undefined);
+      }),
+      "Failed to sync diff worker theme.",
+    );
   }, [themeName, workerPool]);
 
   return null;
