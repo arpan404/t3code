@@ -52,7 +52,10 @@ export function createWsNativeApi(): NativeApi {
     projects: {
       searchEntries: rpcClient.projects.searchEntries,
       listTree: rpcClient.projects.listTree,
+      createEntry: rpcClient.projects.createEntry,
+      deleteEntry: rpcClient.projects.deleteEntry,
       readFile: rpcClient.projects.readFile,
+      renameEntry: rpcClient.projects.renameEntry,
       writeFile: rpcClient.projects.writeFile,
     },
     shell: {

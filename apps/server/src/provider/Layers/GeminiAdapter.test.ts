@@ -640,6 +640,197 @@ describe("GeminiAdapterLive approvals", () => {
     });
   });
 
+  it("infers Gemini max tokens from the current model when quota usage omits size", async () => {
+    let resolvePrompt!: (value: unknown) => void;
+    const promptResult = new Promise<unknown>((resolve) => {
+      resolvePrompt = resolve;
+    });
+    const client = makeFakeGeminiClient({
+      requestImpl: async (method) => {
+        switch (method) {
+          case "initialize":
+            return geminiInitializeResult();
+          case "session/new":
+            return geminiSessionResult("gemini-session-inferred-limit", {
+              currentModeId: "yolo",
+              currentModelId: "gemini-2.5-pro",
+            });
+          case "session/prompt":
+            return promptResult;
+          default:
+            throw new Error(`Unexpected Gemini ACP request: ${method}`);
+        }
+      },
+    });
+    mockedStartAcpClient.mockReturnValue(client);
+
+    await withAdapter(async (adapter) => {
+      try {
+        const threadId = asThreadId("thread-gemini-inferred-limit");
+        await Effect.runPromise(
+          adapter.startSession({
+            provider: "gemini",
+            threadId,
+            cwd: "/repo/gemini-inferred-limit",
+            runtimeMode: "full-access",
+          }),
+        );
+
+        await Effect.runPromise(Stream.take(adapter.streamEvents, 2).pipe(Stream.runDrain));
+
+        const usageEventPromise = Effect.runPromise(
+          Stream.runHead(
+            Stream.filter(
+              adapter.streamEvents,
+              (event) => event.type === "thread.token-usage.updated",
+            ),
+          ),
+        );
+
+        const turn = await Effect.runPromise(
+          adapter.sendTurn({
+            threadId,
+            input: "Explain the current Gemini context usage.",
+          }),
+        );
+
+        resolvePrompt({
+          stopReason: "end_turn",
+          usage: {
+            totalTokens: 1_280,
+            inputTokens: 900,
+            outputTokens: 220,
+          },
+          _meta: {
+            quota: {
+              used: 6_144,
+            },
+          },
+        });
+
+        const usageEvent = await usageEventPromise;
+        expect(usageEvent._tag).toBe("Some");
+        if (usageEvent._tag !== "Some") {
+          return;
+        }
+
+        expect(usageEvent.value.type).toBe("thread.token-usage.updated");
+        if (usageEvent.value.type !== "thread.token-usage.updated") {
+          return;
+        }
+
+        expect(usageEvent.value.turnId).toBe(turn.turnId);
+        expect(usageEvent.value.payload.usage).toEqual({
+          usedTokens: 6_144,
+          maxTokens: 1_048_576,
+          lastUsedTokens: 1_280,
+          lastInputTokens: 900,
+          lastOutputTokens: 220,
+        });
+      } finally {
+        await Effect.runPromise(adapter.stopAll());
+      }
+    });
+  });
+
+  it("reads Gemini ACP nested quota token_count metadata when no live usage update arrives", async () => {
+    let resolvePrompt!: (value: unknown) => void;
+    const promptResult = new Promise<unknown>((resolve) => {
+      resolvePrompt = resolve;
+    });
+    const client = makeFakeGeminiClient({
+      requestImpl: async (method) => {
+        switch (method) {
+          case "initialize":
+            return geminiInitializeResult();
+          case "session/new":
+            return geminiSessionResult("gemini-session-token-count-only", {
+              currentModeId: "yolo",
+            });
+          case "session/prompt":
+            return promptResult;
+          default:
+            throw new Error(`Unexpected Gemini ACP request: ${method}`);
+        }
+      },
+    });
+    mockedStartAcpClient.mockReturnValue(client);
+
+    await withAdapter(async (adapter) => {
+      try {
+        const threadId = asThreadId("thread-gemini-token-count-only");
+        await Effect.runPromise(
+          adapter.startSession({
+            provider: "gemini",
+            threadId,
+            cwd: "/repo/gemini-token-count-only",
+            runtimeMode: "full-access",
+          }),
+        );
+
+        await Effect.runPromise(Stream.take(adapter.streamEvents, 2).pipe(Stream.runDrain));
+
+        const usageEventPromise = Effect.runPromise(
+          Stream.runHead(
+            Stream.filter(
+              adapter.streamEvents,
+              (event) => event.type === "thread.token-usage.updated",
+            ),
+          ),
+        );
+
+        const turn = await Effect.runPromise(
+          adapter.sendTurn({
+            threadId,
+            input: "Summarize the nested Gemini token count metadata.",
+          }),
+        );
+
+        resolvePrompt({
+          stopReason: "end_turn",
+          _meta: {
+            quota: {
+              token_count: {
+                input_tokens: 900,
+                output_tokens: 220,
+              },
+              model_usage: [
+                {
+                  model: "gemini-2.5-pro",
+                  token_count: {
+                    input_tokens: 900,
+                    output_tokens: 220,
+                  },
+                },
+              ],
+            },
+          },
+        });
+
+        const usageEvent = await usageEventPromise;
+        expect(usageEvent._tag).toBe("Some");
+        if (usageEvent._tag !== "Some") {
+          return;
+        }
+
+        expect(usageEvent.value.type).toBe("thread.token-usage.updated");
+        if (usageEvent.value.type !== "thread.token-usage.updated") {
+          return;
+        }
+
+        expect(usageEvent.value.turnId).toBe(turn.turnId);
+        expect(usageEvent.value.payload.usage).toEqual({
+          usedTokens: 1_120,
+          lastUsedTokens: 1_120,
+          lastInputTokens: 900,
+          lastOutputTokens: 220,
+        });
+      } finally {
+        await Effect.runPromise(adapter.stopAll());
+      }
+    });
+  });
+
   it("blocks overlapping Gemini turn starts while session sync is still in flight", async () => {
     let resolveSetModel: ((value: unknown) => void) | undefined;
     const setModelPromise = new Promise<unknown>((resolve) => {

@@ -46,8 +46,11 @@ const rpcClientMock = {
     ),
   },
   projects: {
+    createEntry: vi.fn(),
+    deleteEntry: vi.fn(),
     listTree: vi.fn(),
     readFile: vi.fn(),
+    renameEntry: vi.fn(),
     searchEntries: vi.fn(),
     writeFile: vi.fn(),
   },
@@ -311,6 +314,27 @@ describe("wsNativeApi", () => {
       cwd: "/tmp/project",
       relativePath: "plan.md",
       contents: "# Plan\n",
+    });
+  });
+
+  it("forwards workspace entry rename requests to the project RPC", async () => {
+    rpcClientMock.projects.renameEntry.mockResolvedValue({
+      previousRelativePath: "plan.md",
+      relativePath: "docs/plan.md",
+    });
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    await api.projects.renameEntry({
+      cwd: "/tmp/project",
+      relativePath: "plan.md",
+      nextRelativePath: "docs/plan.md",
+    });
+
+    expect(rpcClientMock.projects.renameEntry).toHaveBeenCalledWith({
+      cwd: "/tmp/project",
+      relativePath: "plan.md",
+      nextRelativePath: "docs/plan.md",
     });
   });
 

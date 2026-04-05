@@ -144,7 +144,43 @@ const DEFAULT_BINDINGS = compile([
   { shortcut: modShortcut("o", { shiftKey: true }), command: "chat.new" },
   { shortcut: modShortcut("n", { shiftKey: true }), command: "chat.newLocal" },
   { shortcut: modShortcut("o"), command: "editor.openFavorite" },
+  { shortcut: modShortcut("n", { altKey: true }), command: "editor.newFile" },
+  { shortcut: modShortcut("n", { altKey: true, shiftKey: true }), command: "editor.newFolder" },
+  {
+    shortcut: {
+      key: "f2",
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      modKey: false,
+    },
+    command: "editor.rename",
+    whenAst: whenIdentifier("editorFocus"),
+  },
   { shortcut: modShortcut("\\"), command: "editor.split", whenAst: whenIdentifier("editorFocus") },
+  {
+    shortcut: {
+      key: "z",
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: true,
+      modKey: false,
+    },
+    command: "editor.toggleWordWrap",
+    whenAst: whenIdentifier("editorFocus"),
+  },
+  {
+    shortcut: modShortcut("w"),
+    command: "editor.closeTab",
+    whenAst: whenIdentifier("editorFocus"),
+  },
+  {
+    shortcut: modShortcut("t", { shiftKey: true }),
+    command: "editor.reopenClosedTab",
+    whenAst: whenIdentifier("editorFocus"),
+  },
   {
     shortcut: modShortcut("arrowleft", { altKey: true }),
     command: "editor.focusPreviousWindow",
@@ -304,6 +340,48 @@ describe("split/new/close terminal shortcuts", () => {
       isTerminalNewShortcut(event({ key: "m", ctrlKey: true }), keybindings, {
         platform: "Linux",
       }),
+    );
+  });
+});
+
+describe("editor workspace shortcuts", () => {
+  it("resolves alt+z to word wrap toggle", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "z", altKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { editorFocus: true },
+      }),
+      "editor.toggleWordWrap",
+    );
+  });
+
+  it("resolves F2 to rename when editor focus is active", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "F2" }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { editorFocus: true },
+      }),
+      "editor.rename",
+    );
+  });
+
+  it("resolves Cmd+W to close the active editor tab", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "w", metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { editorFocus: true },
+      }),
+      "editor.closeTab",
+    );
+  });
+
+  it("resolves Cmd+Shift+T to reopen the last closed editor tab", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "t", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { editorFocus: true },
+      }),
+      "editor.reopenClosedTab",
     );
   });
 });

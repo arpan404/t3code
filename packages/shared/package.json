@@ -48,6 +48,10 @@
       "types": "./src/terminalTitles.ts",
       "import": "./src/terminalTitles.ts"
     },
+    "./orchestrationThreadActivities": {
+      "types": "./src/orchestrationThreadActivities.ts",
+      "import": "./src/orchestrationThreadActivities.ts"
+    },
     "./wsAuth": {
       "types": "./src/wsAuth.ts",
       "import": "./src/wsAuth.ts"

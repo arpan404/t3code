@@ -1186,4 +1186,66 @@ describe("incremental orchestration updates", () => {
     });
     expect(next.threads[0]?.latestTurn?.sourceProposedPlan).toBeUndefined();
   });
+
+  it("compacts repeated reasoning activity so verbose turns keep earlier tool history visible", () => {
+    const thread = makeThread();
+    let state = makeState(thread);
+
+    state = applyOrchestrationEvent(
+      state,
+      makeEvent("thread.activity-appended", {
+        threadId: thread.id,
+        activity: {
+          id: EventId.makeUnsafe("tool-history"),
+          tone: "tool",
+          kind: "tool.completed",
+          summary: "Read file",
+          payload: { detail: "packages/contracts/src/model.ts" },
+          turnId: TurnId.makeUnsafe("turn-1"),
+          createdAt: "2026-03-05T10:00:00.500Z",
+        },
+      }),
+    );
+
+    for (let index = 0; index < 750; index += 1) {
+      const fraction = String(index).padStart(3, "0");
+      state = applyOrchestrationEvent(
+        state,
+        makeEvent(
+          "thread.activity-appended",
+          {
+            threadId: thread.id,
+            activity: {
+              id: EventId.makeUnsafe(`reasoning-${fraction}`),
+              tone: "info",
+              kind: index === 749 ? "reasoning.completed" : "task.progress",
+              summary: "Reasoning",
+              payload: {
+                taskId: "copilot-task-1",
+                detail: `thought-${fraction}`,
+              },
+              turnId: TurnId.makeUnsafe("turn-1"),
+              sequence: index + 1,
+              createdAt: `2026-03-05T10:00:${String((index % 60) + 1).padStart(2, "0")}.000Z`,
+            },
+          },
+          {
+            sequence: index + 2,
+            eventId: EventId.makeUnsafe(`event-reasoning-${fraction}`),
+          },
+        ),
+      );
+    }
+
+    expect(state.threads[0]?.activities.map((activity) => activity.id)).toEqual([
+      EventId.makeUnsafe("tool-history"),
+      EventId.makeUnsafe("reasoning-749"),
+    ]);
+    expect(
+      (state.threads[0]?.activities[1]?.payload as { detail?: string } | undefined)?.detail,
+    ).toContain("thought-000");
+    expect(
+      (state.threads[0]?.activities[1]?.payload as { detail?: string } | undefined)?.detail,
+    ).toContain("thought-749");
+  });
 });

@@ -4906,55 +4906,52 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
-      {workspaceMode === "chat" ? (
-        <>
-          {/* Top bar */}
-          <header
-            className={cn(
-              "border-b border-border/70 bg-background/95 px-3 sm:px-5 supports-[backdrop-filter]:bg-background/84 supports-[backdrop-filter]:backdrop-blur-md",
-              isElectron ? "drag-region flex h-13 items-center" : "py-2.5 sm:py-3",
-            )}
-          >
-            <ChatHeader
-              activeThreadId={activeThread.id}
-              activeThreadTitle={activeThread.title}
-              activeProjectId={activeProject?.id ?? null}
-              activeProjectName={activeProject?.name}
-              isGitRepo={isGitRepo}
-              openInCwd={gitCwd}
-              activeProjectScripts={activeProject?.scripts}
-              preferredScriptId={
-                activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
-              }
-              keybindings={keybindings}
-              availableEditors={availableEditors}
-              terminalAvailable={activeProject !== undefined}
-              terminalOpen={terminalState.terminalOpen}
-              terminalToggleShortcutLabel={terminalToggleShortcutLabel}
-              diffToggleShortcutLabel={diffPanelShortcutLabel}
-              browserToggleShortcutLabel={browserToggleShortcutLabel}
-              browserAvailable={isElectron}
-              browserOpen={browserOpen}
-              browserDevToolsOpen={browserDevToolsOpen}
-              gitCwd={gitCwd}
-              diffOpen={diffOpen}
-              workspaceMode={workspaceMode}
-              onRunProjectScript={(script) => {
-                void runProjectScript(script);
-              }}
-              onAddProjectScript={saveProjectScript}
-              onUpdateProjectScript={updateProjectScript}
-              onDeleteProjectScript={deleteProjectScript}
-              onOpenBrowser={openBrowser}
-              onCloseBrowser={closeBrowser}
-              onActiveProjectChange={isLocalDraftThread ? handleActiveProjectChange : null}
-              onToggleTerminal={toggleTerminalVisibility}
-              onToggleDiff={onToggleDiff}
-              onWorkspaceModeChange={onWorkspaceModeChange}
-            />
-          </header>
-        </>
-      ) : null}
+      {/* Persistent top bar — always visible regardless of workspace mode */}
+      <header
+        className={cn(
+          "border-b border-border/70 bg-background/95 px-3 sm:px-5 supports-[backdrop-filter]:bg-background/84 supports-[backdrop-filter]:backdrop-blur-md",
+          isElectron ? "drag-region flex h-13 items-center" : "py-2.5 sm:py-3",
+        )}
+      >
+        <ChatHeader
+          activeThreadId={activeThread.id}
+          activeThreadTitle={activeThread.title}
+          activeProjectId={activeProject?.id ?? null}
+          activeProjectName={activeProject?.name}
+          isGitRepo={isGitRepo}
+          openInCwd={gitCwd}
+          activeProjectScripts={activeProject?.scripts}
+          preferredScriptId={
+            activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
+          }
+          keybindings={keybindings}
+          availableEditors={availableEditors}
+          terminalAvailable={activeProject !== undefined}
+          terminalOpen={terminalState.terminalOpen}
+          terminalToggleShortcutLabel={terminalToggleShortcutLabel}
+          diffToggleShortcutLabel={diffPanelShortcutLabel}
+          browserToggleShortcutLabel={browserToggleShortcutLabel}
+          browserAvailable={isElectron}
+          browserOpen={browserOpen}
+          browserDevToolsOpen={browserDevToolsOpen}
+          gitCwd={gitCwd}
+          diffOpen={diffOpen}
+          workspaceMode={workspaceMode}
+          workspaceName={activeProject?.name}
+          onRunProjectScript={(script) => {
+            void runProjectScript(script);
+          }}
+          onAddProjectScript={saveProjectScript}
+          onUpdateProjectScript={updateProjectScript}
+          onDeleteProjectScript={deleteProjectScript}
+          onOpenBrowser={openBrowser}
+          onCloseBrowser={closeBrowser}
+          onActiveProjectChange={isLocalDraftThread ? handleActiveProjectChange : null}
+          onToggleTerminal={toggleTerminalVisibility}
+          onToggleDiff={onToggleDiff}
+          onWorkspaceModeChange={onWorkspaceModeChange}
+        />
+      </header>
 
       {/* Error banner */}
       <ProviderStatusBanner status={activeProviderStatus} />
@@ -4981,38 +4978,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
               }
             >
               <ThreadWorkspaceEditor
-                activeThreadTitle={activeThread.title}
-                availableEditors={availableEditors}
-                diffOpen={diffOpen}
-                diffToggleShortcutLabel={diffPanelShortcutLabel}
                 gitCwd={gitCwd}
-                isGitRepo={isGitRepo}
                 keybindings={keybindings}
-                mode={workspaceMode}
-                onModeChange={onWorkspaceModeChange}
-                onToggleDiff={onToggleDiff}
-                onToggleTerminal={toggleTerminalVisibility}
-                terminalAvailable={activeProject !== undefined}
-                terminalOpen={terminalState.terminalOpen}
-                terminalToggleShortcutLabel={terminalToggleShortcutLabel}
-                threadId={activeThread.id}
-                workspaceName={activeProject?.name}
-                activeProjectScripts={activeProject?.scripts}
-                preferredScriptId={
-                  activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
-                }
-                browserAvailable={isElectron}
                 browserOpen={browserOpen}
-                browserDevToolsOpen={browserDevToolsOpen}
-                browserToggleShortcutLabel={browserToggleShortcutLabel}
-                onRunProjectScript={(script) => {
-                  void runProjectScript(script);
-                }}
-                onAddProjectScript={saveProjectScript}
-                onUpdateProjectScript={updateProjectScript}
-                onDeleteProjectScript={deleteProjectScript}
-                onOpenBrowser={openBrowser}
-                onCloseBrowser={closeBrowser}
+                terminalOpen={terminalState.terminalOpen}
+                threadId={activeThread.id}
               />
             </Suspense>
           ) : (

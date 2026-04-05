@@ -41,6 +41,7 @@ interface ChatHeaderProps {
   gitCwd: string | null;
   diffOpen: boolean;
   workspaceMode: ThreadWorkspaceMode;
+  workspaceName: string | undefined;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
@@ -75,6 +76,7 @@ export const ChatHeader = memo(function ChatHeader({
   gitCwd,
   diffOpen,
   workspaceMode,
+  workspaceName,
   onRunProjectScript,
   onAddProjectScript,
   onUpdateProjectScript,
@@ -208,38 +210,47 @@ export const ChatHeader = memo(function ChatHeader({
     <div className="flex min-w-0 flex-1 items-center gap-3">
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
         <SidebarTrigger className="size-7 shrink-0 md:hidden" />
-        <div className="flex min-w-0 items-center gap-2.5">
-          <h2
-            className="min-w-0 shrink truncate text-sm leading-none font-medium text-foreground"
-            title={activeThreadTitle}
+        {workspaceMode === "editor" ? (
+          <span
+            className="min-w-0 truncate text-sm leading-none font-medium text-foreground"
+            title={workspaceName ?? activeProjectName}
           >
-            {activeThreadTitle}
-          </h2>
-          {activeProjectName && (
-            <div className="flex min-w-0 items-center gap-1.5 overflow-hidden">
-              {activeProjectId !== null && onActiveProjectChange ? (
-                <ProjectContextSwitcher
-                  activeProjectId={activeProjectId}
-                  className="min-w-0 max-w-52 shrink"
-                  onSelectProject={onActiveProjectChange}
-                />
-              ) : (
-                <Badge
-                  variant="outline"
-                  size="sm"
-                  className="min-w-0 max-w-48 shrink overflow-hidden text-muted-foreground/85"
-                >
-                  <span className="min-w-0 truncate">{activeProjectName}</span>
-                </Badge>
-              )}
-              {!isGitRepo && (
-                <Badge variant="warning" size="sm" className="shrink-0">
-                  No Git
-                </Badge>
-              )}
-            </div>
-          )}
-        </div>
+            {workspaceName ?? activeProjectName ?? "Workspace"}
+          </span>
+        ) : (
+          <div className="flex min-w-0 items-center gap-2.5">
+            <h2
+              className="min-w-0 shrink truncate text-sm leading-none font-medium text-foreground"
+              title={activeThreadTitle}
+            >
+              {activeThreadTitle}
+            </h2>
+            {activeProjectName && (
+              <div className="flex min-w-0 items-center gap-1.5 overflow-hidden">
+                {activeProjectId !== null && onActiveProjectChange ? (
+                  <ProjectContextSwitcher
+                    activeProjectId={activeProjectId}
+                    className="min-w-0 max-w-52 shrink"
+                    onSelectProject={onActiveProjectChange}
+                  />
+                ) : (
+                  <Badge
+                    variant="outline"
+                    size="sm"
+                    className="min-w-0 max-w-48 shrink overflow-hidden text-muted-foreground/85"
+                  >
+                    <span className="min-w-0 truncate">{activeProjectName}</span>
+                  </Badge>
+                )}
+                {!isGitRepo && (
+                  <Badge variant="warning" size="sm" className="shrink-0">
+                    No Git
+                  </Badge>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="flex shrink-0 items-center gap-2">

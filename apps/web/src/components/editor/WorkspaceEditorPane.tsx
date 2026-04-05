@@ -4,9 +4,9 @@ import { AlertCircleIcon, Columns2Icon, FolderIcon, RefreshCwIcon, XIcon } from 
 import type { editor as MonacoEditor } from "monaco-editor";
 import {
   type DragEvent as ReactDragEvent,
+  type MouseEvent as ReactMouseEvent,
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
@@ -14,6 +14,7 @@ import {
 import type { ThreadEditorPaneState } from "~/editorStateStore";
 import { projectReadFileQueryOptions } from "~/lib/projectReactQuery";
 import { cn } from "~/lib/utils";
+import { readNativeApi } from "~/nativeApi";
 import { basenameOfPath } from "~/vscode-icons";
 
 import { VscodeEntryIcon } from "../chat/VscodeEntryIcon";
@@ -22,13 +23,16 @@ import { Button } from "../ui/button";
 interface WorkspaceEditorPaneProps {
   active: boolean;
   canClosePane: boolean;
+  canReopenClosedTab: boolean;
   canSplitPane: boolean;
   dirtyFilePaths: ReadonlySet<string>;
   draftsByFilePath: Record<string, { draftContents: string; savedContents: string }>;
   editorOptions: MonacoEditor.IStandaloneEditorConstructionOptions;
   gitCwd: string | null;
   onCloseFile: (paneId: string, filePath: string) => void;
+  onCloseOtherTabs: (paneId: string, filePath: string) => void;
   onClosePane: (paneId: string) => void;
+  onCloseTabsToRight: (paneId: string, filePath: string) => void;
   onDiscardDraft: (filePath: string) => void;
   onFocusPane: (paneId: string) => void;
   onHydrateFile: (filePath: string, contents: string) => void;
@@ -38,6 +42,8 @@ interface WorkspaceEditorPaneProps {
     targetPaneId: string;
     targetIndex?: number;
   }) => void;
+  onOpenFileToSide: (paneId: string, filePath: string) => void;
+  onReopenClosedTab: (paneId: string) => void;
   onRetryActiveFile: () => void;
   onSaveFile: (relativePath: string, contents: string) => void;
   onSetActiveFile: (paneId: string, filePath: string | null) => void;
@@ -61,34 +67,18 @@ function formatFileSize(sizeBytes: number): string {
 
 const EDITOR_TAB_TRANSFER_TYPE = "application/x-t3code-editor-tab";
 
-function FilePathBreadcrumbs(props: { pathValue: string }) {
-  const segments = useMemo(() => {
-    let currentPath = "";
-    return props.pathValue.split("/").map((segment) => {
-      currentPath = currentPath.length > 0 ? `${currentPath}/${segment}` : segment;
-      return { key: currentPath, segment };
-    });
-  }, [props.pathValue]);
-
-  return (
-    <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground/80">
-      {segments.map(({ key, segment }, index) => (
-        <div key={key} className="flex min-w-0 items-center gap-1.5">
-          {index > 0 ? <span className="text-muted-foreground/45">/</span> : null}
-          <span className="rounded-sm bg-foreground/[0.04] px-1.5 py-0.5 font-mono text-[10px] text-foreground/80">
-            {segment}
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 export default function WorkspaceEditorPane(props: WorkspaceEditorPaneProps) {
+  const api = readNativeApi();
   const pane = props.pane;
+  const canReopenClosedTab = props.canReopenClosedTab;
   const onFocusPane = props.onFocusPane;
   const onHydrateFile = props.onHydrateFile;
   const onMoveFile = props.onMoveFile;
+  const onCloseFile = props.onCloseFile;
+  const onCloseOtherTabs = props.onCloseOtherTabs;
+  const onCloseTabsToRight = props.onCloseTabsToRight;
+  const onOpenFileToSide = props.onOpenFileToSide;
+  const onReopenClosedTab = props.onReopenClosedTab;
   const onSaveFile = props.onSaveFile;
   const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null);
   const activeFileQuery = useQuery(
@@ -148,7 +138,10 @@ export default function WorkspaceEditorPane(props: WorkspaceEditorPaneProps) {
       return null;
     }
     try {
-      const parsed = JSON.parse(raw) as { filePath?: string; sourcePaneId?: string };
+      const parsed = JSON.parse(raw) as {
+        filePath?: string;
+        sourcePaneId?: string;
+      };
       if (
         typeof parsed.filePath !== "string" ||
         parsed.filePath.trim().length === 0 ||
@@ -200,20 +193,90 @@ export default function WorkspaceEditorPane(props: WorkspaceEditorPaneProps) {
     setDropTargetIndex(null);
   }, []);
 
+  const openTabContextMenu = useCallback(
+    async (event: ReactMouseEvent<HTMLButtonElement>, filePath: string) => {
+      if (!api) {
+        return;
+      }
+
+      const tabIndex = pane.openFilePaths.indexOf(filePath);
+      if (tabIndex < 0) {
+        return;
+      }
+
+      const items = [
+        { id: "open-side", label: `Open ${basenameOfPath(filePath)} to the Side` },
+        { id: "close", label: `Close ${basenameOfPath(filePath)}` },
+        {
+          id: "close-others",
+          label: "Close Other Tabs",
+          disabled: pane.openFilePaths.length <= 1,
+        },
+        {
+          id: "close-right",
+          label: "Close Tabs to the Right",
+          disabled: tabIndex >= pane.openFilePaths.length - 1,
+        },
+        {
+          id: "reopen-closed",
+          label: "Reopen Closed Tab",
+          disabled: !canReopenClosedTab,
+        },
+      ] as const;
+
+      const clicked = await api.contextMenu.show(items, {
+        x: event.clientX,
+        y: event.clientY,
+      });
+
+      switch (clicked) {
+        case "open-side":
+          onOpenFileToSide(pane.id, filePath);
+          return;
+        case "close":
+          onCloseFile(pane.id, filePath);
+          return;
+        case "close-others":
+          onCloseOtherTabs(pane.id, filePath);
+          return;
+        case "close-right":
+          onCloseTabsToRight(pane.id, filePath);
+          return;
+        case "reopen-closed":
+          onReopenClosedTab(pane.id);
+          return;
+        default:
+      }
+    },
+    [
+      api,
+      canReopenClosedTab,
+      onCloseFile,
+      onCloseOtherTabs,
+      onCloseTabsToRight,
+      onOpenFileToSide,
+      onReopenClosedTab,
+      pane.id,
+      pane.openFilePaths,
+    ],
+  );
+
   return (
     <section
       data-pane-active={props.active ? "true" : "false"}
       className={cn(
         "group flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden transition-colors relative",
         "bg-background",
-        props.active ? "ring-1 ring-inset ring-primary/20" : "",
       )}
       onPointerDown={() => {
         props.onFocusPane(props.pane.id);
       }}
     >
       <div
-        className={cn("flex h-[38px] shrink-0 overflow-x-auto scrollbar-none", "bg-secondary")}
+        className={cn(
+          "flex h-[35px] shrink-0 items-center overflow-x-auto scrollbar-none border-b border-border/40",
+          "bg-secondary/80",
+        )}
         onDragLeave={(event) => {
           if (event.currentTarget.contains(event.relatedTarget as Node | null)) {
             return;
@@ -223,104 +286,112 @@ export default function WorkspaceEditorPane(props: WorkspaceEditorPaneProps) {
         onDragOver={(event) => handleTabDragOver(event)}
         onDrop={(event) => handleTabDrop(event)}
       >
-        {props.pane.openFilePaths.map((filePath) => {
-          const isActive = filePath === props.pane.activeFilePath;
-          const isDirty = props.dirtyFilePaths.has(filePath);
-          return (
-            <div key={filePath} className="relative flex shrink-0">
-              {dropTargetIndex === props.pane.openFilePaths.indexOf(filePath) ? (
-                <div className="absolute top-1.5 bottom-1.5 left-0 z-20 w-[2px] rounded-full bg-primary" />
-              ) : null}
-              <button
-                type="button"
-                className={cn(
-                  "group/tab flex h-full shrink-0 items-center gap-2 border-r border-border/40 px-3 text-[13px] transition-colors relative",
-                  isActive
-                    ? "bg-background text-foreground"
-                    : "bg-transparent text-muted-foreground hover:bg-foreground/5 hover:text-foreground",
-                )}
-                draggable
-                onClick={() => props.onSetActiveFile(props.pane.id, filePath)}
-                onDragStart={(event) => {
-                  props.onFocusPane(props.pane.id);
-                  event.dataTransfer.effectAllowed = "move";
-                  const payload = JSON.stringify({
-                    filePath,
-                    sourcePaneId: props.pane.id,
-                  });
-                  event.dataTransfer.setData(EDITOR_TAB_TRANSFER_TYPE, payload);
-                  event.dataTransfer.setData("text/plain", payload);
-                }}
-                onDragEnd={clearDropTarget}
-                onDragOver={(event) =>
-                  handleTabDragOver(event, props.pane.openFilePaths.indexOf(filePath))
-                }
-                onDrop={(event) => handleTabDrop(event, props.pane.openFilePaths.indexOf(filePath))}
-                title={filePath}
-              >
-                {isActive && <div className="absolute top-0 left-0 h-[2px] w-full bg-primary" />}
-                <VscodeEntryIcon
-                  pathValue={filePath}
-                  kind="file"
-                  theme={props.resolvedTheme}
-                  className="size-[14px] shrink-0"
-                />
-                <span className="max-w-[160px] truncate">{basenameOfPath(filePath)}</span>
-                {isDirty ? (
-                  <span className="size-2 shrink-0 rounded-full bg-foreground/30 group-hover/tab:hidden" />
+        <div className="flex min-w-0 flex-1 items-center overflow-x-auto scrollbar-none">
+          {props.pane.openFilePaths.map((filePath) => {
+            const isActive = filePath === props.pane.activeFilePath;
+            const isDirty = props.dirtyFilePaths.has(filePath);
+            return (
+              <div key={filePath} className="relative flex shrink-0">
+                {dropTargetIndex === props.pane.openFilePaths.indexOf(filePath) ? (
+                  <div className="absolute top-1.5 bottom-1.5 left-0 z-20 w-[2px] rounded-full bg-primary" />
                 ) : null}
-                <span
+                <button
+                  type="button"
+                  data-editor-tab="true"
                   className={cn(
-                    "flex size-5 shrink-0 items-center justify-center rounded-md opacity-0 transition-opacity hover:bg-foreground/10 group-hover/tab:opacity-100",
-                    isDirty ? "hidden group-hover/tab:flex" : "",
+                    "group/tab flex h-[35px] shrink-0 items-center gap-1.5 border-r border-border/30 px-3 text-[12px] transition-colors relative",
+                    isActive
+                      ? "bg-background text-foreground"
+                      : "bg-transparent text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground",
                   )}
-                  onClick={(event) => {
-                    event.stopPropagation();
+                  draggable
+                  onClick={() => props.onSetActiveFile(props.pane.id, filePath)}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    props.onSetActiveFile(props.pane.id, filePath);
+                    void openTabContextMenu(event, filePath);
+                  }}
+                  onMouseDown={(event) => {
+                    if (event.button !== 1) {
+                      return;
+                    }
+                    event.preventDefault();
                     props.onCloseFile(props.pane.id, filePath);
                   }}
+                  onDragStart={(event) => {
+                    props.onFocusPane(props.pane.id);
+                    event.dataTransfer.effectAllowed = "move";
+                    const payload = JSON.stringify({
+                      filePath,
+                      sourcePaneId: props.pane.id,
+                    });
+                    event.dataTransfer.setData(EDITOR_TAB_TRANSFER_TYPE, payload);
+                    event.dataTransfer.setData("text/plain", payload);
+                  }}
+                  onDragEnd={clearDropTarget}
+                  onDragOver={(event) =>
+                    handleTabDragOver(event, props.pane.openFilePaths.indexOf(filePath))
+                  }
+                  onDrop={(event) =>
+                    handleTabDrop(event, props.pane.openFilePaths.indexOf(filePath))
+                  }
+                  title={filePath}
                 >
-                  <XIcon className="size-3.5" />
-                </span>
-              </button>
+                  {isActive && (
+                    <div className="absolute bottom-0 left-0 h-px w-full bg-background" />
+                  )}
+                  <VscodeEntryIcon
+                    pathValue={filePath}
+                    kind="file"
+                    theme={props.resolvedTheme}
+                    className="size-[14px] shrink-0"
+                  />
+                  <span className="max-w-[140px] truncate">{basenameOfPath(filePath)}</span>
+                  {isDirty ? (
+                    <span className="size-1.5 shrink-0 rounded-full bg-foreground/40 group-hover/tab:hidden" />
+                  ) : null}
+                  <span
+                    className={cn(
+                      "flex size-4 shrink-0 items-center justify-center rounded opacity-0 transition-opacity hover:bg-foreground/10 group-hover/tab:opacity-100",
+                      isDirty ? "hidden group-hover/tab:flex" : "",
+                    )}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      props.onCloseFile(props.pane.id, filePath);
+                    }}
+                  >
+                    <XIcon className="size-3" />
+                  </span>
+                </button>
+              </div>
+            );
+          })}
+          {dropTargetIndex === props.pane.openFilePaths.length ? (
+            <div className="relative flex shrink-0 items-stretch px-0.5">
+              <div className="my-1.5 w-[2px] rounded-full bg-primary" />
             </div>
-          );
-        })}
-        {dropTargetIndex === props.pane.openFilePaths.length ? (
-          <div className="relative flex shrink-0 items-stretch px-0.5">
-            <div className="my-1.5 w-[2px] rounded-full bg-primary" />
-          </div>
-        ) : null}
-      </div>
-
-      <div className={cn("flex h-7 shrink-0 items-center justify-between px-3", "bg-background")}>
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="rounded-sm border border-border/50 px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.16em] text-muted-foreground uppercase">
-            Window {props.paneIndex + 1}
-          </span>
-          {props.pane.activeFilePath ? (
-            <FilePathBreadcrumbs pathValue={props.pane.activeFilePath} />
           ) : null}
         </div>
-        <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+        <div className="flex shrink-0 items-center gap-0.5 px-1.5">
           <Button
             variant="ghost"
             size="icon-xs"
-            className="size-5 rounded"
+            className="size-5 rounded text-muted-foreground/70 hover:text-foreground"
             onClick={() => props.onSplitPane(props.pane.id)}
             disabled={!props.canSplitPane}
             title="Split Editor Right"
           >
-            <Columns2Icon className="size-[13px]" />
+            <Columns2Icon className="size-3" />
           </Button>
           {props.canClosePane ? (
             <Button
               variant="ghost"
               size="icon-xs"
-              className="size-5 rounded"
+              className="size-5 rounded text-muted-foreground/70 hover:text-foreground"
               onClick={() => props.onClosePane(props.pane.id)}
               title="Close Editor Group"
             >
-              <XIcon className="size-[13px]" />
+              <XIcon className="size-3" />
             </Button>
           ) : null}
         </div>
@@ -397,36 +468,28 @@ export default function WorkspaceEditorPane(props: WorkspaceEditorPaneProps) {
         )}
       </div>
 
-      <footer
-        className={cn(
-          "flex h-[26px] items-center justify-between gap-3 border-t px-3 text-[11px]",
-          props.resolvedTheme === "dark"
-            ? "border-border/40 bg-[#007acc] text-white"
-            : "border-border/40 bg-[#007acc] text-white",
-        )}
-      >
-        <div className="flex min-w-0 items-center gap-2 overflow-hidden">
+      <footer className="flex h-[22px] shrink-0 items-center justify-between gap-3 border-t border-border/30 bg-secondary/60 px-2.5 text-[11px] text-muted-foreground">
+        <div className="flex min-w-0 items-center gap-2.5 overflow-hidden">
           {props.pane.activeFilePath ? (
             <>
-              <span className="font-medium truncate">
-                {basenameOfPath(props.pane.activeFilePath)}
-              </span>
-              <span>{formatFileSize(activeFileSizeBytes)}</span>
+              <span className="truncate">{props.pane.activeFilePath}</span>
+              <span className="shrink-0 opacity-60">{formatFileSize(activeFileSizeBytes)}</span>
               {activeFileDirty ? (
-                <span className="font-bold tracking-wider opacity-80 uppercase text-[9px]">
-                  Unsaved
+                <span className="shrink-0 rounded-sm bg-primary/15 px-1 py-px text-[9px] font-semibold tracking-wider text-primary uppercase">
+                  Modified
                 </span>
               ) : null}
             </>
           ) : (
-            <span>Ready</span>
+            <span className="opacity-60">Ready</span>
           )}
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
           {props.pane.activeFilePath && activeFileDirty ? (
             <button
-              className="opacity-80 hover:opacity-100 transition-opacity"
+              type="button"
+              className="opacity-60 hover:opacity-100 transition-opacity hover:text-foreground"
               onClick={() => props.onDiscardDraft(props.pane.activeFilePath!)}
             >
               Revert
@@ -434,11 +497,12 @@ export default function WorkspaceEditorPane(props: WorkspaceEditorPaneProps) {
           ) : null}
           {props.pane.activeFilePath && activeFileDirty ? (
             <button
-              className="opacity-80 hover:opacity-100 transition-opacity font-medium"
+              type="button"
+              className="font-medium opacity-80 hover:opacity-100 transition-opacity hover:text-foreground"
               onClick={handleSave}
               disabled={props.savingFilePath === props.pane.activeFilePath}
             >
-              {props.savingFilePath === props.pane.activeFilePath ? "Saving..." : "Save"}
+              {props.savingFilePath === props.pane.activeFilePath ? "Saving…" : "Save"}
             </button>
           ) : null}
         </div>

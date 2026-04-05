@@ -9,6 +9,12 @@ interface EditorDraftState {
   savedContents: string;
 }
 
+interface RecentlyClosedEditorEntry {
+  filePath: string;
+  paneId: string;
+  targetIndex: number;
+}
+
 export interface ThreadEditorPaneState {
   activeFilePath: string | null;
   id: string;
@@ -32,6 +38,7 @@ interface LegacyPersistedThreadEditorState {
 
 interface RuntimeThreadEditorState {
   draftsByFilePath: Record<string, EditorDraftState>;
+  recentlyClosedEntries: RecentlyClosedEditorEntry[];
 }
 
 interface PersistedEditorStoreSnapshot {
@@ -43,8 +50,11 @@ interface PersistedEditorStoreSnapshot {
 
 interface EditorStoreState {
   closeFile: (threadId: ThreadId, filePath: string, paneId?: string) => void;
+  closeFilesToRight: (threadId: ThreadId, filePath: string, paneId?: string) => void;
+  closeOtherFiles: (threadId: ThreadId, filePath: string, paneId?: string) => void;
   closePane: (threadId: ThreadId, paneId: string) => void;
   discardDraft: (threadId: ThreadId, filePath: string) => void;
+  expandDirectories: (threadId: ThreadId, directoryPaths: readonly string[]) => void;
   hydrateFile: (threadId: ThreadId, filePath: string, contents: string) => void;
   isDirty: (threadId: ThreadId, filePath: string) => boolean;
   markFileSaved: (threadId: ThreadId, filePath: string, contents: string) => void;
@@ -58,6 +68,9 @@ interface EditorStoreState {
     },
   ) => void;
   openFile: (threadId: ThreadId, filePath: string, paneId?: string) => void;
+  removeEntry: (threadId: ThreadId, relativePath: string) => void;
+  renameEntry: (threadId: ThreadId, previousPath: string, nextPath: string) => void;
+  reopenClosedFile: (threadId: ThreadId, paneId?: string) => string | null;
   runtimeStateByThreadId: Record<string, RuntimeThreadEditorState>;
   setActiveFile: (threadId: ThreadId, filePath: string | null, paneId?: string) => void;
   setActivePane: (threadId: ThreadId, paneId: string) => void;
@@ -89,6 +102,7 @@ const MIN_TREE_WIDTH = 220;
 const MAX_TREE_WIDTH = 420;
 const DEFAULT_THREAD_EDITOR_PANE_ID = "pane-1";
 export const MAX_THREAD_EDITOR_PANES = 4;
+const MAX_RECENTLY_CLOSED_EDITOR_ENTRIES = 32;
 const DEFAULT_THREAD_EDITOR_STATE = createDefaultThreadEditorState();
 const DEFAULT_RUNTIME_THREAD_EDITOR_STATE = createDefaultRuntimeThreadEditorState();
 const threadEditorStateCache = new Map<ThreadId, ThreadEditorStateCacheEntry>();
@@ -160,6 +174,21 @@ function draftMapsEqual(
   return true;
 }
 
+function recentlyClosedEntriesEqual(
+  left: readonly RecentlyClosedEditorEntry[],
+  right: readonly RecentlyClosedEditorEntry[],
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every(
+      (entry, index) =>
+        entry.filePath === right[index]?.filePath &&
+        entry.paneId === right[index]?.paneId &&
+        entry.targetIndex === right[index]?.targetIndex,
+    )
+  );
+}
+
 function threadStatesEqual(
   left: PersistedThreadEditorState,
   right: PersistedThreadEditorState,
@@ -205,7 +234,49 @@ function createDefaultThreadEditorState(): PersistedThreadEditorState {
 function createDefaultRuntimeThreadEditorState(): RuntimeThreadEditorState {
   return {
     draftsByFilePath: {},
+    recentlyClosedEntries: [],
   };
+}
+
+function buildRecentlyClosedEntry(
+  pane: ThreadEditorPaneState,
+  filePath: string,
+): RecentlyClosedEditorEntry | null {
+  const targetIndex = pane.openFilePaths.indexOf(filePath);
+  if (targetIndex < 0) {
+    return null;
+  }
+  return {
+    filePath,
+    paneId: pane.id,
+    targetIndex,
+  };
+}
+
+function appendRecentlyClosedEntries(
+  existingEntries: readonly RecentlyClosedEditorEntry[],
+  nextEntries: readonly RecentlyClosedEditorEntry[],
+): RecentlyClosedEditorEntry[] {
+  if (nextEntries.length === 0) {
+    return [...existingEntries];
+  }
+
+  const combined = [...existingEntries];
+  for (const nextEntry of nextEntries) {
+    const duplicateIndex = combined.findIndex(
+      (entry) => entry.filePath === nextEntry.filePath && entry.paneId === nextEntry.paneId,
+    );
+    if (duplicateIndex >= 0) {
+      combined.splice(duplicateIndex, 1);
+    }
+    combined.push({
+      filePath: nextEntry.filePath,
+      paneId: nextEntry.paneId,
+      targetIndex: Math.max(0, Math.trunc(nextEntry.targetIndex)),
+    });
+  }
+
+  return combined.slice(-MAX_RECENTLY_CLOSED_EDITOR_ENTRIES);
 }
 
 function createEditorStateStorage() {
@@ -338,6 +409,20 @@ function insertPathAtIndex(paths: readonly string[], path: string, targetIndex?:
   return next;
 }
 
+function isPathWithinPrefix(path: string, prefix: string): boolean {
+  return path === prefix || path.startsWith(`${prefix}/`);
+}
+
+function replacePathPrefix(path: string, previousPath: string, nextPath: string): string | null {
+  if (!isPathWithinPrefix(path, previousPath)) {
+    return null;
+  }
+  if (path === previousPath) {
+    return nextPath;
+  }
+  return `${nextPath}${path.slice(previousPath.length)}`;
+}
+
 function splitPaneRatios(
   paneRatios: readonly number[],
   paneIndex: number,
@@ -408,11 +493,13 @@ export const useEditorStateStore = create<EditorStoreState>()(
             return state;
           }
           const current = getPersistedThreadState(state.threadStateByThreadId, threadId);
+          const runtime = getRuntimeThreadState(state.runtimeStateByThreadId, threadId);
           const paneIndex = resolvePaneIndex(current, paneId);
           const pane = current.panes[paneIndex];
           if (!pane || !pane.openFilePaths.includes(normalizedPath)) {
             return state;
           }
+          const recentlyClosedEntry = buildRecentlyClosedEntry(pane, normalizedPath);
           const nextOpenFilePaths = pane.openFilePaths.filter((path) => path !== normalizedPath);
           const nextThreadState = {
             ...current,
@@ -425,9 +512,126 @@ export const useEditorStateStore = create<EditorStoreState>()(
               openFilePaths: nextOpenFilePaths,
             }),
           };
-          return threadStatesEqual(current, nextThreadState)
-            ? state
-            : writeThreadState(state, threadId, nextThreadState);
+          if (threadStatesEqual(current, nextThreadState)) {
+            return state;
+          }
+
+          return {
+            ...writeThreadState(state, threadId, nextThreadState),
+            runtimeStateByThreadId: {
+              ...state.runtimeStateByThreadId,
+              [threadId]: {
+                ...runtime,
+                recentlyClosedEntries: recentlyClosedEntry
+                  ? appendRecentlyClosedEntries(runtime.recentlyClosedEntries, [
+                      recentlyClosedEntry,
+                    ])
+                  : runtime.recentlyClosedEntries,
+              },
+            },
+          };
+        }),
+      closeFilesToRight: (threadId, filePath, paneId) =>
+        set((state) => {
+          const normalizedPath = filePath.trim();
+          if (normalizedPath.length === 0) {
+            return state;
+          }
+
+          const current = getPersistedThreadState(state.threadStateByThreadId, threadId);
+          const runtime = getRuntimeThreadState(state.runtimeStateByThreadId, threadId);
+          const paneIndex = resolvePaneIndex(current, paneId);
+          const pane = current.panes[paneIndex];
+          if (!pane) {
+            return state;
+          }
+
+          const targetIndex = pane.openFilePaths.indexOf(normalizedPath);
+          if (targetIndex < 0 || targetIndex >= pane.openFilePaths.length - 1) {
+            return state;
+          }
+
+          const closedFilePaths = pane.openFilePaths.slice(targetIndex + 1);
+          const nextThreadState = {
+            ...current,
+            activePaneId: pane.id,
+            panes: replacePaneAtIndex(current.panes, paneIndex, {
+              ...pane,
+              activeFilePath:
+                pane.activeFilePath &&
+                pane.openFilePaths.indexOf(pane.activeFilePath) <= targetIndex
+                  ? pane.activeFilePath
+                  : normalizedPath,
+              openFilePaths: pane.openFilePaths.slice(0, targetIndex + 1),
+            }),
+          };
+          const recentlyClosedEntries = appendRecentlyClosedEntries(
+            runtime.recentlyClosedEntries,
+            closedFilePaths
+              .toReversed()
+              .map((closedFilePath) => buildRecentlyClosedEntry(pane, closedFilePath))
+              .filter((entry): entry is RecentlyClosedEditorEntry => entry !== null),
+          );
+
+          return {
+            ...writeThreadState(state, threadId, nextThreadState),
+            runtimeStateByThreadId: {
+              ...state.runtimeStateByThreadId,
+              [threadId]: {
+                ...runtime,
+                recentlyClosedEntries,
+              },
+            },
+          };
+        }),
+      closeOtherFiles: (threadId, filePath, paneId) =>
+        set((state) => {
+          const normalizedPath = filePath.trim();
+          if (normalizedPath.length === 0) {
+            return state;
+          }
+
+          const current = getPersistedThreadState(state.threadStateByThreadId, threadId);
+          const runtime = getRuntimeThreadState(state.runtimeStateByThreadId, threadId);
+          const paneIndex = resolvePaneIndex(current, paneId);
+          const pane = current.panes[paneIndex];
+          if (
+            !pane ||
+            !pane.openFilePaths.includes(normalizedPath) ||
+            pane.openFilePaths.length <= 1
+          ) {
+            return state;
+          }
+
+          const preservedIndex = pane.openFilePaths.indexOf(normalizedPath);
+          const leftClosed = pane.openFilePaths.slice(0, preservedIndex);
+          const rightClosed = pane.openFilePaths.slice(preservedIndex + 1);
+          const nextThreadState = {
+            ...current,
+            activePaneId: pane.id,
+            panes: replacePaneAtIndex(current.panes, paneIndex, {
+              ...pane,
+              activeFilePath: normalizedPath,
+              openFilePaths: [normalizedPath],
+            }),
+          };
+          const recentlyClosedEntries = appendRecentlyClosedEntries(
+            runtime.recentlyClosedEntries,
+            [...leftClosed, ...rightClosed.toReversed()]
+              .map((closedFilePath) => buildRecentlyClosedEntry(pane, closedFilePath))
+              .filter((entry): entry is RecentlyClosedEditorEntry => entry !== null),
+          );
+
+          return {
+            ...writeThreadState(state, threadId, nextThreadState),
+            runtimeStateByThreadId: {
+              ...state.runtimeStateByThreadId,
+              [threadId]: {
+                ...runtime,
+                recentlyClosedEntries,
+              },
+            },
+          };
         }),
       closePane: (threadId, paneId) =>
         set((state) => {
@@ -477,6 +681,21 @@ export const useEditorStateStore = create<EditorStoreState>()(
               },
             },
           };
+        }),
+      expandDirectories: (threadId, directoryPaths) =>
+        set((state) => {
+          const current = getPersistedThreadState(state.threadStateByThreadId, threadId);
+          const nextDirectoryPaths = normalizePathList([
+            ...current.expandedDirectoryPaths,
+            ...directoryPaths,
+          ]);
+          if (stringArraysEqual(current.expandedDirectoryPaths, nextDirectoryPaths)) {
+            return state;
+          }
+          return writeThreadState(state, threadId, {
+            ...current,
+            expandedDirectoryPaths: nextDirectoryPaths,
+          });
         }),
       hydrateFile: (threadId, filePath, contents) =>
         set((state) => {
@@ -651,6 +870,191 @@ export const useEditorStateStore = create<EditorStoreState>()(
             ? state
             : writeThreadState(state, threadId, nextThreadState);
         }),
+      removeEntry: (threadId, relativePath) =>
+        set((state) => {
+          const normalizedPath = relativePath.trim();
+          if (normalizedPath.length === 0) {
+            return state;
+          }
+
+          const current = getPersistedThreadState(state.threadStateByThreadId, threadId);
+          const runtime = getRuntimeThreadState(state.runtimeStateByThreadId, threadId);
+          const nextThreadState = normalizePersistedThreadState({
+            ...current,
+            expandedDirectoryPaths: current.expandedDirectoryPaths.filter(
+              (path) => !isPathWithinPrefix(path, normalizedPath),
+            ),
+            panes: current.panes.map((pane) => {
+              const nextOpenFilePaths = pane.openFilePaths.filter(
+                (path) => !isPathWithinPrefix(path, normalizedPath),
+              );
+              return {
+                ...pane,
+                activeFilePath:
+                  pane.activeFilePath && !isPathWithinPrefix(pane.activeFilePath, normalizedPath)
+                    ? pane.activeFilePath
+                    : (nextOpenFilePaths.at(-1) ?? null),
+                openFilePaths: nextOpenFilePaths,
+              };
+            }),
+          });
+          const nextDraftsByFilePath = Object.fromEntries(
+            Object.entries(runtime.draftsByFilePath).filter(
+              ([path]) => !isPathWithinPrefix(path, normalizedPath),
+            ),
+          );
+          const nextRecentlyClosedEntries = runtime.recentlyClosedEntries.filter(
+            (entry) => !isPathWithinPrefix(entry.filePath, normalizedPath),
+          );
+
+          if (
+            threadStatesEqual(current, nextThreadState) &&
+            draftMapsEqual(runtime.draftsByFilePath, nextDraftsByFilePath) &&
+            recentlyClosedEntriesEqual(runtime.recentlyClosedEntries, nextRecentlyClosedEntries)
+          ) {
+            return state;
+          }
+
+          return {
+            ...writeThreadState(state, threadId, nextThreadState),
+            runtimeStateByThreadId: {
+              ...state.runtimeStateByThreadId,
+              [threadId]: {
+                ...runtime,
+                draftsByFilePath: nextDraftsByFilePath,
+                recentlyClosedEntries: nextRecentlyClosedEntries,
+              },
+            },
+          };
+        }),
+      renameEntry: (threadId, previousPath, nextPath) =>
+        set((state) => {
+          const normalizedPreviousPath = previousPath.trim();
+          const normalizedNextPath = nextPath.trim();
+          if (
+            normalizedPreviousPath.length === 0 ||
+            normalizedNextPath.length === 0 ||
+            normalizedPreviousPath === normalizedNextPath
+          ) {
+            return state;
+          }
+
+          const current = getPersistedThreadState(state.threadStateByThreadId, threadId);
+          const runtime = getRuntimeThreadState(state.runtimeStateByThreadId, threadId);
+          const nextThreadState = normalizePersistedThreadState({
+            ...current,
+            expandedDirectoryPaths: normalizePathList(
+              current.expandedDirectoryPaths.map(
+                (path) =>
+                  replacePathPrefix(path, normalizedPreviousPath, normalizedNextPath) ?? path,
+              ),
+            ),
+            panes: current.panes.map((pane) => ({
+              ...pane,
+              activeFilePath:
+                typeof pane.activeFilePath === "string"
+                  ? (replacePathPrefix(
+                      pane.activeFilePath,
+                      normalizedPreviousPath,
+                      normalizedNextPath,
+                    ) ?? pane.activeFilePath)
+                  : null,
+              openFilePaths: normalizePathList(
+                pane.openFilePaths.map(
+                  (path) =>
+                    replacePathPrefix(path, normalizedPreviousPath, normalizedNextPath) ?? path,
+                ),
+              ),
+            })),
+          });
+          const nextDraftsByFilePath = Object.fromEntries(
+            Object.entries(runtime.draftsByFilePath).map(([path, draft]) => [
+              replacePathPrefix(path, normalizedPreviousPath, normalizedNextPath) ?? path,
+              draft,
+            ]),
+          );
+          const nextRecentlyClosedEntries = runtime.recentlyClosedEntries.map((entry) => ({
+            ...entry,
+            filePath:
+              replacePathPrefix(entry.filePath, normalizedPreviousPath, normalizedNextPath) ??
+              entry.filePath,
+          }));
+
+          if (
+            threadStatesEqual(current, nextThreadState) &&
+            draftMapsEqual(runtime.draftsByFilePath, nextDraftsByFilePath) &&
+            recentlyClosedEntriesEqual(runtime.recentlyClosedEntries, nextRecentlyClosedEntries)
+          ) {
+            return state;
+          }
+
+          return {
+            ...writeThreadState(state, threadId, nextThreadState),
+            runtimeStateByThreadId: {
+              ...state.runtimeStateByThreadId,
+              [threadId]: {
+                ...runtime,
+                draftsByFilePath: nextDraftsByFilePath,
+                recentlyClosedEntries: nextRecentlyClosedEntries,
+              },
+            },
+          };
+        }),
+      reopenClosedFile: (threadId, paneId) => {
+        let reopenedFilePath: string | null = null;
+        set((state) => {
+          const current = getPersistedThreadState(state.threadStateByThreadId, threadId);
+          const runtime = getRuntimeThreadState(state.runtimeStateByThreadId, threadId);
+          const recentlyClosedEntry = runtime.recentlyClosedEntries.at(-1);
+          if (!recentlyClosedEntry) {
+            return state;
+          }
+
+          const paneIndex = current.panes.findIndex(
+            (pane) => pane.id === recentlyClosedEntry.paneId,
+          );
+          const fallbackPaneIndex = resolvePaneIndex(current, paneId);
+          const targetPane =
+            current.panes[paneIndex >= 0 ? paneIndex : fallbackPaneIndex] ?? current.panes[0];
+          if (!targetPane) {
+            return state;
+          }
+
+          reopenedFilePath = recentlyClosedEntry.filePath;
+          const targetPaneIndex = current.panes.findIndex((pane) => pane.id === targetPane.id);
+          if (targetPaneIndex < 0) {
+            reopenedFilePath = null;
+            return state;
+          }
+
+          const nextOpenFilePaths = insertPathAtIndex(
+            targetPane.openFilePaths.filter((path) => path !== recentlyClosedEntry.filePath),
+            recentlyClosedEntry.filePath,
+            recentlyClosedEntry.targetIndex,
+          );
+          const nextThreadState = {
+            ...current,
+            activePaneId: targetPane.id,
+            panes: replacePaneAtIndex(current.panes, targetPaneIndex, {
+              ...targetPane,
+              activeFilePath: recentlyClosedEntry.filePath,
+              openFilePaths: nextOpenFilePaths,
+            }),
+          };
+
+          return {
+            ...writeThreadState(state, threadId, nextThreadState),
+            runtimeStateByThreadId: {
+              ...state.runtimeStateByThreadId,
+              [threadId]: {
+                ...runtime,
+                recentlyClosedEntries: runtime.recentlyClosedEntries.slice(0, -1),
+              },
+            },
+          };
+        });
+        return reopenedFilePath;
+      },
       runtimeStateByThreadId: {},
       setActiveFile: (threadId, filePath, paneId) =>
         set((state) => {
@@ -776,9 +1180,13 @@ export const useEditorStateStore = create<EditorStoreState>()(
           const nextDraftsByFilePath = Object.fromEntries(
             Object.entries(runtime.draftsByFilePath).filter(([path]) => validPathSet.has(path)),
           );
+          const nextRecentlyClosedEntries = runtime.recentlyClosedEntries.filter((entry) =>
+            validPathSet.has(entry.filePath),
+          );
           if (
             threadStatesEqual(current, nextThreadState) &&
-            draftMapsEqual(runtime.draftsByFilePath, nextDraftsByFilePath)
+            draftMapsEqual(runtime.draftsByFilePath, nextDraftsByFilePath) &&
+            recentlyClosedEntriesEqual(runtime.recentlyClosedEntries, nextRecentlyClosedEntries)
           ) {
             return state;
           }
@@ -790,6 +1198,7 @@ export const useEditorStateStore = create<EditorStoreState>()(
               [threadId]: {
                 ...runtime,
                 draftsByFilePath: nextDraftsByFilePath,
+                recentlyClosedEntries: nextRecentlyClosedEntries,
               },
             },
           };

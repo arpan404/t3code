@@ -15,6 +15,7 @@ vi.mock("../cursorAcp", async (importOriginal) => {
 
 import {
   CursorAdapterLive,
+  buildCursorTurnUsageSnapshot,
   buildCursorUsageSnapshot,
   classifyCursorToolItemType,
   describePermissionRequest,
@@ -1016,6 +1017,75 @@ describe("CursorAdapterLive", () => {
       maxTokens: 128_000,
       lastUsedTokens: 32_000,
       toolUses: 1,
+    });
+  });
+
+  it("fills Cursor max tokens from the current model when usage updates omit size", () => {
+    const snapshot = buildCursorUsageSnapshot(
+      {
+        used: 32_000,
+      },
+      undefined,
+      200_000,
+    );
+
+    expect(snapshot).toEqual({
+      usedTokens: 32_000,
+      maxTokens: 200_000,
+      lastUsedTokens: 32_000,
+    });
+  });
+
+  it("emits token-only Cursor usage details from prompt completion metadata", () => {
+    const snapshot = buildCursorTurnUsageSnapshot(
+      {
+        usage: {
+          totalTokens: 1_472,
+          inputTokens: 1_024,
+          cachedReadTokens: 256,
+          outputTokens: 128,
+          thoughtTokens: 64,
+        },
+      },
+      undefined,
+      undefined,
+      200_000,
+    );
+
+    expect(snapshot).toEqual({
+      usedTokens: 1_472,
+      lastUsedTokens: 1_472,
+      lastInputTokens: 1_024,
+      lastCachedInputTokens: 256,
+      lastOutputTokens: 128,
+      lastReasoningOutputTokens: 64,
+    });
+  });
+
+  it("merges Cursor prompt completion token totals with live context usage", () => {
+    const snapshot = buildCursorTurnUsageSnapshot(
+      {
+        usage: {
+          totalTokens: 1_472,
+          inputTokens: 1_024,
+          outputTokens: 128,
+        },
+      },
+      undefined,
+      {
+        usedTokens: 32_000,
+        maxTokens: 128_000,
+        lastUsedTokens: 32_000,
+      },
+      200_000,
+    );
+
+    expect(snapshot).toEqual({
+      usedTokens: 32_000,
+      maxTokens: 128_000,
+      lastUsedTokens: 1_472,
+      lastInputTokens: 1_024,
+      lastOutputTokens: 128,
     });
   });
 });

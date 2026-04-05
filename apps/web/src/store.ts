@@ -20,7 +20,11 @@ import {
   derivePendingApprovals,
   derivePendingUserInputs,
 } from "./session-logic";
-import { compareActivityLifecycleRank, compareSequenceThenCreatedAt } from "./lib/activityOrder";
+import {
+  appendCompactedThreadActivity,
+  DEFAULT_MAX_THREAD_ACTIVITIES,
+} from "@t3tools/shared/orchestrationThreadActivities";
+import { compareSequenceThenCreatedAt } from "./lib/activityOrder";
 import { type ChatMessage, type Project, type SidebarThreadSummary, type Thread } from "./types";
 
 // ── State ────────────────────────────────────────────────────────────
@@ -43,7 +47,6 @@ const initialState: AppState = {
 const MAX_THREAD_MESSAGES = 2_000;
 const MAX_THREAD_CHECKPOINTS = 500;
 const MAX_THREAD_PROPOSED_PLANS = 200;
-const MAX_THREAD_ACTIVITIES = 500;
 const EMPTY_THREAD_IDS: ThreadId[] = [];
 const threadLookupCache = new WeakMap<ReadonlyArray<Thread>, Map<ThreadId, Thread>>();
 
@@ -432,17 +435,6 @@ function checkpointStatusToLatestTurnState(status: "ready" | "missing" | "error"
     return "interrupted" as const;
   }
   return "completed" as const;
-}
-
-function compareActivities(
-  left: Thread["activities"][number],
-  right: Thread["activities"][number],
-): number {
-  return (
-    compareSequenceThenCreatedAt(left, right) ||
-    compareActivityLifecycleRank(left.kind) - compareActivityLifecycleRank(right.kind) ||
-    left.id.localeCompare(right.id)
-  );
 }
 
 function buildLatestTurn(params: {
@@ -1239,12 +1231,13 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
 
     case "thread.activity-appended": {
       return updateThreadState(state, event.payload.threadId, (thread) => {
-        const activities = [
-          ...thread.activities.filter((activity) => activity.id !== event.payload.activity.id),
+        const activities = appendCompactedThreadActivity(
+          thread.activities,
           { ...event.payload.activity },
-        ]
-          .toSorted(compareActivities)
-          .slice(-MAX_THREAD_ACTIVITIES);
+          {
+            maxEntries: DEFAULT_MAX_THREAD_ACTIVITIES,
+          },
+        );
         return {
           ...thread,
           activities,

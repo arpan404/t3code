@@ -192,6 +192,78 @@ describe("editorStateStore actions", () => {
     ]);
   });
 
+  it("closes other tabs while preserving the selected tab", () => {
+    const store = useEditorStateStore.getState();
+    store.openFile(THREAD_ID, "src/main.ts");
+    store.openFile(THREAD_ID, "src/utils.ts");
+    store.openFile(THREAD_ID, "src/sidebar.ts");
+
+    store.closeOtherFiles(THREAD_ID, "src/utils.ts");
+
+    const editorState = selectThreadEditorState(
+      useEditorStateStore.getState().threadStateByThreadId,
+      useEditorStateStore.getState().runtimeStateByThreadId,
+      THREAD_ID,
+    );
+
+    expect(editorState.panes).toEqual([
+      {
+        activeFilePath: "src/utils.ts",
+        id: "pane-1",
+        openFilePaths: ["src/utils.ts"],
+      },
+    ]);
+  });
+
+  it("closes tabs to the right and repairs active selection if needed", () => {
+    const store = useEditorStateStore.getState();
+    store.openFile(THREAD_ID, "src/main.ts");
+    store.openFile(THREAD_ID, "src/utils.ts");
+    store.openFile(THREAD_ID, "src/sidebar.ts");
+    store.openFile(THREAD_ID, "src/routes.ts");
+
+    store.closeFilesToRight(THREAD_ID, "src/utils.ts");
+
+    const editorState = selectThreadEditorState(
+      useEditorStateStore.getState().threadStateByThreadId,
+      useEditorStateStore.getState().runtimeStateByThreadId,
+      THREAD_ID,
+    );
+
+    expect(editorState.panes).toEqual([
+      {
+        activeFilePath: "src/utils.ts",
+        id: "pane-1",
+        openFilePaths: ["src/main.ts", "src/utils.ts"],
+      },
+    ]);
+  });
+
+  it("reopens the most recently closed tab in its prior pane position", () => {
+    const store = useEditorStateStore.getState();
+    store.openFile(THREAD_ID, "src/main.ts");
+    store.openFile(THREAD_ID, "src/utils.ts");
+    store.openFile(THREAD_ID, "src/sidebar.ts");
+
+    store.closeFile(THREAD_ID, "src/utils.ts");
+    const reopenedPath = store.reopenClosedFile(THREAD_ID);
+
+    const editorState = selectThreadEditorState(
+      useEditorStateStore.getState().threadStateByThreadId,
+      useEditorStateStore.getState().runtimeStateByThreadId,
+      THREAD_ID,
+    );
+
+    expect(reopenedPath).toBe("src/utils.ts");
+    expect(editorState.panes).toEqual([
+      {
+        activeFilePath: "src/utils.ts",
+        id: "pane-1",
+        openFilePaths: ["src/main.ts", "src/utils.ts", "src/sidebar.ts"],
+      },
+    ]);
+  });
+
   it("closes panes while keeping a valid active pane and normalized ratios", () => {
     const store = useEditorStateStore.getState();
     store.openFile(THREAD_ID, "src/main.ts");
@@ -231,5 +303,52 @@ describe("editorStateStore actions", () => {
       { activeFilePath: null, id: "pane-1", openFilePaths: [] },
       { activeFilePath: "src/sidebar.ts", id: "pane-2", openFilePaths: ["src/sidebar.ts"] },
     ]);
+  });
+
+  it("renames open file references and preserved drafts", () => {
+    const store = useEditorStateStore.getState();
+    store.openFile(THREAD_ID, "src/main.ts");
+    store.hydrateFile(THREAD_ID, "src/main.ts", "export const value = 1;\n");
+    store.updateDraft(THREAD_ID, "src/main.ts", "export const value = 2;\n");
+
+    store.renameEntry(THREAD_ID, "src/main.ts", "src/app.ts");
+
+    const editorState = selectThreadEditorState(
+      useEditorStateStore.getState().threadStateByThreadId,
+      useEditorStateStore.getState().runtimeStateByThreadId,
+      THREAD_ID,
+    );
+
+    expect(editorState.panes).toEqual([
+      { activeFilePath: "src/app.ts", id: "pane-1", openFilePaths: ["src/app.ts"] },
+    ]);
+    expect(editorState.draftsByFilePath).toEqual({
+      "src/app.ts": {
+        draftContents: "export const value = 2;\n",
+        savedContents: "export const value = 1;\n",
+      },
+    });
+  });
+
+  it("removes deleted directory references from panes and drafts", () => {
+    const store = useEditorStateStore.getState();
+    store.openFile(THREAD_ID, "src/main.ts");
+    store.openFile(THREAD_ID, "src/utils/helpers.ts");
+    store.hydrateFile(THREAD_ID, "src/utils/helpers.ts", "export const help = true;\n");
+    store.expandDirectories(THREAD_ID, ["src", "src/utils"]);
+
+    store.removeEntry(THREAD_ID, "src/utils");
+
+    const editorState = selectThreadEditorState(
+      useEditorStateStore.getState().threadStateByThreadId,
+      useEditorStateStore.getState().runtimeStateByThreadId,
+      THREAD_ID,
+    );
+
+    expect(editorState.expandedDirectoryPaths).toEqual(["src"]);
+    expect(editorState.panes).toEqual([
+      { activeFilePath: "src/main.ts", id: "pane-1", openFilePaths: ["src/main.ts"] },
+    ]);
+    expect(editorState.draftsByFilePath).toEqual({});
   });
 });

@@ -13,6 +13,7 @@ import {
   normalizeCursorModelOptionsWithCapabilities,
   normalizeGitHubCopilotModelOptionsWithCapabilities,
   normalizeModelSlug,
+  inferModelContextWindowTokens,
   resolveApiModelId,
   resolveContextWindow,
   resolveEffort,
@@ -125,6 +126,26 @@ describe("resolveSelectableModel", () => {
     expect(resolveSelectableModel("cursor", "gpt-5.4-mini-none-fast", options)).toBe(
       "gpt-5.4-mini",
     );
+  });
+});
+
+describe("inferModelContextWindowTokens", () => {
+  it("returns Gemini CLI token limits for configured Gemini models", () => {
+    expect(inferModelContextWindowTokens("gemini", "gemini-2.5-pro")).toBe(1_048_576);
+    expect(inferModelContextWindowTokens("gemini", "gemini-3.1-pro-preview")).toBe(1_048_576);
+    expect(inferModelContextWindowTokens("gemini", "auto")).toBe(1_048_576);
+  });
+
+  it("returns Cursor defaults for documented Cursor models", () => {
+    expect(inferModelContextWindowTokens("cursor", "claude-4-sonnet")).toBe(200_000);
+    expect(inferModelContextWindowTokens("cursor", "composer-2")).toBe(200_000);
+    expect(inferModelContextWindowTokens("cursor", "gpt-5.4")).toBe(272_000);
+  });
+
+  it("returns undefined when the provider model limit is not known", () => {
+    expect(inferModelContextWindowTokens("cursor", "auto")).toBeUndefined();
+    expect(inferModelContextWindowTokens("cursor", "gpt-5.4-mini")).toBeUndefined();
+    expect(inferModelContextWindowTokens("gemini", "custom-model")).toBeUndefined();
   });
 });
 

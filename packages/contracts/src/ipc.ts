@@ -19,8 +19,14 @@ import type {
 import type {
   ProjectListTreeInput,
   ProjectListTreeResult,
+  ProjectCreateEntryInput,
+  ProjectCreateEntryResult,
+  ProjectDeleteEntryInput,
+  ProjectDeleteEntryResult,
   ProjectReadFileInput,
   ProjectReadFileResult,
+  ProjectRenameEntryInput,
+  ProjectRenameEntryResult,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
   ProjectWriteFileInput,
@@ -174,7 +180,10 @@ export interface NativeApi {
   projects: {
     searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
     listTree: (input: ProjectListTreeInput) => Promise<ProjectListTreeResult>;
+    createEntry: (input: ProjectCreateEntryInput) => Promise<ProjectCreateEntryResult>;
+    deleteEntry: (input: ProjectDeleteEntryInput) => Promise<ProjectDeleteEntryResult>;
     readFile: (input: ProjectReadFileInput) => Promise<ProjectReadFileResult>;
+    renameEntry: (input: ProjectRenameEntryInput) => Promise<ProjectRenameEntryResult>;
     writeFile: (input: ProjectWriteFileInput) => Promise<ProjectWriteFileResult>;
   };
   shell: {

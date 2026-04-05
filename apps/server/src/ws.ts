@@ -8,9 +8,12 @@ import {
   OrchestrationGetSnapshotError,
   OrchestrationGetTurnDiffError,
   ORCHESTRATION_WS_METHODS,
+  ProjectCreateEntryError,
+  ProjectDeleteEntryError,
   ProjectSearchEntriesError,
   ProjectListTreeError,
   ProjectReadFileError,
+  ProjectRenameEntryError,
   ProjectWriteFileError,
   OrchestrationReplayEventsError,
   type TerminalEvent,
@@ -267,6 +270,30 @@ const WsRpcLayer = WsRpcGroup.toLayer(
               }),
           ),
         ),
+      [WS_METHODS.projectsCreateEntry]: (input) =>
+        workspaceFileSystem.createEntry(input).pipe(
+          Effect.mapError((cause) => {
+            const message = Schema.is(WorkspacePathOutsideRootError)(cause)
+              ? "Workspace file path must stay within the project root."
+              : cause.detail;
+            return new ProjectCreateEntryError({
+              message,
+              cause,
+            });
+          }),
+        ),
+      [WS_METHODS.projectsDeleteEntry]: (input) =>
+        workspaceFileSystem.deleteEntry(input).pipe(
+          Effect.mapError((cause) => {
+            const message = Schema.is(WorkspacePathOutsideRootError)(cause)
+              ? "Workspace file path must stay within the project root."
+              : cause.detail;
+            return new ProjectDeleteEntryError({
+              message,
+              cause,
+            });
+          }),
+        ),
       [WS_METHODS.projectsReadFile]: (input) =>
         workspaceFileSystem.readFile(input).pipe(
           Effect.mapError((cause) => {
@@ -274,6 +301,18 @@ const WsRpcLayer = WsRpcGroup.toLayer(
               ? "Workspace file path must stay within the project root."
               : cause.detail;
             return new ProjectReadFileError({
+              message,
+              cause,
+            });
+          }),
+        ),
+      [WS_METHODS.projectsRenameEntry]: (input) =>
+        workspaceFileSystem.renameEntry(input).pipe(
+          Effect.mapError((cause) => {
+            const message = Schema.is(WorkspacePathOutsideRootError)(cause)
+              ? "Workspace file path must stay within the project root."
+              : cause.detail;
+            return new ProjectRenameEntryError({
               message,
               cause,
             });

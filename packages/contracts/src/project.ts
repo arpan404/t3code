@@ -12,7 +12,8 @@ export const ProjectSearchEntriesInput = Schema.Struct({
 });
 export type ProjectSearchEntriesInput = typeof ProjectSearchEntriesInput.Type;
 
-const ProjectEntryKind = Schema.Literals(["file", "directory"]);
+export const ProjectEntryKind = Schema.Literals(["file", "directory"]);
+export type ProjectEntryKind = typeof ProjectEntryKind.Type;
 
 export const ProjectEntry = Schema.Struct({
   path: TrimmedNonEmptyString,
@@ -68,6 +69,69 @@ export type ProjectWriteFileResult = typeof ProjectWriteFileResult.Type;
 
 export class ProjectWriteFileError extends Schema.TaggedErrorClass<ProjectWriteFileError>()(
   "ProjectWriteFileError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}
+
+export const ProjectCreateEntryInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
+  kind: ProjectEntryKind,
+});
+export type ProjectCreateEntryInput = typeof ProjectCreateEntryInput.Type;
+
+export const ProjectCreateEntryResult = Schema.Struct({
+  kind: ProjectEntryKind,
+  relativePath: TrimmedNonEmptyString,
+});
+export type ProjectCreateEntryResult = typeof ProjectCreateEntryResult.Type;
+
+export class ProjectCreateEntryError extends Schema.TaggedErrorClass<ProjectCreateEntryError>()(
+  "ProjectCreateEntryError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}
+
+export const ProjectRenameEntryInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
+  nextRelativePath: TrimmedNonEmptyString.check(
+    Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH),
+  ),
+});
+export type ProjectRenameEntryInput = typeof ProjectRenameEntryInput.Type;
+
+export const ProjectRenameEntryResult = Schema.Struct({
+  previousRelativePath: TrimmedNonEmptyString,
+  relativePath: TrimmedNonEmptyString,
+});
+export type ProjectRenameEntryResult = typeof ProjectRenameEntryResult.Type;
+
+export class ProjectRenameEntryError extends Schema.TaggedErrorClass<ProjectRenameEntryError>()(
+  "ProjectRenameEntryError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}
+
+export const ProjectDeleteEntryInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
+});
+export type ProjectDeleteEntryInput = typeof ProjectDeleteEntryInput.Type;
+
+export const ProjectDeleteEntryResult = Schema.Struct({
+  relativePath: TrimmedNonEmptyString,
+});
+export type ProjectDeleteEntryResult = typeof ProjectDeleteEntryResult.Type;
+
+export class ProjectDeleteEntryError extends Schema.TaggedErrorClass<ProjectDeleteEntryError>()(
+  "ProjectDeleteEntryError",
   {
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect),

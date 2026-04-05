@@ -16,6 +16,7 @@ import {
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
+import { inferModelContextWindowTokens } from "@t3tools/shared/model";
 import { Effect, Layer, Queue, Schema, Stream } from "effect";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
@@ -292,6 +293,114 @@ function firstRoundedNonNegativeInt(
   return undefined;
 }
 
+type GeminiTokenCountTotals = {
+  readonly totalTokens?: number;
+  readonly inputTokens?: number;
+  readonly cachedReadTokens?: number;
+  readonly cachedWriteTokens?: number;
+  readonly outputTokens?: number;
+  readonly reasoningOutputTokens?: number;
+};
+
+function readGeminiTokenCountRecord(
+  record: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  return asObject(record?.token_count) ?? asObject(record?.tokenCount);
+}
+
+function readGeminiModelUsageTotals(value: unknown): GeminiTokenCountTotals | undefined {
+  const modelUsage = asArray(value);
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let foundTokens = false;
+
+  for (const entry of modelUsage) {
+    const tokenCount = readGeminiTokenCountRecord(asObject(entry));
+    const inputTokenCount = firstRoundedNonNegativeInt(tokenCount, ["input_tokens", "inputTokens"]);
+    const outputTokenCount = firstRoundedNonNegativeInt(tokenCount, [
+      "output_tokens",
+      "outputTokens",
+    ]);
+
+    if (inputTokenCount !== undefined) {
+      inputTokens += inputTokenCount;
+      foundTokens = true;
+    }
+    if (outputTokenCount !== undefined) {
+      outputTokens += outputTokenCount;
+      foundTokens = true;
+    }
+  }
+
+  if (!foundTokens) {
+    return undefined;
+  }
+
+  const totalTokens = inputTokens + outputTokens;
+  return {
+    ...(inputTokens > 0 ? { inputTokens } : {}),
+    ...(outputTokens > 0 ? { outputTokens } : {}),
+    ...(totalTokens > 0 ? { totalTokens } : {}),
+  };
+}
+
+function readGeminiTokenCountTotals(value: unknown): GeminiTokenCountTotals | undefined {
+  const record = asObject(value);
+  const tokenCount = readGeminiTokenCountRecord(record);
+  const modelUsageTotals = readGeminiModelUsageTotals(record?.model_usage ?? record?.modelUsage);
+
+  const inputTokens =
+    firstRoundedNonNegativeInt(tokenCount, ["input_tokens", "inputTokens"]) ??
+    modelUsageTotals?.inputTokens;
+  const cachedReadTokens = firstRoundedNonNegativeInt(tokenCount, [
+    "cached_read_tokens",
+    "cachedReadTokens",
+  ]);
+  const cachedWriteTokens = firstRoundedNonNegativeInt(tokenCount, [
+    "cached_write_tokens",
+    "cachedWriteTokens",
+  ]);
+  const outputTokens =
+    firstRoundedNonNegativeInt(tokenCount, ["output_tokens", "outputTokens"]) ??
+    modelUsageTotals?.outputTokens;
+  const reasoningOutputTokens = firstRoundedNonNegativeInt(tokenCount, [
+    "thought_tokens",
+    "thoughtTokens",
+    "reasoning_output_tokens",
+    "reasoningOutputTokens",
+  ]);
+  const derivedTotalTokens =
+    (inputTokens ?? 0) +
+    (cachedReadTokens ?? 0) +
+    (cachedWriteTokens ?? 0) +
+    (outputTokens ?? 0) +
+    (reasoningOutputTokens ?? 0);
+  const totalTokens =
+    firstRoundedNonNegativeInt(tokenCount, ["total_tokens", "totalTokens"]) ??
+    (derivedTotalTokens > 0 ? derivedTotalTokens : undefined) ??
+    modelUsageTotals?.totalTokens;
+
+  if (
+    totalTokens === undefined &&
+    inputTokens === undefined &&
+    cachedReadTokens === undefined &&
+    cachedWriteTokens === undefined &&
+    outputTokens === undefined &&
+    reasoningOutputTokens === undefined
+  ) {
+    return undefined;
+  }
+
+  return {
+    ...(totalTokens !== undefined ? { totalTokens } : {}),
+    ...(inputTokens !== undefined ? { inputTokens } : {}),
+    ...(cachedReadTokens !== undefined ? { cachedReadTokens } : {}),
+    ...(cachedWriteTokens !== undefined ? { cachedWriteTokens } : {}),
+    ...(outputTokens !== undefined ? { outputTokens } : {}),
+    ...(reasoningOutputTokens !== undefined ? { reasoningOutputTokens } : {}),
+  };
+}
+
 function geminiToolUseCount(turn: GeminiTurnState | null): number | undefined {
   const count = turn?.toolItems.size ?? 0;
   return count > 0 ? count : undefined;
@@ -300,25 +409,62 @@ function geminiToolUseCount(turn: GeminiTurnState | null): number | undefined {
 function buildGeminiContextUsageSnapshot(
   value: unknown,
   turn: GeminiTurnState | null,
+  inferredMaxTokens?: number,
 ):
   | (ProviderRuntimeEventByType<"thread.token-usage.updated">["payload"]["usage"] &
       GeminiContextUsageSnapshot)
   | undefined {
   const record = asObject(value);
-  const usedTokens = firstRoundedNonNegativeInt(record, ["used", "usedTokens", "used_tokens"]);
+  const usageMetadata = asObject(record?.usageMetadata) ?? asObject(record?.usage_metadata);
+  const usedTokens =
+    firstRoundedNonNegativeInt(record, [
+      "used",
+      "usedTokens",
+      "used_tokens",
+      "promptTokenCount",
+      "prompt_token_count",
+      "lastPromptTokenCount",
+      "last_prompt_token_count",
+    ]) ??
+    firstRoundedNonNegativeInt(usageMetadata, [
+      "used",
+      "usedTokens",
+      "used_tokens",
+      "promptTokenCount",
+      "prompt_token_count",
+      "lastPromptTokenCount",
+      "last_prompt_token_count",
+    ]);
   if (usedTokens === undefined || usedTokens <= 0) {
     return undefined;
   }
 
-  const maxTokens = firstRoundedNonNegativeInt(record, [
-    "size",
-    "maxTokens",
-    "max_tokens",
-    "contextWindow",
-    "context_window",
-    "maxContextWindowTokens",
-    "max_context_window_tokens",
-  ]);
+  const maxTokens =
+    firstRoundedNonNegativeInt(record, [
+      "size",
+      "maxTokens",
+      "max_tokens",
+      "contextWindow",
+      "context_window",
+      "maxContextWindowTokens",
+      "max_context_window_tokens",
+      "tokenLimit",
+      "token_limit",
+      "limit",
+    ]) ??
+    firstRoundedNonNegativeInt(usageMetadata, [
+      "size",
+      "maxTokens",
+      "max_tokens",
+      "contextWindow",
+      "context_window",
+      "maxContextWindowTokens",
+      "max_context_window_tokens",
+      "tokenLimit",
+      "token_limit",
+      "limit",
+    ]) ??
+    inferredMaxTokens;
   const toolUses = geminiToolUseCount(turn);
 
   return {
@@ -333,28 +479,35 @@ function buildGeminiTurnUsageSnapshot(
   value: unknown,
   turn: GeminiTurnState,
   lastUsageSnapshot: GeminiContextUsageSnapshot | undefined,
+  inferredMaxTokens?: number,
 ): ProviderRuntimeEventByType<"thread.token-usage.updated">["payload"]["usage"] | undefined {
   const record = asObject(value);
-  const finalContextUsage = buildGeminiContextUsageSnapshot(value, turn);
-  const totalTokens = firstRoundedNonNegativeInt(record, ["totalTokens", "total_tokens"]);
-  const inputTokens = firstRoundedNonNegativeInt(record, ["inputTokens", "input_tokens"]);
-  const cachedReadTokens = firstRoundedNonNegativeInt(record, [
-    "cachedReadTokens",
-    "cached_read_tokens",
-  ]);
-  const cachedWriteTokens = firstRoundedNonNegativeInt(record, [
-    "cachedWriteTokens",
-    "cached_write_tokens",
-  ]);
-  const outputTokens = firstRoundedNonNegativeInt(record, ["outputTokens", "output_tokens"]);
-  const reasoningOutputTokens = firstRoundedNonNegativeInt(record, [
-    "thoughtTokens",
-    "thought_tokens",
-    "reasoningTokens",
-    "reasoning_tokens",
-    "reasoningOutputTokens",
-    "reasoning_output_tokens",
-  ]);
+  const tokenCountTotals = readGeminiTokenCountTotals(record);
+  const finalContextUsage = buildGeminiContextUsageSnapshot(value, turn, inferredMaxTokens);
+  const totalTokens =
+    firstRoundedNonNegativeInt(record, ["totalTokens", "total_tokens"]) ??
+    tokenCountTotals?.totalTokens;
+  const inputTokens =
+    firstRoundedNonNegativeInt(record, ["inputTokens", "input_tokens"]) ??
+    tokenCountTotals?.inputTokens;
+  const cachedReadTokens =
+    firstRoundedNonNegativeInt(record, ["cachedReadTokens", "cached_read_tokens"]) ??
+    tokenCountTotals?.cachedReadTokens;
+  const cachedWriteTokens =
+    firstRoundedNonNegativeInt(record, ["cachedWriteTokens", "cached_write_tokens"]) ??
+    tokenCountTotals?.cachedWriteTokens;
+  const outputTokens =
+    firstRoundedNonNegativeInt(record, ["outputTokens", "output_tokens"]) ??
+    tokenCountTotals?.outputTokens;
+  const reasoningOutputTokens =
+    firstRoundedNonNegativeInt(record, [
+      "thoughtTokens",
+      "thought_tokens",
+      "reasoningTokens",
+      "reasoning_tokens",
+      "reasoningOutputTokens",
+      "reasoning_output_tokens",
+    ]) ?? tokenCountTotals?.reasoningOutputTokens;
   const durationMs = firstRoundedNonNegativeInt(record, ["durationMs", "duration", "duration_ms"]);
   const cachedInputTokens =
     (cachedReadTokens ?? 0) + (cachedWriteTokens ?? 0) > 0
@@ -375,8 +528,12 @@ function buildGeminiTurnUsageSnapshot(
     return undefined;
   }
 
-  const usedTokens = lastUsageSnapshot?.usedTokens ?? finalContextUsage?.usedTokens ?? totalTokens;
-  const maxTokens = lastUsageSnapshot?.maxTokens ?? finalContextUsage?.maxTokens;
+  const contextUsedTokens = lastUsageSnapshot?.usedTokens ?? finalContextUsage?.usedTokens;
+  const usedTokens = contextUsedTokens ?? totalTokens;
+  const maxTokens =
+    lastUsageSnapshot?.maxTokens ??
+    finalContextUsage?.maxTokens ??
+    (contextUsedTokens !== undefined ? inferredMaxTokens : undefined);
   if (usedTokens === undefined || usedTokens <= 0) {
     return undefined;
   }
@@ -408,29 +565,35 @@ function buildGeminiTurnUsageSnapshot(
 
 function readGeminiProcessedTokens(value: unknown): number | undefined {
   const record = asObject(value);
-  const totalTokens = firstRoundedNonNegativeInt(record, ["totalTokens", "total_tokens"]);
+  const tokenCountTotals = readGeminiTokenCountTotals(record);
+  const totalTokens =
+    firstRoundedNonNegativeInt(record, ["totalTokens", "total_tokens"]) ??
+    tokenCountTotals?.totalTokens;
   if (totalTokens !== undefined && totalTokens > 0) {
     return totalTokens;
   }
 
-  const inputTokens = firstRoundedNonNegativeInt(record, ["inputTokens", "input_tokens"]);
-  const cachedReadTokens = firstRoundedNonNegativeInt(record, [
-    "cachedReadTokens",
-    "cached_read_tokens",
-  ]);
-  const cachedWriteTokens = firstRoundedNonNegativeInt(record, [
-    "cachedWriteTokens",
-    "cached_write_tokens",
-  ]);
-  const outputTokens = firstRoundedNonNegativeInt(record, ["outputTokens", "output_tokens"]);
-  const reasoningOutputTokens = firstRoundedNonNegativeInt(record, [
-    "thoughtTokens",
-    "thought_tokens",
-    "reasoningTokens",
-    "reasoning_tokens",
-    "reasoningOutputTokens",
-    "reasoning_output_tokens",
-  ]);
+  const inputTokens =
+    firstRoundedNonNegativeInt(record, ["inputTokens", "input_tokens"]) ??
+    tokenCountTotals?.inputTokens;
+  const cachedReadTokens =
+    firstRoundedNonNegativeInt(record, ["cachedReadTokens", "cached_read_tokens"]) ??
+    tokenCountTotals?.cachedReadTokens;
+  const cachedWriteTokens =
+    firstRoundedNonNegativeInt(record, ["cachedWriteTokens", "cached_write_tokens"]) ??
+    tokenCountTotals?.cachedWriteTokens;
+  const outputTokens =
+    firstRoundedNonNegativeInt(record, ["outputTokens", "output_tokens"]) ??
+    tokenCountTotals?.outputTokens;
+  const reasoningOutputTokens =
+    firstRoundedNonNegativeInt(record, [
+      "thoughtTokens",
+      "thought_tokens",
+      "reasoningTokens",
+      "reasoning_tokens",
+      "reasoningOutputTokens",
+      "reasoning_output_tokens",
+    ]) ?? tokenCountTotals?.reasoningOutputTokens;
   const derivedTotal =
     (inputTokens ?? 0) +
     (cachedReadTokens ?? 0) +
@@ -801,6 +964,12 @@ const makeGeminiAdapter = Effect.gen(function* () {
     void runPromise(Queue.offer(runtimeEventQueue, event)).catch(() => undefined);
   };
 
+  const currentGeminiContextWindowTokens = (context: GeminiSessionContext) =>
+    inferModelContextWindowTokens(
+      PROVIDER,
+      context.metadata.currentModelId ?? context.session.model,
+    );
+
   const baseEvent = <TType extends ProviderRuntimeEvent["type"]>(
     context: GeminiSessionContext,
     input: {
@@ -1052,6 +1221,7 @@ const makeGeminiAdapter = Effect.gen(function* () {
         outcome.usage,
         turn,
         context.lastUsageSnapshot,
+        currentGeminiContextWindowTokens(context),
       );
       const processedTokens = readGeminiProcessedTokens(outcome.usage);
       if (processedTokens !== undefined && processedTokens > 0) {
@@ -1445,7 +1615,11 @@ const makeGeminiAdapter = Effect.gen(function* () {
         return;
       }
       case "usage_update": {
-        const usage = buildGeminiContextUsageSnapshot(update, context.activeTurn);
+        const usage = buildGeminiContextUsageSnapshot(
+          update,
+          context.activeTurn,
+          currentGeminiContextWindowTokens(context),
+        );
         if (!usage) {
           return;
         }
@@ -1996,8 +2170,12 @@ const makeGeminiAdapter = Effect.gen(function* () {
               }
               const resultRecord = asObject(result);
               const stopReason = asString(resultRecord?.stopReason) ?? null;
-              const resultUsage = asObject(resultRecord?.usage);
-              const resultQuota = asObject(asObject(resultRecord?._meta)?.quota);
+              const resultUsage =
+                asObject(resultRecord?.usage) ??
+                asObject(resultRecord?.usageMetadata) ??
+                asObject(resultRecord?.usage_metadata);
+              const resultQuota =
+                asObject(asObject(resultRecord?._meta)?.quota) ?? asObject(resultRecord?.quota);
               const rawUsage =
                 resultUsage && resultQuota
                   ? {

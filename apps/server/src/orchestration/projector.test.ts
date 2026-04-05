@@ -976,4 +976,108 @@ describe("orchestration projector", () => {
     expect(thread?.checkpoints[0]?.turnId).toBe("turn-100");
     expect(thread?.checkpoints.at(-1)?.turnId).toBe("turn-599");
   });
+
+  it("compacts repeated reasoning activity so verbose turns do not evict earlier tool history", async () => {
+    const createdAt = "2026-03-05T10:00:00.000Z";
+    const model = createEmptyReadModel(createdAt);
+
+    const afterCreate = await Effect.runPromise(
+      projectEvent(
+        model,
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: "thread-reasoning",
+          occurredAt: createdAt,
+          commandId: "cmd-create-reasoning",
+          payload: {
+            threadId: "thread-reasoning",
+            projectId: "project-1",
+            title: "reasoning",
+            modelSelection: {
+              provider: "githubCopilot",
+              model: "gpt-5.4",
+            },
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        }),
+      ),
+    );
+
+    let nextModel = await Effect.runPromise(
+      projectEvent(
+        afterCreate,
+        makeEvent({
+          sequence: 2,
+          type: "thread.activity-appended",
+          aggregateKind: "thread",
+          aggregateId: "thread-reasoning",
+          occurredAt: "2026-03-05T10:00:00.500Z",
+          commandId: "cmd-tool",
+          payload: {
+            threadId: "thread-reasoning",
+            activity: {
+              id: "tool-history",
+              tone: "tool",
+              kind: "tool.completed",
+              summary: "Read file",
+              payload: { detail: "packages/contracts/src/model.ts" },
+              turnId: "turn-1",
+              createdAt: "2026-03-05T10:00:00.500Z",
+            },
+          },
+        }),
+      ),
+    );
+
+    for (let index = 0; index < 750; index += 1) {
+      const fraction = String(index).padStart(3, "0");
+      nextModel = await Effect.runPromise(
+        projectEvent(
+          nextModel,
+          makeEvent({
+            sequence: 3 + index,
+            type: "thread.activity-appended",
+            aggregateKind: "thread",
+            aggregateId: "thread-reasoning",
+            occurredAt: `2026-03-05T10:00:${String((index % 60) + 1).padStart(2, "0")}.000Z`,
+            commandId: `cmd-reasoning-${fraction}`,
+            payload: {
+              threadId: "thread-reasoning",
+              activity: {
+                id: `reasoning-${fraction}`,
+                tone: "info",
+                kind: index === 749 ? "reasoning.completed" : "task.progress",
+                summary: "Reasoning",
+                payload: {
+                  taskId: "copilot-task-1",
+                  detail: `thought-${fraction}`,
+                },
+                turnId: "turn-1",
+                sequence: index + 1,
+                createdAt: `2026-03-05T10:00:${String((index % 60) + 1).padStart(2, "0")}.000Z`,
+              },
+            },
+          }),
+        ),
+      );
+    }
+
+    const thread = nextModel.threads.find((entry) => entry.id === "thread-reasoning");
+    expect(thread?.activities.map((activity) => activity.id)).toEqual([
+      "tool-history",
+      "reasoning-749",
+    ]);
+    expect((thread?.activities[1]?.payload as { detail?: string } | undefined)?.detail).toContain(
+      "thought-000",
+    );
+    expect((thread?.activities[1]?.payload as { detail?: string } | undefined)?.detail).toContain(
+      "thought-749",
+    );
+  });
 });

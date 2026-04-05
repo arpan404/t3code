@@ -42,12 +42,21 @@ import {
   OrchestrationRpcSchemas,
 } from "./orchestration";
 import {
+  ProjectCreateEntryError,
+  ProjectCreateEntryInput,
+  ProjectCreateEntryResult,
+  ProjectDeleteEntryError,
+  ProjectDeleteEntryInput,
+  ProjectDeleteEntryResult,
   ProjectListTreeError,
   ProjectListTreeInput,
   ProjectListTreeResult,
   ProjectReadFileError,
   ProjectReadFileInput,
   ProjectReadFileResult,
+  ProjectRenameEntryError,
+  ProjectRenameEntryInput,
+  ProjectRenameEntryResult,
   ProjectSearchEntriesError,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
@@ -85,7 +94,10 @@ export const WS_METHODS = {
   projectsRemove: "projects.remove",
   projectsSearchEntries: "projects.searchEntries",
   projectsListTree: "projects.listTree",
+  projectsCreateEntry: "projects.createEntry",
+  projectsDeleteEntry: "projects.deleteEntry",
   projectsReadFile: "projects.readFile",
+  projectsRenameEntry: "projects.renameEntry",
   projectsWriteFile: "projects.writeFile",
 
   // Shell methods
@@ -173,10 +185,28 @@ export const WsProjectsListTreeRpc = Rpc.make(WS_METHODS.projectsListTree, {
   error: ProjectListTreeError,
 });
 
+export const WsProjectsCreateEntryRpc = Rpc.make(WS_METHODS.projectsCreateEntry, {
+  payload: ProjectCreateEntryInput,
+  success: ProjectCreateEntryResult,
+  error: ProjectCreateEntryError,
+});
+
+export const WsProjectsDeleteEntryRpc = Rpc.make(WS_METHODS.projectsDeleteEntry, {
+  payload: ProjectDeleteEntryInput,
+  success: ProjectDeleteEntryResult,
+  error: ProjectDeleteEntryError,
+});
+
 export const WsProjectsReadFileRpc = Rpc.make(WS_METHODS.projectsReadFile, {
   payload: ProjectReadFileInput,
   success: ProjectReadFileResult,
   error: ProjectReadFileError,
+});
+
+export const WsProjectsRenameEntryRpc = Rpc.make(WS_METHODS.projectsRenameEntry, {
+  payload: ProjectRenameEntryInput,
+  success: ProjectRenameEntryResult,
+  error: ProjectRenameEntryError,
 });
 
 export const WsProjectsWriteFileRpc = Rpc.make(WS_METHODS.projectsWriteFile, {
@@ -358,7 +388,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerUpdateSettingsRpc,
   WsProjectsSearchEntriesRpc,
   WsProjectsListTreeRpc,
+  WsProjectsCreateEntryRpc,
+  WsProjectsDeleteEntryRpc,
   WsProjectsReadFileRpc,
+  WsProjectsRenameEntryRpc,
   WsProjectsWriteFileRpc,
   WsShellOpenInEditorRpc,
   WsGitStatusRpc,

@@ -1,5 +1,9 @@
 import type { OrchestrationEvent, OrchestrationReadModel, ThreadId } from "@t3tools/contracts";
 import {
+  appendCompactedThreadActivity,
+  DEFAULT_MAX_THREAD_ACTIVITIES,
+} from "@t3tools/shared/orchestrationThreadActivities";
+import {
   OrchestrationCheckpointSummary,
   OrchestrationMessage,
   OrchestrationProposedPlanSummary,
@@ -163,23 +167,6 @@ function findLatestProposedPlanSummary(
     )
     .at(-1);
   return latestPlan ? toLatestProposedPlanSummary(latestPlan) : null;
-}
-
-function compareThreadActivities(
-  left: OrchestrationThread["activities"][number],
-  right: OrchestrationThread["activities"][number],
-): number {
-  if (left.sequence !== undefined && right.sequence !== undefined) {
-    if (left.sequence !== right.sequence) {
-      return left.sequence - right.sequence;
-    }
-  } else if (left.sequence !== undefined) {
-    return 1;
-  } else if (right.sequence !== undefined) {
-    return -1;
-  }
-
-  return left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id);
 }
 
 function compareThreadMessages(
@@ -704,12 +691,9 @@ export function projectEvent(
             return nextBase;
           }
 
-          const activities = [
-            ...thread.activities.filter((entry) => entry.id !== payload.activity.id),
-            payload.activity,
-          ]
-            .toSorted(compareThreadActivities)
-            .slice(-500);
+          const activities = appendCompactedThreadActivity(thread.activities, payload.activity, {
+            maxEntries: DEFAULT_MAX_THREAD_ACTIVITIES,
+          });
 
           return {
             ...nextBase,
