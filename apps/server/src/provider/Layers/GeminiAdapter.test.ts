@@ -179,6 +179,69 @@ describe("Gemini ACP capability guards", () => {
   });
 });
 
+describe("GeminiAdapterLive startup", () => {
+  it("falls back to a fresh Gemini session when the persisted resume cursor no longer exists remotely", async () => {
+    const client = makeFakeGeminiClient({
+      requestImpl: async (method) => {
+        switch (method) {
+          case "initialize":
+            return geminiInitializeResult();
+          case "session/load":
+            throw new Error(
+              "Request session/load failed: Session not found: gemini-session-missing",
+            );
+          case "session/new":
+            return geminiSessionResult("gemini-session-recreated");
+          case "session/set_mode":
+            return geminiSessionResult("gemini-session-recreated", {
+              currentModeId: "yolo",
+            });
+          default:
+            throw new Error(`Unexpected Gemini ACP request: ${method}`);
+        }
+      },
+    });
+    mockedStartAcpClient.mockReturnValue(client);
+
+    await withAdapter(async (adapter) => {
+      try {
+        const session = await Effect.runPromise(
+          adapter.startSession({
+            provider: "gemini",
+            threadId: asThreadId("thread-gemini-stale-resume"),
+            cwd: "/repo/gemini-stale-resume",
+            resumeCursor: { sessionId: "gemini-session-missing" },
+            runtimeMode: "full-access",
+          }),
+        );
+
+        expect(session.resumeCursor).toEqual({ sessionId: "gemini-session-recreated" });
+        expect(client.request).toHaveBeenNthCalledWith(
+          2,
+          "session/load",
+          {
+            cwd: "/repo/gemini-stale-resume",
+            mcpServers: [],
+            sessionId: "gemini-session-missing",
+          },
+          { timeoutMs: 20_000 },
+        );
+        expect(client.request).toHaveBeenNthCalledWith(
+          3,
+          "session/new",
+          {
+            cwd: "/repo/gemini-stale-resume",
+            mcpServers: [],
+          },
+          { timeoutMs: 20_000 },
+        );
+      } finally {
+        await Effect.runPromise(adapter.stopAll());
+      }
+    });
+  });
+});
+
 describe("GeminiAdapterLive approvals", () => {
   it("auto-resolves Gemini permission requests for full-access sessions", async () => {
     const client = makeFakeGeminiClient({

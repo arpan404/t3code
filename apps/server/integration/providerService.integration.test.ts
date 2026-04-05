@@ -1,5 +1,5 @@
 import type { ProviderRuntimeEvent } from "@t3tools/contracts";
-import { ThreadId } from "@t3tools/contracts";
+import { EventId, MessageId, ThreadId, TurnId } from "@t3tools/contracts";
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts/settings";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, assert } from "@effect/vitest";
@@ -17,6 +17,8 @@ import { ServerSettingsService } from "../src/serverSettings.ts";
 import { AnalyticsService } from "../src/telemetry/Services/AnalyticsService.ts";
 import { SqlitePersistenceMemory } from "../src/persistence/Layers/Sqlite.ts";
 import { ProviderSessionRuntimeRepositoryLive } from "../src/persistence/Layers/ProviderSessionRuntime.ts";
+import { ProjectionThreadMessageRepositoryLive } from "../src/persistence/Layers/ProjectionThreadMessages.ts";
+import { ProjectionThreadMessageRepository } from "../src/persistence/Services/ProjectionThreadMessages.ts";
 
 import {
   makeTestProviderAdapterHarness,
@@ -40,40 +42,43 @@ const makeWorkspaceDirectory = Effect.gen(function* () {
 interface IntegrationFixture {
   readonly cwd: string;
   readonly harness: TestProviderAdapterHarness;
-  readonly layer: Layer.Layer<ProviderService, unknown, never>;
+  readonly layer: Layer.Layer<ProviderService | ProjectionThreadMessageRepository, unknown, never>;
 }
 
-const makeIntegrationFixture = Effect.gen(function* () {
-  const cwd = yield* makeWorkspaceDirectory;
-  const harness = yield* makeTestProviderAdapterHarness();
+const makeIntegrationFixture = (provider: "codex" | "githubCopilot" = "codex") =>
+  Effect.gen(function* () {
+    const cwd = yield* makeWorkspaceDirectory;
+    const harness = yield* makeTestProviderAdapterHarness({ provider });
 
-  const registry: typeof ProviderAdapterRegistry.Service = {
-    getByProvider: (provider) =>
-      provider === "codex"
-        ? Effect.succeed(harness.adapter)
-        : Effect.fail(new ProviderUnsupportedError({ provider })),
-    listProviders: () => Effect.succeed(["codex"]),
-  };
+    const registry: typeof ProviderAdapterRegistry.Service = {
+      getByProvider: (provider) =>
+        provider === harness.provider
+          ? Effect.succeed(harness.adapter)
+          : Effect.fail(new ProviderUnsupportedError({ provider })),
+      listProviders: () => Effect.succeed([harness.provider]),
+    };
 
-  const directoryLayer = ProviderSessionDirectoryLive.pipe(
-    Layer.provide(ProviderSessionRuntimeRepositoryLive),
-  );
+    const directoryLayer = ProviderSessionDirectoryLive.pipe(
+      Layer.provide(ProviderSessionRuntimeRepositoryLive),
+    );
+    const projectionMessageRepositoryLayer = ProjectionThreadMessageRepositoryLive;
 
-  const shared = Layer.mergeAll(
-    directoryLayer,
-    Layer.succeed(ProviderAdapterRegistry, registry),
-    ServerSettingsService.layerTest(DEFAULT_SERVER_SETTINGS),
-    AnalyticsService.layerTest,
-  ).pipe(Layer.provide(SqlitePersistenceMemory));
+    const shared = Layer.mergeAll(
+      directoryLayer,
+      projectionMessageRepositoryLayer,
+      Layer.succeed(ProviderAdapterRegistry, registry),
+      ServerSettingsService.layerTest(DEFAULT_SERVER_SETTINGS),
+      AnalyticsService.layerTest,
+    ).pipe(Layer.provide(SqlitePersistenceMemory));
 
-  const layer = makeProviderServiceLive().pipe(Layer.provide(shared));
+    const layer = Layer.mergeAll(shared, makeProviderServiceLive().pipe(Layer.provide(shared)));
 
-  return {
-    cwd,
-    harness,
-    layer,
-  } satisfies IntegrationFixture;
-});
+    return {
+      cwd,
+      harness,
+      layer,
+    } satisfies IntegrationFixture;
+  });
 
 const collectEventsDuring = <A, E, R>(
   stream: Stream.Stream<ProviderRuntimeEvent>,
@@ -118,7 +123,7 @@ const runTurn = (input: {
 
 it.effect("replays typed runtime fixture events", () =>
   Effect.gen(function* () {
-    const fixture = yield* makeIntegrationFixture;
+    const fixture = yield* makeIntegrationFixture();
 
     yield* Effect.gen(function* () {
       const provider = yield* ProviderService;
@@ -151,7 +156,7 @@ it.effect("replays typed runtime fixture events", () =>
 
 it.effect("replays file-changing fixture turn events", () =>
   Effect.gen(function* () {
-    const fixture = yield* makeIntegrationFixture;
+    const fixture = yield* makeIntegrationFixture();
     const { join } = yield* Path.Path;
     const { writeFileString } = yield* FileSystem.FileSystem;
 
@@ -190,7 +195,7 @@ it.effect("replays file-changing fixture turn events", () =>
 
 it.effect("runs multi-turn tool/approval flow", () =>
   Effect.gen(function* () {
-    const fixture = yield* makeIntegrationFixture;
+    const fixture = yield* makeIntegrationFixture();
     const { join } = yield* Path.Path;
     const { writeFileString } = yield* FileSystem.FileSystem;
 
@@ -244,7 +249,7 @@ it.effect("runs multi-turn tool/approval flow", () =>
 
 it.effect("rolls back provider conversation state only", () =>
   Effect.gen(function* () {
-    const fixture = yield* makeIntegrationFixture;
+    const fixture = yield* makeIntegrationFixture();
     const { join } = yield* Path.Path;
     const { writeFileString, readFileString } = yield* FileSystem.FileSystem;
 
@@ -297,4 +302,186 @@ it.effect("rolls back provider conversation state only", () =>
       assert.equal(readme, "v3\n");
     }).pipe(Effect.provide(fixture.layer));
   }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
+  "rebuilds githubCopilot recovery from retained transcript after rollback and provider restart",
+  () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeIntegrationFixture("githubCopilot");
+
+      yield* Effect.gen(function* () {
+        const provider = yield* ProviderService;
+        const messages = yield* ProjectionThreadMessageRepository;
+        const threadId = ThreadId.makeUnsafe("thread-integration-github-copilot-recovery");
+        const createdAt = "2026-04-05T12:00:00.000Z";
+
+        const session = yield* provider.startSession(threadId, {
+          threadId,
+          provider: "githubCopilot",
+          cwd: fixture.cwd,
+          runtimeMode: "full-access",
+        });
+        assert.equal((session.threadId ?? "").length > 0, true);
+
+        yield* fixture.harness.queueTurnResponse(threadId, {
+          events: [
+            {
+              type: "turn.started",
+              eventId: EventId.makeUnsafe("evt-copilot-provider-recovery-1"),
+              provider: "githubCopilot",
+              createdAt,
+              threadId,
+              turnId: "fixture-turn-1",
+            },
+            {
+              type: "message.delta",
+              eventId: EventId.makeUnsafe("evt-copilot-provider-recovery-2"),
+              provider: "githubCopilot",
+              createdAt,
+              threadId,
+              turnId: "fixture-turn-1",
+              delta: "First answer\n",
+            },
+            {
+              type: "turn.completed",
+              eventId: EventId.makeUnsafe("evt-copilot-provider-recovery-3"),
+              provider: "githubCopilot",
+              createdAt,
+              threadId,
+              turnId: "fixture-turn-1",
+              status: "completed",
+            },
+          ],
+        });
+
+        yield* provider.sendTurn({
+          threadId,
+          input: "First prompt",
+          attachments: [],
+        });
+
+        yield* fixture.harness.queueTurnResponse(threadId, {
+          events: [
+            {
+              type: "turn.started",
+              eventId: EventId.makeUnsafe("evt-copilot-provider-recovery-4"),
+              provider: "githubCopilot",
+              createdAt,
+              threadId,
+              turnId: "fixture-turn-2",
+            },
+            {
+              type: "message.delta",
+              eventId: EventId.makeUnsafe("evt-copilot-provider-recovery-5"),
+              provider: "githubCopilot",
+              createdAt,
+              threadId,
+              turnId: "fixture-turn-2",
+              delta: "Second answer\n",
+            },
+            {
+              type: "turn.completed",
+              eventId: EventId.makeUnsafe("evt-copilot-provider-recovery-6"),
+              provider: "githubCopilot",
+              createdAt,
+              threadId,
+              turnId: "fixture-turn-2",
+              status: "completed",
+            },
+          ],
+        });
+
+        yield* provider.sendTurn({
+          threadId,
+          input: "Second prompt",
+          attachments: [],
+        });
+
+        yield* provider.rollbackConversation({
+          threadId,
+          numTurns: 1,
+        });
+        assert.deepEqual(fixture.harness.getRollbackCalls(threadId), [1]);
+
+        yield* messages.deleteByThreadId({ threadId });
+        yield* messages.upsert({
+          messageId: MessageId.makeUnsafe("user-github-copilot-recovery-1"),
+          threadId,
+          turnId: TurnId.makeUnsafe("turn-github-copilot-recovery-1"),
+          role: "user",
+          text: "First prompt",
+          attachments: [],
+          isStreaming: false,
+          sequence: 1,
+          createdAt,
+          updatedAt: createdAt,
+        });
+        yield* messages.upsert({
+          messageId: MessageId.makeUnsafe("assistant-github-copilot-recovery-1"),
+          threadId,
+          turnId: TurnId.makeUnsafe("turn-github-copilot-recovery-1"),
+          role: "assistant",
+          text: "First answer\n",
+          isStreaming: false,
+          sequence: 2,
+          createdAt,
+          updatedAt: createdAt,
+        });
+
+        const startInputsBeforeRecovery = fixture.harness.getStartInputs().length;
+        yield* fixture.harness.adapter.stopAll();
+        assert.deepEqual(fixture.harness.listActiveSessionIds(), []);
+
+        yield* fixture.harness.queueTurnResponseForNextSession({
+          events: [
+            {
+              type: "turn.started",
+              eventId: EventId.makeUnsafe("evt-copilot-provider-recovery-7"),
+              provider: "githubCopilot",
+              createdAt,
+              threadId,
+              turnId: "fixture-turn-3",
+            },
+            {
+              type: "message.delta",
+              eventId: EventId.makeUnsafe("evt-copilot-provider-recovery-8"),
+              provider: "githubCopilot",
+              createdAt,
+              threadId,
+              turnId: "fixture-turn-3",
+              delta: "Recovered answer\n",
+            },
+            {
+              type: "turn.completed",
+              eventId: EventId.makeUnsafe("evt-copilot-provider-recovery-9"),
+              provider: "githubCopilot",
+              createdAt,
+              threadId,
+              turnId: "fixture-turn-3",
+              status: "completed",
+            },
+          ],
+        });
+
+        yield* provider.sendTurn({
+          threadId,
+          input: "After rollback",
+          attachments: [],
+        });
+
+        const startInputs = fixture.harness.getStartInputs();
+        assert.equal(startInputs.length > startInputsBeforeRecovery, true);
+        const recoveryStartInput = startInputs[startInputs.length - 1];
+        assert.equal(recoveryStartInput?.provider, "githubCopilot");
+        assert.equal(recoveryStartInput?.resumeCursor, undefined);
+        assert.deepEqual(recoveryStartInput?.replayTurns, [
+          {
+            prompt: "First prompt",
+            attachmentNames: [],
+            assistantResponse: "First answer",
+          },
+        ]);
+      }).pipe(Effect.provide(fixture.layer));
+    }).pipe(Effect.provide(NodeServices.layer)),
 );

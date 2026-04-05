@@ -235,6 +235,48 @@ const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 const EMPTY_QUEUED_COMPOSER_MESSAGES: Thread["queuedComposerMessages"] = [];
+const TRANSCRIPT_REBUILD_PROVIDERS = new Set<ProviderKind>([
+  "githubCopilot",
+  "cursor",
+  "gemini",
+  "opencode",
+]);
+
+function usesTranscriptRebuildRestore(provider: ProviderKind | null | undefined): boolean {
+  return provider !== null && provider !== undefined && TRANSCRIPT_REBUILD_PROVIDERS.has(provider);
+}
+
+function buildCheckpointRestoreConfirmation(
+  provider: ProviderKind | null | undefined,
+  turnCount: number,
+): string {
+  if (usesTranscriptRebuildRestore(provider)) {
+    return [
+      `Restore this thread to checkpoint ${turnCount}?`,
+      "This will discard newer messages and turn diffs in this thread.",
+      "Files will be restored to that checkpoint, and the next provider turn will rebuild context from the saved transcript instead of rewinding remote history.",
+      "This action cannot be undone.",
+    ].join("\n");
+  }
+
+  return [
+    `Revert this thread to checkpoint ${turnCount}?`,
+    "This will discard newer messages and turn diffs in this thread.",
+    "This action cannot be undone.",
+  ].join("\n");
+}
+
+function checkpointRestoreActionTitle(provider: ProviderKind | null | undefined): string {
+  return usesTranscriptRebuildRestore(provider)
+    ? "Restore files and rebuild from this message"
+    : "Revert to this message";
+}
+
+function checkpointRestoreFailureMessage(provider: ProviderKind | null | undefined): string {
+  return usesTranscriptRebuildRestore(provider)
+    ? "Failed to restore thread state."
+    : "Failed to revert thread state.";
+}
 
 type ThreadPlanCatalogEntry = Pick<Thread, "id" | "proposedPlans">;
 
@@ -3568,11 +3610,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return;
       }
       const confirmed = await api.dialogs.confirm(
-        [
-          `Revert this thread to checkpoint ${turnCount}?`,
-          "This will discard newer messages and turn diffs in this thread.",
-          "This action cannot be undone.",
-        ].join("\n"),
+        buildCheckpointRestoreConfirmation(activeThread.session?.provider, turnCount),
       );
       if (!confirmed) {
         return;
@@ -3591,7 +3629,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
       } catch (err) {
         setThreadError(
           activeThread.id,
-          err instanceof Error ? err.message : "Failed to revert thread state.",
+          err instanceof Error
+            ? err.message
+            : checkpointRestoreFailureMessage(activeThread.session?.provider),
         );
       }
       setIsRevertingCheckpoint(false);
@@ -5021,6 +5061,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                     onOpenTurnDiff={onOpenTurnDiff}
                     revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
                     onRevertUserMessage={onRevertUserMessage}
+                    revertActionTitle={checkpointRestoreActionTitle(activeThread.session?.provider)}
                     isRevertingCheckpoint={isRevertingCheckpoint}
                     onImageExpand={onExpandTimelineImage}
                     markdownCwd={gitCwd ?? undefined}

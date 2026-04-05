@@ -4,17 +4,32 @@ export interface TranscriptBootstrapMessage {
   readonly attachmentNames?: ReadonlyArray<string>;
 }
 
-export interface TranscriptReplayTurn {
-  readonly prompt: string;
-  readonly attachmentNames: ReadonlyArray<string>;
-  readonly assistantResponse?: string;
-}
+import { type ProviderReplayTurn } from "@t3tools/contracts";
+
+export type TranscriptReplayTurn = ProviderReplayTurn;
 
 export interface TranscriptBootstrapResult {
   readonly text: string;
   readonly includedCount: number;
   readonly omittedCount: number;
   readonly truncated: boolean;
+}
+
+export function cloneReplayTurns(
+  turns: ReadonlyArray<TranscriptReplayTurn> | undefined,
+): Array<TranscriptReplayTurn> {
+  return (turns ?? []).map((turn) =>
+    turn.assistantResponse !== undefined
+      ? {
+          prompt: turn.prompt,
+          attachmentNames: [...turn.attachmentNames],
+          assistantResponse: turn.assistantResponse,
+        }
+      : {
+          prompt: turn.prompt,
+          attachmentNames: [...turn.attachmentNames],
+        },
+  );
 }
 
 const BOOTSTRAP_PREAMBLE =

@@ -30,6 +30,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { meaningfulErrorMessage } from "../errorCause.ts";
 import {
   buildBootstrapPromptFromReplayTurns,
+  cloneReplayTurns,
   type TranscriptReplayTurn,
 } from "../providerTranscriptBootstrap.ts";
 import {
@@ -1827,6 +1828,9 @@ const makeGitHubCopilotAdapter = Effect.fn("makeGitHubCopilotAdapter")(function*
                 return sharedClient.client.createSession(sessionConfig);
               })
           : await sharedClient.client.createSession(sessionConfig);
+        const replayTurns = cloneReplayTurns(input.replayTurns);
+        const resumedExistingSession =
+          resumedFromCursor && sdkSession.sessionId === input.resumeCursor;
 
         const now = new Date().toISOString();
         const createdContext: GitHubCopilotSessionContext = {
@@ -1848,12 +1852,12 @@ const makeGitHubCopilotAdapter = Effect.fn("makeGitHubCopilotAdapter")(function*
           approvalFingerprints: new Set(),
           toolRequestMetadata: new Map(),
           turns: [],
-          replayTurns: [],
+          replayTurns,
           unsubscribers: [],
           sequenceTieBreakersByTimestampMs: new Map(),
           nextFallbackSessionSequence: 0,
           turnState: undefined,
-          pendingBootstrapReset: false,
+          pendingBootstrapReset: replayTurns.length > 0 && !resumedExistingSession,
           stopped: false,
         };
         context = createdContext;
@@ -1868,14 +1872,10 @@ const makeGitHubCopilotAdapter = Effect.fn("makeGitHubCopilotAdapter")(function*
           makeBaseEvent(createdContext, {
             type: "session.started",
             payload: {
-              message:
-                resumedFromCursor && sdkSession.sessionId === input.resumeCursor
-                  ? "Resumed GitHub Copilot session."
-                  : "Started GitHub Copilot session.",
-              resume:
-                resumedFromCursor && sdkSession.sessionId === input.resumeCursor
-                  ? input.resumeCursor
-                  : undefined,
+              message: resumedExistingSession
+                ? "Resumed GitHub Copilot session."
+                : "Started GitHub Copilot session.",
+              resume: resumedExistingSession ? input.resumeCursor : undefined,
             },
             rawMethod: "session.started",
             rawSource: "github-copilot.sdk.event",
@@ -1884,6 +1884,7 @@ const makeGitHubCopilotAdapter = Effect.fn("makeGitHubCopilotAdapter")(function*
             },
           }),
         );
+
         emitRuntimeEvent(
           makeBaseEvent(createdContext, {
             type: "thread.started",

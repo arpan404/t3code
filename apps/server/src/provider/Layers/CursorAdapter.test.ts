@@ -375,6 +375,65 @@ describe("CursorAdapterLive", () => {
     });
   });
 
+  it("falls back to a fresh Cursor session when the persisted resume cursor no longer exists remotely", async () => {
+    const client = makeFakeCursorClient({
+      requestImpl: async (method) => {
+        switch (method) {
+          case "initialize":
+            return cursorInitializeResult();
+          case "authenticate":
+            return {};
+          case "session/load":
+            throw new Error(
+              "Request session/load failed: Session not found: cursor-session-missing",
+            );
+          case "session/new":
+            return cursorSessionResult("cursor-session-recreated");
+          default:
+            throw new Error(`Unexpected Cursor ACP request: ${method}`);
+        }
+      },
+    });
+    mockedStartCursorAcpClient.mockReturnValue(client);
+
+    await withAdapter(async (adapter) => {
+      try {
+        const session = await Effect.runPromise(
+          adapter.startSession({
+            provider: "cursor",
+            threadId: asThreadId("thread-cursor-stale-resume"),
+            cwd: "/repo/cursor-stale-resume",
+            resumeCursor: { sessionId: "cursor-session-missing" },
+            runtimeMode: "full-access",
+          }),
+        );
+
+        expect(session.resumeCursor).toEqual({ sessionId: "cursor-session-recreated" });
+        expect(client.request).toHaveBeenNthCalledWith(
+          3,
+          "session/load",
+          {
+            cwd: "/repo/cursor-stale-resume",
+            mcpServers: [],
+            sessionId: "cursor-session-missing",
+          },
+          { timeoutMs: 15_000 },
+        );
+        expect(client.request).toHaveBeenNthCalledWith(
+          4,
+          "session/new",
+          {
+            cwd: "/repo/cursor-stale-resume",
+            mcpServers: [],
+          },
+          { timeoutMs: 15_000 },
+        );
+      } finally {
+        await Effect.runPromise(adapter.stopAll());
+      }
+    });
+  });
+
   it("waits for an in-flight startup instead of returning a connecting session", async () => {
     const sessionNew = deferred<ReturnType<typeof cursorSessionResult>>();
     const client = makeFakeCursorClient({

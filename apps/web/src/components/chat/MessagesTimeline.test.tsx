@@ -220,6 +220,52 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain('data-thread-row="true"');
   });
 
+  it("uses custom restore copy for the revert action tooltip", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const messageId = MessageId.makeUnsafe("user-rebuildable-provider");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking={false}
+        activeTurnInProgress={false}
+        activeTurnStartedAt={null}
+        scrollContainer={null}
+        timelineEntries={[
+          {
+            id: "user-rebuildable-provider",
+            kind: "message",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            message: {
+              id: messageId,
+              role: "user",
+              text: "Restore me",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              streaming: false,
+            },
+          },
+        ]}
+        completionDividerBeforeEntryId={null}
+        completionSummary={null}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        nowIso="2026-03-17T19:12:30.000Z"
+        expandedWorkGroups={{}}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map([[messageId, 1]])}
+        onRevertUserMessage={() => {}}
+        revertActionTitle="Restore files and rebuild from this message"
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup).toContain("Restore files and rebuild from this message");
+  });
+
   it("renders context compaction entries as normal work rows", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(

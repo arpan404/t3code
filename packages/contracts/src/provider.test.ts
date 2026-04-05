@@ -90,6 +90,29 @@ describe("ProviderSessionStartInput", () => {
     }
     expect(parsed.modelSelection.options?.reasoningEffort).toBe("medium");
   });
+
+  it("accepts replay turns for local transcript recovery", () => {
+    const parsed = decodeProviderSessionStartInput({
+      threadId: "thread-1",
+      provider: "cursor",
+      runtimeMode: "full-access",
+      replayTurns: [
+        {
+          prompt: "Original prompt",
+          attachmentNames: ["diagram.png"],
+          assistantResponse: "Original answer",
+        },
+      ],
+    });
+
+    expect(parsed.replayTurns).toEqual([
+      {
+        prompt: "Original prompt",
+        attachmentNames: ["diagram.png"],
+        assistantResponse: "Original answer",
+      },
+    ]);
+  });
 });
 
 describe("ProviderSendTurnInput", () => {

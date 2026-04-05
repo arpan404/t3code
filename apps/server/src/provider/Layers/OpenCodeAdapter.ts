@@ -32,6 +32,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { meaningfulErrorMessage } from "../errorCause.ts";
 import {
   buildBootstrapPromptFromReplayTurns,
+  cloneReplayTurns,
   type TranscriptReplayTurn,
 } from "../providerTranscriptBootstrap.ts";
 import {
@@ -1221,7 +1222,7 @@ const makeOpenCodeAdapter = Effect.fn("makeOpenCodeAdapter")(function* () {
           opencodeSessionId,
           defaultModels,
           turns: [],
-          replayTurns: [],
+          replayTurns: cloneReplayTurns(input.replayTurns),
           totalProcessedTokens: 0,
           sequenceTieBreakersByTimestampMs: new Map(),
           nextFallbackSessionSequence: 0,
@@ -1229,7 +1230,7 @@ const makeOpenCodeAdapter = Effect.fn("makeOpenCodeAdapter")(function* () {
           pendingApprovals: new Map(),
           pendingUserInputs: new Map(),
           sseAbort: null,
-          pendingBootstrapReset: false,
+          pendingBootstrapReset: (input.replayTurns?.length ?? 0) > 0,
           stopped: false,
         };
         sessions.set(input.threadId, ctx);

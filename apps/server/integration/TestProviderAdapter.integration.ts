@@ -5,6 +5,7 @@ import {
   EventId,
   ProviderApprovalDecision,
   ProviderRuntimeEvent,
+  ProviderSessionStartInput,
   RuntimeSessionId,
   ProviderSession,
   ProviderTurnStartResult,
@@ -187,6 +188,7 @@ export interface TestProviderAdapterHarness {
     response: TestTurnResponse,
   ) => Effect.Effect<void, never>;
   readonly getStartCount: () => number;
+  readonly getStartInputs: () => ReadonlyArray<ProviderSessionStartInput>;
   readonly getRollbackCalls: (threadId: ThreadId) => ReadonlyArray<number>;
   readonly getInterruptCalls: (threadId: ThreadId) => ReadonlyArray<TurnId | undefined>;
   readonly listActiveSessionIds: () => ReadonlyArray<ThreadId>;
@@ -203,6 +205,17 @@ interface MakeTestProviderAdapterHarnessOptions {
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function defaultSessionModelSwitchForProvider(
+  provider: ProviderKind,
+): "in-session" | "restart-session" {
+  return provider === "githubCopilot" ||
+    provider === "cursor" ||
+    provider === "gemini" ||
+    provider === "opencode"
+    ? "restart-session"
+    : "in-session";
 }
 
 function sessionNotFound(
@@ -227,6 +240,7 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
     const provider = options?.provider ?? "codex";
     const runtimeEvents = yield* Queue.unbounded<ProviderRuntimeEvent>();
     let sessionCount = 0;
+    const startInputs: ProviderSessionStartInput[] = [];
     const sessions = new Map<ThreadId, SessionState>();
     const queuedResponsesForNextSession: TestTurnResponse[] = [];
     const interruptCallsBySession = new Map<ThreadId, Array<TurnId | undefined>>();
@@ -254,6 +268,10 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
         sessionCount += 1;
         const threadId = input.threadId;
         const createdAt = nowIso();
+        startInputs.push({
+          ...input,
+          ...(input.replayTurns ? { replayTurns: [...input.replayTurns] } : {}),
+        });
 
         const session: ProviderSession = {
           provider,
@@ -273,7 +291,7 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
             turns: [],
           },
           turnCount: 0,
-          queuedResponses: queuedResponsesForNextSession.splice(0),
+          queuedResponses: [],
           rollbackCalls: [],
         });
 
@@ -291,7 +309,7 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
         const turnCount = state.turnCount;
         const turnId = TurnId.makeUnsafe(`turn-${turnCount}`);
 
-        const response = state.queuedResponses.shift();
+        const response = state.queuedResponses.shift() ?? queuedResponsesForNextSession.shift();
         if (!response) {
           return yield* new ProviderAdapterValidationError({
             provider,
@@ -475,7 +493,7 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
     const adapter: ProviderAdapterShape<ProviderAdapterError> = {
       provider,
       capabilities: {
-        sessionModelSwitch: "in-session",
+        sessionModelSwitch: defaultSessionModelSwitchForProvider(provider),
       },
       startSession,
       sendTurn,
@@ -522,6 +540,8 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
 
     const getStartCount = (): number => sessionCount;
 
+    const getStartInputs = (): ReadonlyArray<ProviderSessionStartInput> => [...startInputs];
+
     const getInterruptCalls = (threadId: ThreadId): ReadonlyArray<TurnId | undefined> => {
       const calls = interruptCallsBySession.get(threadId);
       if (!calls) {
@@ -553,6 +573,7 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
       queueTurnResponse,
       queueTurnResponseForNextSession,
       getStartCount,
+      getStartInputs,
       getRollbackCalls,
       getInterruptCalls,
       listActiveSessionIds,

@@ -25,6 +25,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { meaningfulErrorMessage } from "../errorCause.ts";
 import {
   buildBootstrapPromptFromReplayTurns,
+  cloneReplayTurns,
   type TranscriptReplayTurn,
 } from "../providerTranscriptBootstrap.ts";
 import {
@@ -755,6 +756,15 @@ function isGeminiAuthRequiredError(cause: unknown): boolean {
   }
   const message = cause.message.toLowerCase();
   return cause.code === -32000 && message.includes("authentication required");
+}
+
+function isMissingGeminiSessionError(cause: unknown): boolean {
+  const message = toMessage(cause, "").toLowerCase();
+  return (
+    message.includes("session not found") ||
+    message.includes("unknown session") ||
+    (message.includes("not found") && message.includes("session"))
+  );
 }
 
 function preferredAuthMethod(
@@ -1854,17 +1864,26 @@ const makeGeminiAdapter = Effect.gen(function* () {
     metadata: GeminiSessionMetadata,
     input: ProviderSessionStartInput,
     cwd: string,
-  ): Promise<{ readonly sessionId: string; readonly metadata: GeminiSessionMetadata }> => {
+  ): Promise<{
+    readonly sessionId: string;
+    readonly metadata: GeminiSessionMetadata;
+    readonly method: "session/load" | "session/new";
+  }> => {
     const resumeSessionId = readGeminiResumeCursor(input.resumeCursor);
     const canLoadSession = resumeSessionId !== undefined && metadata.loadSession;
-    const method = canLoadSession ? "session/load" : "session/new";
-    const params = {
+    const newSessionParams = {
       cwd,
       mcpServers: [],
-      ...(canLoadSession ? { sessionId: resumeSessionId } : {}),
     };
 
-    const execute = async () => {
+    const execute = async (
+      method: "session/load" | "session/new",
+      params: {
+        readonly cwd: string;
+        readonly mcpServers: ReadonlyArray<never>;
+        readonly sessionId?: string;
+      },
+    ) => {
       const result = await client.request(method, params, {
         timeoutMs: ACP_CONTROL_TIMEOUT_MS,
       });
@@ -1880,18 +1899,44 @@ const makeGeminiAdapter = Effect.gen(function* () {
       return {
         sessionId,
         metadata: updateMetadataFromSessionResult(metadata, result),
+        method,
       };
     };
 
-    try {
-      return await execute();
-    } catch (cause) {
-      if (!isGeminiAuthRequiredError(cause)) {
-        throw cause;
+    const executeWithAuthRetry = async (
+      method: "session/load" | "session/new",
+      params: {
+        readonly cwd: string;
+        readonly mcpServers: ReadonlyArray<never>;
+        readonly sessionId?: string;
+      },
+    ) => {
+      try {
+        return await execute(method, params);
+      } catch (cause) {
+        if (!isGeminiAuthRequiredError(cause)) {
+          throw cause;
+        }
+        await authenticateGeminiIfRequired(client, metadata);
+        return await execute(method, params);
       }
-      await authenticateGeminiIfRequired(client, metadata);
-      return await execute();
+    };
+
+    if (canLoadSession) {
+      try {
+        return await executeWithAuthRetry("session/load", {
+          ...newSessionParams,
+          sessionId: resumeSessionId,
+        });
+      } catch (cause) {
+        if (!isMissingGeminiSessionError(cause)) {
+          throw cause;
+        }
+        return await executeWithAuthRetry("session/new", newSessionParams);
+      }
     }
+
+    return await executeWithAuthRetry("session/new", newSessionParams);
   };
 
   const finalizeContextOnClose = (
@@ -2037,7 +2082,7 @@ const makeGeminiAdapter = Effect.gen(function* () {
             session,
             metadata: started.metadata,
             turns: [],
-            replayTurns: [],
+            replayTurns: cloneReplayTurns(input.replayTurns),
             sequenceTieBreakersByTimestampMs: new Map(),
             nextFallbackSessionSequence: 0,
             activeTurn: null,
@@ -2047,6 +2092,8 @@ const makeGeminiAdapter = Effect.gen(function* () {
             closed: false,
             stopRequested: false,
           };
+          context.pendingBootstrapReset =
+            context.replayTurns.length > 0 && started.method === "session/new";
           contextRef = context;
           client.setCloseHandler((close) => finalizeContextOnClose(context, close));
 

@@ -60,6 +60,7 @@ interface MessagesTimelineProps {
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   revertTurnCountByUserMessageId: Map<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
+  revertActionTitle?: string;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   markdownCwd: string | undefined;
@@ -84,6 +85,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onOpenTurnDiff,
   revertTurnCountByUserMessageId,
   onRevertUserMessage,
+  revertActionTitle = "Revert to this message",
   isRevertingCheckpoint,
   onImageExpand,
   markdownCwd,
@@ -310,7 +312,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                           variant="outline"
                           disabled={isRevertingCheckpoint || isWorking}
                           onClick={() => onRevertUserMessage(row.message.id)}
-                          title="Revert to this message"
+                          title={revertActionTitle}
+                          aria-label={revertActionTitle}
                         >
                           <Undo2Icon className="size-3" />
                         </Button>

@@ -37,6 +37,7 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import {
   buildBootstrapPromptFromReplayTurns,
+  cloneReplayTurns,
   type TranscriptReplayTurn,
 } from "../providerTranscriptBootstrap.ts";
 import { resolveCursorCliModelId } from "./CursorProvider.ts";
@@ -946,6 +947,15 @@ function describeCursorAdapterCause(cause: unknown): string {
     }
   }
   return cause instanceof Error ? cause.message : String(cause);
+}
+
+function isMissingCursorSessionError(cause: unknown): boolean {
+  const message = describeCursorAdapterCause(cause).toLowerCase();
+  return (
+    message.includes("session not found") ||
+    message.includes("unknown session") ||
+    (message.includes("not found") && message.includes("session"))
+  );
 }
 
 export function extractCursorStreamText(
@@ -2858,7 +2868,7 @@ export const CursorAdapterLive = Layer.effect(
             pendingApprovals: new Map(),
             pendingUserInputs: new Map(),
             turns: [],
-            replayTurns: [],
+            replayTurns: cloneReplayTurns(input.replayTurns),
             activeTurn: undefined,
             pendingBootstrapReset: false,
             stopping: false,
@@ -2949,19 +2959,48 @@ export const CursorAdapterLive = Layer.effect(
               const canLoadSession =
                 resumeSessionId !== undefined &&
                 context.metadata.initialize.agentCapabilities.loadSession;
-              const sessionMethod = canLoadSession ? "session/load" : "session/new";
-              const sessionResult = asObject(
-                await client.request(
-                  sessionMethod,
-                  {
-                    cwd: input.cwd ?? serverConfig.cwd,
-                    mcpServers: [],
-                    ...(canLoadSession ? { sessionId: resumeSessionId } : {}),
-                  },
-                  { timeoutMs: ACP_CONTROL_TIMEOUT_MS },
-                ),
-              );
-              const sessionId = asString(sessionResult?.sessionId) ?? resumeSessionId;
+              const newSessionParams = {
+                cwd: input.cwd ?? serverConfig.cwd,
+                mcpServers: [],
+              };
+              let sessionMethod: "session/load" | "session/new" = canLoadSession
+                ? "session/load"
+                : "session/new";
+              let sessionResult: Record<string, unknown> | undefined;
+
+              if (canLoadSession) {
+                try {
+                  sessionResult = asObject(
+                    await client.request(
+                      "session/load",
+                      {
+                        ...newSessionParams,
+                        sessionId: resumeSessionId,
+                      },
+                      { timeoutMs: ACP_CONTROL_TIMEOUT_MS },
+                    ),
+                  );
+                } catch (cause) {
+                  if (!isMissingCursorSessionError(cause)) {
+                    throw cause;
+                  }
+                  sessionMethod = "session/new";
+                  sessionResult = asObject(
+                    await client.request("session/new", newSessionParams, {
+                      timeoutMs: ACP_CONTROL_TIMEOUT_MS,
+                    }),
+                  );
+                }
+              } else {
+                sessionResult = asObject(
+                  await client.request("session/new", newSessionParams, {
+                    timeoutMs: ACP_CONTROL_TIMEOUT_MS,
+                  }),
+                );
+              }
+              const sessionId =
+                asString(sessionResult?.sessionId) ??
+                (sessionMethod === "session/load" ? resumeSessionId : undefined);
               if (!sessionId) {
                 throw new ProviderAdapterRequestError({
                   provider: PROVIDER,
@@ -2969,6 +3008,8 @@ export const CursorAdapterLive = Layer.effect(
                   detail: "Cursor ACP did not return a session id.",
                 });
               }
+              context.pendingBootstrapReset =
+                context.replayTurns.length > 0 && sessionMethod === "session/new";
 
               updateSession(context, {
                 status: "ready",
