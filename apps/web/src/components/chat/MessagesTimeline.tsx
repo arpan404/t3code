@@ -141,54 +141,59 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             const groupId = workGroupId(row.id);
             const isExpanded = expandedWorkGroups[groupId] ?? false;
             const ChevronIcon = isExpanded ? ChevronDownIcon : ChevronRightIcon;
-            const disclosureLabel =
-              row.tone === "thinking"
-                ? summarizeThinkingDisclosure(row.entries, row.summaryEndAt)
-                : summarizeToolGroupSummary(row.entries);
-            const secondaryLabel =
-              row.tone === "thinking"
-                ? row.entries.length === 1
-                  ? "1 reasoning step"
-                  : `${row.entries.length} reasoning steps`
-                : summarizeToolGroupBreakdown(row.entries);
+            const disclosureLabel = summarizeWorkGroupLabel(row.entries, row.summaryEndAt);
+            const secondaryLabel = summarizeWorkGroupBreakdown(row.entries);
+            const hasThinkingEntries = row.entries.some((entry) => entry.tone === "thinking");
+            const hasToolEntries = row.entries.some((entry) => entry.tone === "tool");
+            const threadGroupTone = hasToolEntries
+              ? hasThinkingEntries
+                ? "mixed"
+                : "tool"
+              : hasThinkingEntries
+                ? "thinking"
+                : row.entries.some((entry) => entry.tone === "error")
+                  ? "error"
+                  : "info";
 
             return (
               <div
                 className={cn("min-w-0 border-l pl-4", workGroupRailClass(row.entries))}
-                data-thread-group={row.tone}
+                data-thread-group={threadGroupTone}
               >
                 <button
                   type="button"
-                  className="w-full rounded-xl border border-border/45 bg-background/70 px-3 py-2 text-left transition-colors duration-150 hover:border-foreground/16"
+                  className="w-full text-left"
                   onClick={() => onToggleWorkGroup(groupId)}
-                  data-thinking-disclosure={row.tone === "thinking" ? "true" : undefined}
+                  data-meta-disclosure="true"
+                  data-meta-disclosure-open={String(isExpanded)}
+                  data-thinking-disclosure={hasThinkingEntries ? "true" : undefined}
                   data-thinking-disclosure-open={
-                    row.tone === "thinking" ? String(isExpanded) : undefined
+                    hasThinkingEntries ? String(isExpanded) : undefined
                   }
-                  data-tool-disclosure={row.tone === "tool" ? "true" : undefined}
-                  data-tool-disclosure-open={row.tone === "tool" ? String(isExpanded) : undefined}
+                  data-tool-disclosure={hasToolEntries ? "true" : undefined}
+                  data-tool-disclosure-open={hasToolEntries ? String(isExpanded) : undefined}
                 >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex min-w-0 items-center gap-2.5">
-                      <span className="flex size-5 shrink-0 items-center justify-center rounded-full border border-border/55 text-muted-foreground/70">
-                        <ChevronIcon className="size-3.5" />
-                      </span>
-                      <div className="min-w-0">
-                        <p className="truncate text-[11px] font-medium text-foreground/84">
+                  <div className="flex items-start gap-3 py-1.5 transition-colors duration-150 hover:text-foreground/92">
+                    <span className="mt-1 flex size-4 shrink-0 items-center justify-center text-muted-foreground/45 transition-transform duration-150 group-hover/timeline:text-foreground/62">
+                      <ChevronIcon className="size-3.5" />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex min-w-0 items-baseline justify-between gap-3">
+                        <p className="truncate text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground/58">
                           {disclosureLabel}
                         </p>
-                        <p className="truncate text-[10px] text-muted-foreground/58">
-                          {secondaryLabel}
-                        </p>
+                        <span className="shrink-0 text-[10px] text-muted-foreground/45">
+                          {isExpanded ? "Hide log" : "Show log"}
+                        </span>
                       </div>
+                      <p className="wrap-break-word pt-1 text-[13px] leading-6 text-foreground/78">
+                        {secondaryLabel}
+                      </p>
                     </div>
-                    <span className="shrink-0 text-[9px] uppercase tracking-[0.14em] text-muted-foreground/58">
-                      {isExpanded ? "Hide" : "Show"}
-                    </span>
                   </div>
                 </button>
                 {isExpanded && (
-                  <div className="mt-2 space-y-1.5 border-border/35 border-l pl-4">
+                  <div className="mt-2 space-y-2 border-border/25 border-l pl-4">
                     {row.entries.map((workEntry) => (
                       <SimpleWorkEntryRow
                         key={`work-group:${row.id}:${workEntry.id}`}
@@ -477,7 +482,6 @@ type TimelineRow =
       id: string;
       createdAt: string;
       entries: TimelineWorkEntry[];
-      tone: "thinking" | "tool";
       summaryEndAt: string | null;
     }
   | {
@@ -609,30 +613,22 @@ function buildTimelineRows(input: {
   let lastMessageBoundaryAt: string | null = null;
   let pendingWorkRowId: string | null = null;
   let pendingWorkCreatedAt: string | null = null;
-  let pendingWorkTone: TimelineWorkEntry["tone"] | null = null;
   let pendingWorkEntries: TimelineWorkEntry[] = [];
 
   const flushPendingWorkEntries = (nextEventCreatedAt: string | null) => {
-    if (
-      pendingWorkEntries.length === 0 ||
-      !pendingWorkRowId ||
-      !pendingWorkCreatedAt ||
-      !pendingWorkTone
-    ) {
+    if (pendingWorkEntries.length === 0 || !pendingWorkRowId || !pendingWorkCreatedAt) {
       pendingWorkEntries = [];
       pendingWorkRowId = null;
       pendingWorkCreatedAt = null;
-      pendingWorkTone = null;
       return;
     }
 
-    if (isToggleableWorkTone(pendingWorkTone)) {
+    if (shouldCollapseWorkEntries(pendingWorkEntries)) {
       nextRows.push({
         kind: "work-group",
         id: pendingWorkRowId,
         createdAt: pendingWorkCreatedAt,
         entries: pendingWorkEntries,
-        tone: pendingWorkTone,
         summaryEndAt: resolveWorkGroupSummaryEndAt(pendingWorkEntries, nextEventCreatedAt),
       });
     } else {
@@ -649,7 +645,6 @@ function buildTimelineRows(input: {
     pendingWorkEntries = [];
     pendingWorkRowId = null;
     pendingWorkCreatedAt = null;
-    pendingWorkTone = null;
   };
 
   const pushPendingWorkEntry = (timelineEntry: Extract<TimelineEntry, { kind: "work" }>) => {
@@ -667,21 +662,11 @@ function buildTimelineRows(input: {
     if (pendingWorkEntries.length === 0) {
       pendingWorkRowId = timelineEntry.id;
       pendingWorkCreatedAt = timelineEntry.createdAt;
-      pendingWorkTone = timelineEntry.entry.tone;
       pendingWorkEntries = [timelineEntry.entry];
       return;
     }
 
-    if (pendingWorkTone === timelineEntry.entry.tone) {
-      pendingWorkEntries.push(timelineEntry.entry);
-      return;
-    }
-
-    flushPendingWorkEntries(timelineEntry.createdAt);
-    pendingWorkRowId = timelineEntry.id;
-    pendingWorkCreatedAt = timelineEntry.createdAt;
-    pendingWorkTone = timelineEntry.entry.tone;
-    pendingWorkEntries = [timelineEntry.entry];
+    pendingWorkEntries.push(timelineEntry.entry);
   };
 
   for (const timelineEntry of input.timelineEntries) {
@@ -775,10 +760,13 @@ function workGroupId(rowId: string): string {
   return `work-group:${rowId}`;
 }
 
-function isToggleableWorkTone(
-  tone: TimelineWorkEntry["tone"],
-): tone is Extract<TimelineWorkEntry["tone"], "thinking" | "tool"> {
-  return tone === "thinking" || tone === "tool";
+function shouldCollapseWorkEntries(entries: ReadonlyArray<TimelineWorkEntry>): boolean {
+  if (entries.length !== 1) {
+    return entries.length > 0;
+  }
+
+  const [entry] = entries;
+  return entry?.tone === "thinking" || entry?.tone === "tool";
 }
 
 function isEventInActiveTurn(createdAt: string, activeTurnStartedAtMs: number): boolean {
@@ -825,30 +813,35 @@ function findTrailingLiveWorkEntryId(
 }
 
 function workGroupRailClass(entries: ReadonlyArray<TimelineWorkEntry>): string {
-  if (entries.every((entry) => entry.tone === "thinking")) {
-    return "border-amber-500/26";
-  }
+  const hasThinking = entries.some((entry) => entry.tone === "thinking");
+  const hasTool = entries.some((entry) => entry.tone === "tool");
+
   if (entries.some((entry) => entry.tone === "error")) {
     return "border-rose-500/22";
   }
-  if (entries.every((entry) => entry.tone === "tool")) {
+  if (hasThinking && !hasTool) {
+    return "border-amber-500/26";
+  }
+  if (hasTool) {
     return "border-border/35";
   }
   return "border-emerald-500/18";
 }
 
-function summarizeThinkingDisclosure(
+function summarizeWorkGroupLabel(
   entries: ReadonlyArray<TimelineWorkEntry>,
   summaryEndAt: string | null,
 ): string {
   const firstEntry = entries[0];
   const duration =
-    firstEntry && summaryEndAt ? formatThoughtTimer(firstEntry.createdAt, summaryEndAt) : null;
+    firstEntry && summaryEndAt
+      ? formatCompletedWorkTimer(firstEntry.createdAt, summaryEndAt)
+      : null;
 
-  return duration ? `Thought for ${duration}` : "Thought";
+  return duration ? `Worked for ${duration}` : "Activity log";
 }
 
-function formatThoughtTimer(startIso: string, endIso: string): string | null {
+function formatCompletedWorkTimer(startIso: string, endIso: string): string | null {
   const startedAtMs = Date.parse(startIso);
   const endedAtMs = Date.parse(endIso);
   if (!Number.isFinite(startedAtMs) || !Number.isFinite(endedAtMs)) {
@@ -871,85 +864,31 @@ function formatThoughtTimer(startIso: string, endIso: string): string | null {
   return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
 }
 
-function summarizeToolGroupSummary(entries: ReadonlyArray<TimelineWorkEntry>): string {
-  return entries.length === 1 ? "1 tool call" : `${entries.length} tool calls`;
-}
+function summarizeWorkGroupBreakdown(entries: ReadonlyArray<TimelineWorkEntry>): string {
+  const toolCount = entries.filter((entry) => entry.tone === "tool").length;
+  const thinkingCount = entries.filter((entry) => entry.tone === "thinking").length;
+  const errorCount = entries.filter((entry) => entry.tone === "error").length;
+  const infoCount = entries.filter((entry) => entry.tone === "info").length;
+  const parts: string[] = [];
 
-function summarizeToolGroupBreakdown(entries: ReadonlyArray<TimelineWorkEntry>): string {
-  if (entries.length === 0) {
-    return "";
+  if (toolCount > 0) {
+    parts.push(toolCount === 1 ? "1 tool call" : `${toolCount} tool calls`);
+  }
+  if (thinkingCount > 0) {
+    parts.push(thinkingCount === 1 ? "1 reasoning step" : `${thinkingCount} reasoning steps`);
+  }
+  if (errorCount > 0) {
+    parts.push(errorCount === 1 ? "1 issue" : `${errorCount} issues`);
+  }
+  if (infoCount > 0) {
+    parts.push(infoCount === 1 ? "1 event" : `${infoCount} events`);
   }
 
-  const counts = new Map<string, number>();
-  for (const entry of entries) {
-    const category = summarizeToolGroupEntryType(entry);
-    counts.set(category, (counts.get(category) ?? 0) + 1);
+  if (parts.length > 0) {
+    return parts.join(" · ");
   }
 
-  return [...counts.entries()]
-    .toSorted(
-      (left, right) =>
-        right[1] - left[1] ||
-        toolBreakdownCategoryRank(left[0]) - toolBreakdownCategoryRank(right[0]) ||
-        left[0].localeCompare(right[0]),
-    )
-    .slice(0, 3)
-    .map(([label, count]) => `${count} ${count === 1 ? label : `${label}s`}`)
-    .join(" · ");
-}
-
-function toolBreakdownCategoryRank(category: string): number {
-  switch (category) {
-    case "file read":
-      return 0;
-    case "patch":
-      return 1;
-    case "command":
-      return 2;
-    case "search":
-      return 3;
-    case "image":
-      return 4;
-    default:
-      return 5;
-  }
-}
-
-function summarizeToolGroupEntryType(entry: TimelineWorkEntry): string {
-  const titleText = `${entry.toolTitle ?? ""} ${entry.label}`.toLowerCase();
-
-  if (entry.requestKind === "command" || entry.itemType === "command_execution" || entry.command) {
-    return "command";
-  }
-  if (entry.requestKind === "file-read") {
-    return "file read";
-  }
-  if (
-    entry.requestKind === "file-change" ||
-    entry.itemType === "file_change" ||
-    (entry.changedFiles?.length ?? 0) > 0
-  ) {
-    return "patch";
-  }
-  if (entry.itemType === "web_search") {
-    return "search";
-  }
-  if (entry.itemType === "image_view") {
-    return "image";
-  }
-  if (/\b(read|view|open|cat|show)\b/.test(titleText)) {
-    return "file read";
-  }
-  if (/\b(patch|edit|write|save|copy|update)\b/.test(titleText)) {
-    return "patch";
-  }
-  if (/\b(command|bash|terminal|exec|run)\b/.test(titleText)) {
-    return "command";
-  }
-  if (/\b(search|grep|rg|ripgrep|find)\b/.test(titleText)) {
-    return "search";
-  }
-  return "tool call";
+  return entries.length === 1 ? "1 log entry" : `${entries.length} log entries`;
 }
 
 function shouldSkipAssistantMessageRow(
@@ -1104,39 +1043,6 @@ function workToneClass(tone: "thinking" | "tool" | "info" | "error"): string {
   return "text-muted-foreground/40";
 }
 
-function workEntrySurfaceClass(tone: TimelineWorkEntry["tone"]): string {
-  if (tone === "thinking") {
-    return "border-amber-500/26 border-dashed";
-  }
-  if (tone === "tool") {
-    return "border-border/40";
-  }
-  if (tone === "error") {
-    return "border-rose-500/24";
-  }
-  return "border-emerald-500/18";
-}
-
-function workEntryBadgeLabel(tone: TimelineWorkEntry["tone"]): string {
-  if (tone === "thinking") return "Thinking";
-  if (tone === "tool") return "Tool";
-  if (tone === "error") return "Issue";
-  return "Event";
-}
-
-function workEntryBadgeClass(tone: TimelineWorkEntry["tone"]): string {
-  if (tone === "thinking") {
-    return "text-amber-700 dark:text-amber-100";
-  }
-  if (tone === "tool") {
-    return "text-muted-foreground/62";
-  }
-  if (tone === "error") {
-    return "text-rose-700 dark:text-rose-100";
-  }
-  return "text-emerald-700 dark:text-emerald-100";
-}
-
 function workEntryMarkerClass(tone: TimelineWorkEntry["tone"]): string {
   if (tone === "thinking") return "bg-amber-500/55";
   if (tone === "tool") return "bg-border";
@@ -1144,17 +1050,14 @@ function workEntryMarkerClass(tone: TimelineWorkEntry["tone"]): string {
   return "bg-emerald-500/60";
 }
 
-function workEntryPreview(
+function workEntryDetailText(
   workEntry: Pick<TimelineWorkEntry, "detail" | "command" | "changedFiles">,
 ) {
-  const detailPreview = workEntry.detail?.trim() || null;
-  const commandPreview = normalizeWorkCommandPreview(workEntry.command);
+  const detailText = workEntry.detail?.trim() || null;
+  const commandText = normalizeWorkCommandText(workEntry.command);
 
-  if (commandPreview && (!detailPreview || !isNoisyWorkCommandPreview(workEntry.command))) {
-    return commandPreview;
-  }
-  if (detailPreview) return detailPreview;
-  if (commandPreview) return commandPreview;
+  if (detailText) return detailText;
+  if (commandText) return commandText;
   if ((workEntry.changedFiles?.length ?? 0) === 0) return null;
   const [firstPath] = workEntry.changedFiles ?? [];
   if (!firstPath) return null;
@@ -1163,27 +1066,15 @@ function workEntryPreview(
     : `${firstPath} +${workEntry.changedFiles!.length - 1} more`;
 }
 
-function normalizeWorkCommandPreview(command: string | undefined): string | null {
+function normalizeWorkCommandText(command: string | undefined): string | null {
   if (!command) {
     return null;
   }
-  const normalized = command.replace(/\s+/g, " ").trim();
+  const normalized = command.replace(/\r\n?/g, "\n").trim();
   if (normalized.length === 0) {
     return null;
   }
-  return normalized.length <= 140 ? normalized : `${normalized.slice(0, 137)}...`;
-}
-
-function isNoisyWorkCommandPreview(command: string | undefined): boolean {
-  if (!command) {
-    return false;
-  }
-  return (
-    /[\r\n]/.test(command) ||
-    /\|\||&&|;/.test(command) ||
-    /\b(?:node|python|ruby)\s+-[ce]\b/.test(command) ||
-    command.trim().length > 140
-  );
+  return normalized;
 }
 
 function workEntryIcon(workEntry: TimelineWorkEntry): LucideIcon {
@@ -1233,18 +1124,21 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const iconConfig = workToneIcon(workEntry.tone);
   const EntryIcon = workEntryIcon(workEntry);
   const heading = toolWorkEntryHeading(workEntry);
-  const preview = workEntryPreview(workEntry);
-  const displayText = preview ? `${heading} - ${preview}` : heading;
+  const detailText = workEntryDetailText(workEntry);
+  const displayText = detailText ? `${heading} - ${detailText}` : heading;
   const hasChangedFiles = (workEntry.changedFiles?.length ?? 0) > 0;
   const previewIsChangedFiles = hasChangedFiles && !workEntry.command && !workEntry.detail;
-  const badgeLabel = workEntryBadgeLabel(workEntry.tone);
+  const toneLabel =
+    workEntry.tone === "thinking"
+      ? "Thinking"
+      : workEntry.tone === "tool"
+        ? "Tool"
+        : workEntry.tone === "error"
+          ? "Issue"
+          : "Event";
 
   return (
-    <div
-      className={cn("border-l pl-3", workEntrySurfaceClass(workEntry.tone))}
-      data-work-entry-id={workEntry.id}
-      data-work-entry-tone={workEntry.tone}
-    >
+    <div className="pl-0.5" data-work-entry-id={workEntry.id} data-work-entry-tone={workEntry.tone}>
       <div className="flex items-start gap-2.5 transition-[opacity,translate] duration-200">
         <span
           className={cn(
@@ -1255,20 +1149,12 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
         <div className="min-w-0 flex-1 overflow-hidden">
           <div className="mb-0.5 flex min-w-0 items-center gap-1.5">
             <EntryIcon className={cn("size-3 shrink-0", iconConfig.className)} />
-            <span
-              className={cn(
-                "shrink-0 text-[9px] font-medium uppercase tracking-[0.16em]",
-                workEntryBadgeClass(workEntry.tone),
-              )}
-            >
-              {badgeLabel}
-            </span>
             <p
               className={cn(
-                "min-w-0 truncate text-[11px] leading-5",
+                "min-w-0 flex-1 truncate text-[12px] leading-5",
                 workEntry.tone === "thinking" && "tracking-[0.01em]",
                 workToneClass(workEntry.tone),
-                preview ? "text-muted-foreground/70" : "",
+                detailText ? "text-muted-foreground/70" : "",
               )}
               title={displayText}
             >
@@ -1276,18 +1162,21 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
                 {heading}
               </span>
             </p>
+            <span className="shrink-0 text-[9px] uppercase tracking-[0.14em] text-muted-foreground/38">
+              {toneLabel}
+            </span>
           </div>
-          {preview && (
+          {detailText && (
             <p
               className={cn(
-                "pl-0.5",
+                "pl-5.5",
                 workEntry.tone === "thinking"
                   ? "wrap-break-word whitespace-pre-wrap text-[11px] leading-5 text-foreground/72"
-                  : "truncate font-mono text-[10px] leading-4 text-muted-foreground/65",
+                  : "wrap-break-word whitespace-pre-wrap font-mono text-[10px] leading-5 text-muted-foreground/65",
               )}
-              title={preview}
+              title={detailText}
             >
-              {preview}
+              {detailText}
             </p>
           )}
         </div>

@@ -556,7 +556,10 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain('data-tool-disclosure="true"');
     expect(markup).toContain('data-tool-disclosure-open="false"');
+    expect(markup).toContain('data-meta-disclosure="true"');
+    expect(markup).toContain("Worked for 9s");
     expect(markup).toContain("10 tool calls");
+    expect(markup).not.toContain("rounded-xl border border-border/45 bg-background/70");
     expect(markup).not.toContain('data-work-entry-id="work-tool-1"');
     expect(markup).not.toContain('data-work-entry-id="work-tool-10"');
   });
@@ -777,7 +780,7 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain('data-thinking-disclosure="true"');
     expect(markup).toContain('data-thinking-disclosure-open="false"');
-    expect(markup).toContain("Thought for 2s");
+    expect(markup).toContain("Worked for 2s");
     expect(markup).not.toContain('data-work-entry-id="thinking-collapsed"');
     expect(markup).not.toContain('data-work-entry-id="thinking-collapsed-2"');
     expect(markup).not.toContain("Inspecting package scripts before patching the renderer.");
@@ -849,12 +852,12 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    const thinkingIndex = markup.indexOf("Thought for 3s");
+    const thinkingIndex = markup.indexOf("Worked for 3s");
     const toolIndex = markup.indexOf('data-work-entry-id="tool-after-thinking"');
 
     expect(thinkingIndex).toBeGreaterThanOrEqual(0);
     expect(toolIndex).toBeGreaterThan(thinkingIndex);
-    expect(markup).not.toContain("Thought for 1s");
+    expect(markup).not.toContain("Worked for 1s");
   });
 
   it("moves completed thinking behind a disclosure once assistant output starts", async () => {
@@ -919,7 +922,7 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain('data-work-entry-id="thinking-live"');
   });
 
-  it("renders thinking rows with outline treatment instead of a filled background", async () => {
+  it("renders thinking rows inside the thread log without the old card treatment", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -960,12 +963,13 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("border-dashed");
+    expect(markup).toContain('data-meta-disclosure="true"');
     expect(markup).not.toContain("bg-amber-500/[0.035]");
+    expect(markup).not.toContain("rounded-xl border border-border/45 bg-background/70");
     expect(markup).toContain('data-thinking-disclosure="true"');
     expect(markup).toContain('data-work-entry-tone="thinking"');
     expect(markup).toContain("Tracing the ordering boundary before patching the renderer.");
-    expect(markup).toContain("Thought for 1s");
+    expect(markup).toContain("Worked for 1s");
   });
 
   it("keeps assistant follow-ups beneath the preceding work row in order", async () => {
