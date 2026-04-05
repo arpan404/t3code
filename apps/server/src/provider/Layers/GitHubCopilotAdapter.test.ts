@@ -428,12 +428,21 @@ layer("GitHubCopilotAdapterLive startSession", (it) => {
           toolStarted.payload.detail ?? "",
           /apps\/web\/src\/components\/chat\/MessagesTimeline\.tsx/,
         );
-        assert.deepEqual(toolStarted.payload.data, {
-          toolName: "apply_patch",
-          arguments: {
-            filePath: "apps/web/src/components/chat/MessagesTimeline.tsx",
-          },
+        const toolStartedData =
+          toolStarted.payload.data && typeof toolStarted.payload.data === "object"
+            ? (toolStarted.payload.data as {
+                toolName?: string;
+                arguments?: { filePath?: string };
+                toolTitle?: string;
+                intentionSummary?: string;
+              })
+            : {};
+        assert.equal(toolStartedData.toolName, "apply_patch");
+        assert.deepEqual(toolStartedData.arguments, {
+          filePath: "apps/web/src/components/chat/MessagesTimeline.tsx",
         });
+        assert.equal(toolStartedData.toolTitle, "Patch Messages Timeline");
+        assert.equal(toolStartedData.intentionSummary, "Update the message ordering UI");
 
         assert.equal(toolCompleted.payload.itemType, "file_change");
         assert.equal(toolCompleted.payload.title, "Patch Messages Timeline");
@@ -453,6 +462,311 @@ layer("GitHubCopilotAdapterLive startSession", (it) => {
         );
 
         yield* adapter.stopSession(asThreadId("thread-tooling"));
+      }),
+  );
+
+  it.effect("maps Copilot assistant intents to reasoning work immediately", () =>
+    Effect.gen(function* () {
+      const fakeClient = makeFakeClient({
+        models: [],
+      });
+      mockedCreateGitHubCopilotClient.mockResolvedValue(fakeClient);
+
+      const adapter = yield* GitHubCopilotAdapter;
+      const reasoningEventsFiber = yield* Stream.runCollect(
+        Stream.take(
+          Stream.filter(
+            adapter.streamEvents,
+            (event) =>
+              event.type === "item.started" ||
+              (event.type === "item.completed" && event.payload.itemType === "reasoning"),
+          ),
+          2,
+        ),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        provider: "githubCopilot",
+        threadId: asThreadId("thread-copilot-intent"),
+        cwd: "/repo",
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: asThreadId("thread-copilot-intent"),
+        input: "Inspect the repository state.",
+      });
+
+      fakeClient.emitSessionEvent({
+        id: "event-assistant-intent",
+        type: "assistant.intent",
+        timestamp: "2024-01-01T00:00:01.000Z",
+        parentId: null,
+        ephemeral: true,
+        data: {
+          intent: "Checking codebase",
+        },
+      });
+
+      const events = Array.from(yield* Fiber.join(reasoningEventsFiber));
+      assert.equal(events.length, 2);
+
+      const reasoningStarted = events[0];
+      const reasoningCompleted = events[1];
+
+      assert.equal(reasoningStarted?.type, "item.started");
+      assert.equal(reasoningCompleted?.type, "item.completed");
+
+      if (reasoningStarted?.type !== "item.started") {
+        return;
+      }
+      if (reasoningCompleted?.type !== "item.completed") {
+        return;
+      }
+
+      assert.equal(reasoningStarted.payload.itemType, "reasoning");
+      assert.equal(reasoningCompleted.payload.itemType, "reasoning");
+      assert.equal(reasoningCompleted.payload.detail, "Checking codebase");
+
+      const reasoningData =
+        reasoningCompleted.payload.data && typeof reasoningCompleted.payload.data === "object"
+          ? (reasoningCompleted.payload.data as { content?: string; source?: string })
+          : {};
+      assert.equal(reasoningData.content, "Checking codebase");
+      assert.equal(reasoningData.source, "assistant.intent");
+
+      yield* adapter.stopSession(asThreadId("thread-copilot-intent"));
+    }),
+  );
+
+  it.effect(
+    "announces Copilot tool requests before execution starts and reuses the same tool item",
+    () =>
+      Effect.gen(function* () {
+        const fakeClient = makeFakeClient({
+          models: [],
+        });
+        mockedCreateGitHubCopilotClient.mockResolvedValue(fakeClient);
+
+        const adapter = yield* GitHubCopilotAdapter;
+        const lifecycleEventsFiber = yield* Stream.runCollect(
+          Stream.take(
+            Stream.filter(adapter.streamEvents, (event) => {
+              if (event.type === "item.completed") {
+                return event.payload.itemType === "assistant_message";
+              }
+              if (event.type === "item.started" || event.type === "item.updated") {
+                return event.payload.itemType === "file_change";
+              }
+              return false;
+            }),
+            3,
+          ),
+        ).pipe(Effect.forkChild);
+
+        yield* adapter.startSession({
+          provider: "githubCopilot",
+          threadId: asThreadId("thread-copilot-tool-announcement"),
+          cwd: "/repo",
+          runtimeMode: "full-access",
+        });
+
+        yield* adapter.sendTurn({
+          threadId: asThreadId("thread-copilot-tool-announcement"),
+          input: "Check the codebase and patch the adapter.",
+        });
+
+        fakeClient.emitSessionEvent({
+          id: "event-assistant-tool-announcement",
+          type: "assistant.message",
+          timestamp: "2024-01-01T00:00:02.000Z",
+          parentId: null,
+          data: {
+            messageId: "assistant-tool-announcement",
+            content: "Checking codebase",
+            toolRequests: [
+              {
+                toolCallId: "tool-call-announced",
+                name: "apply_patch",
+                arguments: {
+                  filePath: "apps/server/src/provider/Layers/GitHubCopilotAdapter.ts",
+                },
+                toolTitle: "Patch GitHub Copilot Adapter",
+                intentionSummary: "Inspect and update ordering behavior",
+              },
+            ],
+          },
+        });
+
+        fakeClient.emitSessionEvent({
+          id: "event-tool-execution-start",
+          type: "tool.execution_start",
+          timestamp: "2024-01-01T00:00:03.000Z",
+          parentId: "event-assistant-tool-announcement",
+          data: {
+            toolCallId: "tool-call-announced",
+            toolName: "apply_patch",
+            arguments: {
+              filePath: "apps/server/src/provider/Layers/GitHubCopilotAdapter.ts",
+            },
+          },
+        });
+
+        const events = Array.from(yield* Fiber.join(lifecycleEventsFiber));
+        assert.equal(events.length, 3);
+
+        const toolStarted = events[0];
+        const assistantCompleted = events[1];
+        const toolUpdated = events[2];
+
+        assert.equal(toolStarted?.type, "item.started");
+        assert.equal(assistantCompleted?.type, "item.completed");
+        assert.equal(toolUpdated?.type, "item.updated");
+
+        if (toolStarted?.type !== "item.started") {
+          return;
+        }
+        if (assistantCompleted?.type !== "item.completed") {
+          return;
+        }
+        if (toolUpdated?.type !== "item.updated") {
+          return;
+        }
+
+        assert.equal(toolStarted.payload.itemType, "file_change");
+        assert.equal(toolStarted.payload.title, "Patch GitHub Copilot Adapter");
+        assert.equal(assistantCompleted.payload.itemType, "assistant_message");
+        assert.equal(assistantCompleted.payload.detail, "Checking codebase");
+        assert.equal(toolUpdated.payload.itemType, "file_change");
+        assert.equal(toolUpdated.payload.title, "Patch GitHub Copilot Adapter");
+        assert.equal(toolStarted.itemId, toolUpdated.itemId);
+
+        yield* adapter.stopSession(asThreadId("thread-copilot-tool-announcement"));
+      }),
+  );
+
+  it.effect(
+    "suppresses Copilot assistant messages that only repeat the active intent before a tool call",
+    () =>
+      Effect.gen(function* () {
+        const fakeClient = makeFakeClient({
+          models: [],
+        });
+        mockedCreateGitHubCopilotClient.mockResolvedValue(fakeClient);
+
+        const adapter = yield* GitHubCopilotAdapter;
+        const lifecycleEventsFiber = yield* Stream.runCollect(
+          Stream.take(
+            Stream.filter(adapter.streamEvents, (event) => {
+              if (event.type === "item.completed") {
+                return (
+                  event.payload.itemType === "assistant_message" ||
+                  event.payload.itemType === "reasoning"
+                );
+              }
+              if (event.type === "item.started" || event.type === "item.updated") {
+                return event.payload.itemType === "file_change";
+              }
+              return false;
+            }),
+            3,
+          ),
+        ).pipe(Effect.forkChild);
+
+        yield* adapter.startSession({
+          provider: "githubCopilot",
+          threadId: asThreadId("thread-copilot-intent-suppression"),
+          cwd: "/repo",
+          runtimeMode: "full-access",
+        });
+
+        yield* adapter.sendTurn({
+          threadId: asThreadId("thread-copilot-intent-suppression"),
+          input: "Check the codebase and patch the adapter.",
+        });
+
+        fakeClient.emitSessionEvent({
+          id: "event-assistant-intent-checking",
+          type: "assistant.intent",
+          timestamp: "2024-01-01T00:00:01.000Z",
+          parentId: null,
+          ephemeral: true,
+          data: {
+            intent: "Checking codebase",
+          },
+        });
+
+        fakeClient.emitSessionEvent({
+          id: "event-assistant-message-duplicate-intent",
+          type: "assistant.message",
+          timestamp: "2024-01-01T00:00:02.000Z",
+          parentId: "event-assistant-intent-checking",
+          data: {
+            messageId: "assistant-message-duplicate-intent",
+            content: "Checking codebase",
+            toolRequests: [
+              {
+                toolCallId: "tool-call-duplicate-intent",
+                name: "apply_patch",
+                arguments: {
+                  filePath: "apps/server/src/provider/Layers/GitHubCopilotAdapter.ts",
+                },
+                toolTitle: "Patch GitHub Copilot Adapter",
+                intentionSummary: "Inspect and update ordering behavior",
+              },
+            ],
+          },
+        });
+
+        fakeClient.emitSessionEvent({
+          id: "event-tool-execution-start-duplicate-intent",
+          type: "tool.execution_start",
+          timestamp: "2024-01-01T00:00:03.000Z",
+          parentId: "event-assistant-message-duplicate-intent",
+          data: {
+            toolCallId: "tool-call-duplicate-intent",
+            toolName: "apply_patch",
+            arguments: {
+              filePath: "apps/server/src/provider/Layers/GitHubCopilotAdapter.ts",
+            },
+          },
+        });
+
+        const events = Array.from(yield* Fiber.join(lifecycleEventsFiber));
+        assert.equal(events.length, 3);
+
+        const reasoningCompleted = events[0];
+        const toolStarted = events[1];
+        const toolUpdated = events[2];
+
+        assert.equal(reasoningCompleted?.type, "item.completed");
+        assert.equal(toolStarted?.type, "item.started");
+        assert.equal(toolUpdated?.type, "item.updated");
+
+        if (reasoningCompleted?.type !== "item.completed") {
+          return;
+        }
+        if (toolStarted?.type !== "item.started") {
+          return;
+        }
+        if (toolUpdated?.type !== "item.updated") {
+          return;
+        }
+
+        assert.equal(reasoningCompleted.payload.itemType, "reasoning");
+        assert.equal(reasoningCompleted.payload.detail, "Checking codebase");
+        assert.equal(toolStarted.payload.itemType, "file_change");
+        assert.equal(toolUpdated.payload.itemType, "file_change");
+        assert.equal(toolStarted.itemId, toolUpdated.itemId);
+        assert.equal(
+          events.some(
+            (event) =>
+              event.type === "item.completed" && event.payload.itemType === "assistant_message",
+          ),
+          false,
+        );
+
+        yield* adapter.stopSession(asThreadId("thread-copilot-intent-suppression"));
       }),
   );
 
@@ -543,5 +857,259 @@ layer("GitHubCopilotAdapterLive startSession", (it) => {
 
       yield* adapter.stopSession(asThreadId("thread-sanitized-tooling"));
     }),
+  );
+
+  it.effect(
+    "suppresses Copilot assistant messages that only repeat tool argument intent text",
+    () =>
+      Effect.gen(function* () {
+        const fakeClient = makeFakeClient({
+          models: [],
+        });
+        mockedCreateGitHubCopilotClient.mockResolvedValue(fakeClient);
+
+        const adapter = yield* GitHubCopilotAdapter;
+        const lifecycleEventsFiber = yield* Stream.runCollect(
+          Stream.take(
+            Stream.filter(adapter.streamEvents, (event) => {
+              if (event.type === "item.completed") {
+                return event.payload.itemType === "assistant_message";
+              }
+              if (event.type === "item.started" || event.type === "item.updated") {
+                return event.payload.itemType === "command_execution";
+              }
+              return false;
+            }),
+            2,
+          ),
+        ).pipe(Effect.forkChild);
+
+        yield* adapter.startSession({
+          provider: "githubCopilot",
+          threadId: asThreadId("thread-copilot-argument-intent-suppression"),
+          cwd: "/repo",
+          runtimeMode: "full-access",
+        });
+
+        yield* adapter.sendTurn({
+          threadId: asThreadId("thread-copilot-argument-intent-suppression"),
+          input: "Run the repository checks.",
+        });
+
+        fakeClient.emitSessionEvent({
+          id: "event-assistant-message-argument-intent",
+          type: "assistant.message",
+          timestamp: "2024-01-01T00:00:02.000Z",
+          parentId: null,
+          data: {
+            messageId: "assistant-message-argument-intent",
+            content: "Running checks",
+            toolRequests: [
+              {
+                toolCallId: "tool-call-argument-intent",
+                name: "run_in_terminal",
+                arguments: {
+                  intent: "Running checks",
+                  command: "bun fmt && bun lint && bun typecheck",
+                },
+              },
+            ],
+          },
+        });
+
+        fakeClient.emitSessionEvent({
+          id: "event-tool-start-argument-intent",
+          type: "tool.execution_start",
+          timestamp: "2024-01-01T00:00:03.000Z",
+          parentId: "event-assistant-message-argument-intent",
+          data: {
+            toolCallId: "tool-call-argument-intent",
+            toolName: "run_in_terminal",
+            arguments: {
+              intent: "Running checks",
+              command: "bun fmt && bun lint && bun typecheck",
+            },
+          },
+        });
+
+        const events = Array.from(yield* Fiber.join(lifecycleEventsFiber));
+        assert.equal(events.length, 2);
+        assert.equal(events[0]?.type, "item.started");
+        assert.equal(events[1]?.type, "item.updated");
+        assert.equal(
+          events.some(
+            (event) =>
+              event.type === "item.completed" && event.payload.itemType === "assistant_message",
+          ),
+          false,
+        );
+
+        yield* adapter.stopSession(asThreadId("thread-copilot-argument-intent-suppression"));
+      }),
+  );
+
+  it.effect("projects assistant.message reasoningText before the final Copilot reply", () =>
+    Effect.gen(function* () {
+      const fakeClient = makeFakeClient({
+        models: [],
+      });
+      mockedCreateGitHubCopilotClient.mockResolvedValue(fakeClient);
+
+      const adapter = yield* GitHubCopilotAdapter;
+      const lifecycleEventsFiber = yield* Stream.runCollect(
+        Stream.take(
+          Stream.filter(
+            adapter.streamEvents,
+            (event) =>
+              event.type === "item.completed" &&
+              (event.payload.itemType === "reasoning" ||
+                event.payload.itemType === "assistant_message"),
+          ),
+          2,
+        ),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        provider: "githubCopilot",
+        threadId: asThreadId("thread-copilot-embedded-reasoning"),
+        cwd: "/repo",
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: asThreadId("thread-copilot-embedded-reasoning"),
+        input: "Explain the ordering issue.",
+      });
+
+      fakeClient.emitSessionEvent({
+        id: "event-assistant-message-with-reasoning-text",
+        type: "assistant.message",
+        timestamp: "2024-01-01T00:00:02.000Z",
+        parentId: null,
+        data: {
+          messageId: "assistant-message-with-reasoning-text",
+          reasoningText: "Inspecting the provider timeline before writing the summary.",
+          content:
+            "The ordering issue comes from announcement messages being projected as replies.",
+        },
+      });
+
+      const events = Array.from(yield* Fiber.join(lifecycleEventsFiber));
+      assert.equal(events.length, 2);
+
+      const reasoningCompleted = events[0];
+      const assistantCompleted = events[1];
+
+      assert.equal(reasoningCompleted?.type, "item.completed");
+      assert.equal(assistantCompleted?.type, "item.completed");
+
+      if (reasoningCompleted?.type !== "item.completed") {
+        return;
+      }
+      if (assistantCompleted?.type !== "item.completed") {
+        return;
+      }
+
+      assert.equal(reasoningCompleted.payload.itemType, "reasoning");
+      assert.equal(
+        reasoningCompleted.payload.detail,
+        "Inspecting the provider timeline before writing the summary.",
+      );
+      assert.equal(assistantCompleted.payload.itemType, "assistant_message");
+      assert.equal(
+        assistantCompleted.payload.detail,
+        "The ordering issue comes from announcement messages being projected as replies.",
+      );
+
+      yield* adapter.stopSession(asThreadId("thread-copilot-embedded-reasoning"));
+    }),
+  );
+
+  it.effect(
+    "splits repeated Copilot assistant completions into separate items and preserves provider timestamp order",
+    () =>
+      Effect.gen(function* () {
+        const fakeClient = makeFakeClient({
+          models: [],
+        });
+        mockedCreateGitHubCopilotClient.mockResolvedValue(fakeClient);
+
+        const adapter = yield* GitHubCopilotAdapter;
+        const assistantCompletionsFiber = yield* Stream.runCollect(
+          Stream.take(
+            Stream.filter(
+              adapter.streamEvents,
+              (event) =>
+                event.type === "item.completed" && event.payload.itemType === "assistant_message",
+            ),
+            2,
+          ),
+        ).pipe(Effect.forkChild);
+
+        yield* adapter.startSession({
+          provider: "githubCopilot",
+          threadId: asThreadId("thread-copilot-assistant-segments"),
+          cwd: "/repo",
+          runtimeMode: "full-access",
+        });
+
+        yield* adapter.sendTurn({
+          threadId: asThreadId("thread-copilot-assistant-segments"),
+          input: "Walk through the changes.",
+        });
+
+        fakeClient.emitSessionEvent({
+          id: "event-assistant-message-late",
+          type: "assistant.message",
+          timestamp: "2024-01-01T00:00:02.000Z",
+          parentId: null,
+          data: {
+            messageId: "assistant-message-late",
+            content: "Final explanation.",
+          },
+        });
+
+        fakeClient.emitSessionEvent({
+          id: "event-assistant-message-early",
+          type: "assistant.message",
+          timestamp: "2024-01-01T00:00:01.000Z",
+          parentId: null,
+          data: {
+            messageId: "assistant-message-early",
+            content: "Planning the steps.",
+          },
+        });
+
+        const events = Array.from(yield* Fiber.join(assistantCompletionsFiber));
+        assert.equal(events.length, 2);
+
+        const firstCompletion = events[0];
+        const secondCompletion = events[1];
+
+        assert.equal(firstCompletion?.type, "item.completed");
+        assert.equal(secondCompletion?.type, "item.completed");
+
+        if (firstCompletion?.type !== "item.completed") {
+          return;
+        }
+        if (secondCompletion?.type !== "item.completed") {
+          return;
+        }
+
+        assert.notStrictEqual(firstCompletion.itemId, secondCompletion.itemId);
+
+        const firstSequence = (
+          firstCompletion as typeof firstCompletion & { sessionSequence?: number }
+        ).sessionSequence;
+        const secondSequence = (
+          secondCompletion as typeof secondCompletion & { sessionSequence?: number }
+        ).sessionSequence;
+
+        assert.equal(typeof firstSequence, "number");
+        assert.equal(typeof secondSequence, "number");
+        assert.equal((secondSequence ?? 0) < (firstSequence ?? 0), true);
+
+        yield* adapter.stopSession(asThreadId("thread-copilot-assistant-segments"));
+      }),
   );
 });

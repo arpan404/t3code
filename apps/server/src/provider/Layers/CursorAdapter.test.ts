@@ -739,7 +739,9 @@ describe("CursorAdapterLive", () => {
   });
 
   it("cancels active turns with ACP notifications and cancels pending approvals", async () => {
-    const promptResult = deferred<{ readonly stopReason: string }>();
+    const firstPromptResult = deferred<{ readonly stopReason: string }>();
+    const secondPromptResult = deferred<{ readonly stopReason: string }>();
+    let promptCount = 0;
     const client = makeFakeCursorClient({
       requestImpl: async (method) => {
         switch (method) {
@@ -750,7 +752,8 @@ describe("CursorAdapterLive", () => {
           case "session/new":
             return cursorSessionResult("cursor-session-cancel");
           case "session/prompt":
-            return promptResult.promise;
+            promptCount += 1;
+            return promptCount === 1 ? firstPromptResult.promise : secondPromptResult.promise;
           default:
             throw new Error(`Unexpected Cursor ACP request: ${method}`);
         }
@@ -799,7 +802,9 @@ describe("CursorAdapterLive", () => {
           },
         });
 
-        const resolvedEventPromise = Effect.runPromise(Stream.runHead(adapter.streamEvents));
+        const postInterruptEventsPromise = Effect.runPromise(
+          Stream.runCollect(Stream.take(adapter.streamEvents, 2)),
+        );
         await Effect.runPromise(adapter.interruptTurn(threadId, startedTurn.turnId));
 
         expect(client.notify).toHaveBeenCalledWith("session/cancel", {
@@ -811,16 +816,20 @@ describe("CursorAdapterLive", () => {
           },
         });
 
-        const resolvedEvent = await resolvedEventPromise;
-        expect(resolvedEvent._tag).toBe("Some");
-        if (resolvedEvent._tag !== "Some") {
+        const postInterruptEvents = Array.from(await postInterruptEventsPromise);
+        expect(postInterruptEvents).toHaveLength(2);
+
+        const resolvedEvent = postInterruptEvents[0];
+        const abortedEvent = postInterruptEvents[1];
+        expect(resolvedEvent?.type).toBe("request.resolved");
+        if (resolvedEvent?.type !== "request.resolved") {
           return;
         }
-        expect(resolvedEvent.value.type).toBe("request.resolved");
-        if (resolvedEvent.value.type !== "request.resolved") {
+        expect(abortedEvent?.type).toBe("turn.aborted");
+        if (abortedEvent?.type !== "turn.aborted") {
           return;
         }
-        expect(resolvedEvent.value.payload).toEqual({
+        expect(resolvedEvent.payload).toEqual({
           requestType: "command_execution_approval",
           decision: "cancel",
           resolution: {
@@ -828,15 +837,16 @@ describe("CursorAdapterLive", () => {
           },
         });
 
-        const abortedEventPromise = Effect.runPromise(Stream.runHead(adapter.streamEvents));
-        promptResult.resolve({ stopReason: "cancelled" });
-        const abortedEvent = await abortedEventPromise;
-        expect(abortedEvent._tag).toBe("Some");
-        if (abortedEvent._tag !== "Some") {
-          return;
-        }
-        expect(abortedEvent.value.type).toBe("turn.aborted");
+        const restartedTurn = await Effect.runPromise(
+          adapter.sendTurn({
+            threadId,
+            input: "Retry after cancel",
+          }),
+        );
+        expect(restartedTurn.threadId).toBe(threadId);
+        expect(restartedTurn.turnId).not.toBe(startedTurn.turnId);
       } finally {
+        secondPromptResult.resolve({ stopReason: "end_turn" });
         await Effect.runPromise(adapter.stopAll());
       }
     });

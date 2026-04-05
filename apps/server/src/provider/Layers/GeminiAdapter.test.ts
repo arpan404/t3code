@@ -69,6 +69,9 @@ function makeFakeGeminiClient(options: {
   ) => Promise<unknown>;
 }): AcpClient & {
   readonly request: ReturnType<typeof vi.fn>;
+  readonly getNotificationHandler: () =>
+    | ((notification: { readonly method: string; readonly params?: unknown }) => void)
+    | undefined;
   readonly getRequestHandler: () =>
     | ((request: {
         readonly id: string | number;
@@ -79,6 +82,9 @@ function makeFakeGeminiClient(options: {
 } {
   let closeHandler:
     | ((input: { readonly code: number | null; readonly signal: NodeJS.Signals | null }) => void)
+    | undefined;
+  let notificationHandler:
+    | ((notification: { readonly method: string; readonly params?: unknown }) => void)
     | undefined;
   let requestHandler:
     | ((request: {
@@ -98,7 +104,9 @@ function makeFakeGeminiClient(options: {
     notify: vi.fn(),
     respond: vi.fn(),
     respondError: vi.fn(),
-    setNotificationHandler: vi.fn(),
+    setNotificationHandler: vi.fn((handler) => {
+      notificationHandler = handler;
+    }),
     setRequestHandler: vi.fn((handler) => {
       requestHandler = handler;
     }),
@@ -106,6 +114,7 @@ function makeFakeGeminiClient(options: {
       closeHandler = handler;
     }),
     setProtocolErrorHandler: vi.fn(),
+    getNotificationHandler: () => notificationHandler,
     getRequestHandler: () => requestHandler,
     close: vi.fn(async () => {
       closeHandler?.({ code: 0, signal: null });
@@ -328,6 +337,178 @@ describe("GeminiAdapterLive approvals", () => {
         expect(openedEvent.value.payload.requestType).toBe("file_change_approval");
         expect(openedEvent.value.payload.detail).toBe("Write file");
         expect(client.respond).not.toHaveBeenCalled();
+      } finally {
+        await Effect.runPromise(adapter.stopAll());
+      }
+    });
+  });
+
+  it("preserves Gemini notification timestamps on streamed reasoning chunks", async () => {
+    const client = makeFakeGeminiClient({
+      requestImpl: async (method) => {
+        switch (method) {
+          case "initialize":
+            return geminiInitializeResult();
+          case "session/new":
+            return geminiSessionResult("gemini-session-reasoning-timestamp", {
+              currentModeId: "yolo",
+            });
+          case "session/prompt":
+            return new Promise(() => undefined);
+          default:
+            throw new Error(`Unexpected Gemini ACP request: ${method}`);
+        }
+      },
+    });
+    mockedStartAcpClient.mockReturnValue(client);
+
+    await withAdapter(async (adapter) => {
+      try {
+        await Effect.runPromise(
+          adapter.startSession({
+            provider: "gemini",
+            threadId: asThreadId("thread-gemini-reasoning-timestamp"),
+            cwd: "/repo/gemini-reasoning-timestamp",
+            runtimeMode: "full-access",
+          }),
+        );
+
+        await Effect.runPromise(Stream.take(adapter.streamEvents, 2).pipe(Stream.runDrain));
+
+        const reasoningDeltaFiber = Effect.runPromise(
+          Stream.runHead(
+            Stream.filter(
+              adapter.streamEvents,
+              (event) =>
+                event.type === "content.delta" && event.payload.streamKind === "reasoning_text",
+            ),
+          ),
+        );
+
+        await Effect.runPromise(
+          adapter.sendTurn({
+            threadId: asThreadId("thread-gemini-reasoning-timestamp"),
+            input: "Explain the execution order.",
+          }),
+        );
+
+        const notificationHandler = client.getNotificationHandler();
+        expect(notificationHandler).toBeTypeOf("function");
+        if (!notificationHandler) {
+          return;
+        }
+
+        const providerTimestamp = "2024-01-01T00:00:05.000Z";
+        notificationHandler({
+          method: "session/update",
+          params: {
+            sessionId: "gemini-session-reasoning-timestamp",
+            update: {
+              sessionUpdate: "agent_thought_chunk",
+              timestamp: providerTimestamp,
+              content: {
+                type: "text",
+                text: "Inspecting the event ordering.",
+              },
+            },
+          },
+        });
+
+        const reasoningDelta = await reasoningDeltaFiber;
+        expect(reasoningDelta._tag).toBe("Some");
+        if (reasoningDelta._tag !== "Some") {
+          return;
+        }
+
+        expect(reasoningDelta.value.createdAt).toBe(providerTimestamp);
+      } finally {
+        await Effect.runPromise(adapter.stopAll());
+      }
+    });
+  });
+
+  it("interrupts Gemini turns without waiting for the prompt request to settle", async () => {
+    const firstPromptResult = new Promise<unknown>(() => undefined);
+    const secondPromptResult = Promise.resolve({ stopReason: "end_turn" });
+    let promptCount = 0;
+    const client = makeFakeGeminiClient({
+      requestImpl: async (method) => {
+        switch (method) {
+          case "initialize":
+            return geminiInitializeResult();
+          case "session/new":
+            return geminiSessionResult("gemini-session-interrupt", {
+              currentModeId: "yolo",
+            });
+          case "session/prompt":
+            promptCount += 1;
+            return promptCount === 1 ? firstPromptResult : secondPromptResult;
+          default:
+            throw new Error(`Unexpected Gemini ACP request: ${method}`);
+        }
+      },
+    });
+    mockedStartAcpClient.mockReturnValue(client);
+
+    await withAdapter(async (adapter) => {
+      try {
+        const threadId = asThreadId("thread-gemini-interrupt");
+        await Effect.runPromise(
+          adapter.startSession({
+            provider: "gemini",
+            threadId,
+            cwd: "/repo/gemini-interrupt",
+            runtimeMode: "full-access",
+          }),
+        );
+
+        await Effect.runPromise(Stream.take(adapter.streamEvents, 2).pipe(Stream.runDrain));
+
+        const firstTurn = await Effect.runPromise(
+          adapter.sendTurn({
+            threadId,
+            input: "Start something long running",
+          }),
+        );
+
+        const interruptedEventPromise = Effect.runPromise(
+          Stream.runHead(
+            Stream.filter(
+              adapter.streamEvents,
+              (event) => event.type === "turn.completed" && event.turnId === firstTurn.turnId,
+            ),
+          ),
+        );
+
+        await Effect.runPromise(adapter.interruptTurn(threadId, firstTurn.turnId));
+
+        expect(client.notify).toHaveBeenCalledWith("session/cancel", {
+          sessionId: "gemini-session-interrupt",
+        });
+
+        const interruptedEvent = await interruptedEventPromise;
+        expect(interruptedEvent._tag).toBe("Some");
+        if (interruptedEvent._tag !== "Some") {
+          return;
+        }
+
+        expect(interruptedEvent.value.type).toBe("turn.completed");
+        if (interruptedEvent.value.type !== "turn.completed") {
+          return;
+        }
+
+        expect(interruptedEvent.value.payload.state).toBe("interrupted");
+        expect(interruptedEvent.value.payload.stopReason).toBe("cancelled");
+
+        const secondTurn = await Effect.runPromise(
+          adapter.sendTurn({
+            threadId,
+            input: "Retry after interrupt",
+          }),
+        );
+
+        expect(secondTurn.threadId).toBe(threadId);
+        expect(secondTurn.turnId).not.toBe(firstTurn.turnId);
       } finally {
         await Effect.runPromise(adapter.stopAll());
       }

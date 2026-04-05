@@ -561,6 +561,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   const command = extractToolCommand(payload);
   const changedFiles = extractChangedFiles(payload);
   const title = extractToolTitle(payload);
+  const embeddedIntentText = extractEmbeddedIntentText(payload);
   const entry: DerivedWorkLogEntry = {
     id: activity.id,
     createdAt: activity.createdAt,
@@ -598,6 +599,9 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   }
   if (requestKind) {
     entry.requestKind = requestKind;
+  }
+  if (embeddedIntentText && entry.tone === "tool") {
+    entry.intentText = embeddedIntentText;
   }
   const collapseKey = deriveActivityCollapseKey(entry, payload, activity.turnId);
   if (collapseKey) {
@@ -825,6 +829,56 @@ function extractToolTitle(payload: Record<string, unknown> | null): string | nul
   return typeof payload?.title === "string" ? sanitizeWorkLogText(payload.title) : null;
 }
 
+function extractIntentRecordText(record: Record<string, unknown> | null): string | null {
+  if (!record) {
+    return null;
+  }
+
+  for (const key of ["intent", "goal", "explanation", "summary"] as const) {
+    const value = asTrimmedString(record[key]);
+    if (!value) {
+      continue;
+    }
+    const sanitized = sanitizeWorkLogText(value);
+    if (normalizeIntentToolLabel(sanitized) === "report intent") {
+      continue;
+    }
+    return normalizeIntentDisplayText(sanitized);
+  }
+
+  return null;
+}
+
+function extractEmbeddedIntentText(payload: Record<string, unknown> | null): string | null {
+  const data = asRecord(payload?.data);
+  if (!data) {
+    return null;
+  }
+
+  const directIntent =
+    extractIntentRecordText(asRecord(data.arguments)) ??
+    extractIntentRecordText(asRecord(asRecord(data.item)?.input));
+  if (directIntent) {
+    return directIntent;
+  }
+
+  const intentionSummary = asTrimmedString(data.intentionSummary);
+  if (intentionSummary) {
+    return normalizeIntentDisplayText(sanitizeWorkLogText(intentionSummary));
+  }
+
+  const rawToolTitle = asTrimmedString(data.toolTitle);
+  if (!rawToolTitle || !/^report intent\b/i.test(rawToolTitle)) {
+    return null;
+  }
+
+  const sanitized = sanitizeWorkLogText(rawToolTitle);
+  if (normalizeIntentToolLabel(sanitized) === "report intent") {
+    return null;
+  }
+  return normalizeIntentDisplayText(sanitized);
+}
+
 function stripTrailingExitCode(value: string): {
   output: string | null;
   exitCode?: number | undefined;
@@ -1018,24 +1072,48 @@ export function deriveTimelineEntries(
       continue;
     }
 
-    previousIntentFingerprint = null;
-
     if (entry.kind === "work" && pendingIntentText) {
       if (entry.entry.tone === "tool") {
+        const attachedIntentText = normalizeIntentDisplayText(pendingIntentText);
         normalizedEntries.push({
           ...entry,
           entry: {
             ...entry.entry,
-            intentText: pendingIntentText,
+            intentText: attachedIntentText,
           },
         });
         pendingIntentText = null;
+        previousIntentFingerprint = normalizeIntentComparisonText(attachedIntentText);
         continue;
       }
 
       normalizedEntries.push(entry);
       continue;
     }
+
+    if (entry.kind === "work" && entry.entry.tone === "tool" && entry.entry.intentText) {
+      const embeddedIntentText = normalizeIntentDisplayText(entry.entry.intentText);
+      const nextIntentFingerprint = normalizeIntentComparisonText(embeddedIntentText);
+      if (nextIntentFingerprint !== previousIntentFingerprint) {
+        normalizedEntries.push({
+          id: `intent:${entry.id}`,
+          kind: "intent",
+          createdAt: entry.createdAt,
+          text: embeddedIntentText,
+        });
+      }
+      normalizedEntries.push({
+        ...entry,
+        entry: {
+          ...entry.entry,
+          intentText: embeddedIntentText,
+        },
+      });
+      previousIntentFingerprint = nextIntentFingerprint;
+      continue;
+    }
+
+    previousIntentFingerprint = null;
 
     normalizedEntries.push(entry);
   }

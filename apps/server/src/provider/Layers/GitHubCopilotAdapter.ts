@@ -76,8 +76,12 @@ interface PendingUserInput {
 
 interface ToolItemState {
   readonly itemId: string;
-  readonly itemType: CanonicalItemType;
-  readonly toolName: string;
+  itemType: CanonicalItemType;
+  toolName: string;
+  title: string;
+  detail?: string;
+  data: Record<string, unknown>;
+  completed: boolean;
 }
 
 interface ToolRequestMetadata {
@@ -91,9 +95,11 @@ interface TurnState {
   readonly turnId: TurnId;
   readonly startedAt: string;
   readonly items: Array<unknown>;
-  assistantItemId?: string;
-  reasoningItemId?: string;
+  readonly assistantItemIdsByMessageId: Map<string, string>;
+  readonly reasoningItemIdsByReasoningId: Map<string, string>;
   toolItems: Map<string, ToolItemState>;
+  lastIntentText?: string;
+  reasoningOutputSeen: boolean;
   abortRequested: boolean;
 }
 
@@ -107,6 +113,8 @@ interface GitHubCopilotSessionContext {
   readonly toolRequestMetadata: Map<string, ToolRequestMetadata>;
   readonly turns: Array<{ id: TurnId; items: Array<unknown> }>;
   readonly unsubscribers: Array<() => void>;
+  readonly sequenceTieBreakersByTimestampMs: Map<number, number>;
+  nextFallbackSessionSequence: number;
   turnState: TurnState | undefined;
   lastKnownTokenUsage?: ThreadTokenUsageSnapshot;
   stopped: boolean;
@@ -195,7 +203,12 @@ function permissionRequestFingerprint(request: PermissionRequest): string | unde
 
 function classifyToolItemType(toolName: string | undefined): CanonicalItemType {
   const normalized = toolName?.toLowerCase() ?? "";
-  if (normalized.includes("shell") || normalized.includes("command") || normalized === "bash") {
+  if (
+    normalized.includes("shell") ||
+    normalized.includes("command") ||
+    normalized.includes("terminal") ||
+    normalized === "bash"
+  ) {
     return "command_execution";
   }
   if (
@@ -585,6 +598,92 @@ function getSessionEventTimestamp(event: SessionEvent): string | undefined {
   return "timestamp" in event && typeof event.timestamp === "string" ? event.timestamp : undefined;
 }
 
+function messageIdFromSessionEventData(data: object, fallbackEventId: string): string {
+  return stringValue(getObjectProperty(data, "messageId")) ?? `assistant:${fallbackEventId}`;
+}
+
+function reasoningIdFromSessionEventData(data: object, fallbackEventId: string): string {
+  return stringValue(getObjectProperty(data, "reasoningId")) ?? `reasoning:${fallbackEventId}`;
+}
+
+function toolRequestsFromSessionEventData(data: object): ReadonlyArray<Record<string, unknown>> {
+  const toolRequests = getObjectProperty(data, "toolRequests");
+  if (!Array.isArray(toolRequests)) {
+    return [];
+  }
+  return toolRequests.flatMap((entry) => {
+    const record = recordValue(entry);
+    return record ? [record] : [];
+  });
+}
+
+function normalizeAnnouncementComparisonText(value: string | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const normalized = normalizeWhitespace(value)
+    .replace(/[.!?]+$/g, "")
+    .trim()
+    .toLowerCase();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function assistantMessageLooksLikeToolAnnouncement(input: {
+  readonly content: string | undefined;
+  readonly toolRequests: ReadonlyArray<Record<string, unknown>>;
+  readonly turnState: TurnState;
+}): boolean {
+  const normalizedContent = normalizeAnnouncementComparisonText(input.content);
+  if (!normalizedContent || input.toolRequests.length === 0) {
+    return false;
+  }
+
+  const normalizedIntentText = normalizeAnnouncementComparisonText(input.turnState.lastIntentText);
+  if (normalizedIntentText === normalizedContent) {
+    return true;
+  }
+
+  return input.toolRequests.some((toolRequest) => {
+    const toolName = stringValue(getObjectProperty(toolRequest, "name"));
+    const toolTitle = sanitizeToolDisplayText(
+      stringValue(getObjectProperty(toolRequest, "toolTitle")),
+    );
+    const intentionSummary = sanitizeToolDisplayText(
+      stringValue(getObjectProperty(toolRequest, "intentionSummary")),
+    );
+    const toolArguments = recordValue(getObjectProperty(toolRequest, "arguments"));
+    const argumentIntent = sanitizeToolDisplayText(
+      stringValue(toolArguments?.intent) ??
+        stringValue(toolArguments?.goal) ??
+        stringValue(toolArguments?.explanation) ??
+        stringValue(toolArguments?.summary),
+    );
+    const generatedTitle = buildToolExecutionTitle({
+      ...(toolName ? { toolName } : {}),
+      ...(toolTitle ? { toolTitle } : {}),
+      ...(intentionSummary ? { intentionSummary } : {}),
+    });
+
+    return [toolTitle, intentionSummary, generatedTitle, argumentIntent]
+      .map(normalizeAnnouncementComparisonText)
+      .some((candidate) => candidate === normalizedContent);
+  });
+}
+
+function contentItemRegistry(
+  turnState: TurnState,
+  kind: "assistant" | "reasoning",
+): Map<string, string> {
+  return kind === "assistant"
+    ? turnState.assistantItemIdsByMessageId
+    : turnState.reasoningItemIdsByReasoningId;
+}
+
+function parseIsoTimestampMs(value: string): number | undefined {
+  const timestampMs = Date.parse(value);
+  return Number.isFinite(timestampMs) ? timestampMs : undefined;
+}
+
 function summarizePermissionRequestData(data: object): string | undefined {
   return (
     stringValue(getObjectProperty(data, "fullCommandText")) ??
@@ -681,26 +780,40 @@ const makeGitHubCopilotAdapter = Effect.fn("makeGitHubCopilotAdapter")(function*
       readonly rawPayload: unknown;
       readonly providerItemId?: string | undefined;
     },
-  ): ProviderRuntimeEventByType<TType> =>
-    ({
+  ): ProviderRuntimeEventByType<TType> => {
+    const createdAt = input.createdAt ?? new Date().toISOString();
+    const timestampMs = parseIsoTimestampMs(createdAt);
+    const sessionSequence = (() => {
+      if (timestampMs !== undefined) {
+        const nextTieBreaker = (context.sequenceTieBreakersByTimestampMs.get(timestampMs) ?? 0) + 1;
+        context.sequenceTieBreakersByTimestampMs.set(timestampMs, nextTieBreaker);
+        return timestampMs * 1_000 + nextTieBreaker;
+      }
+      context.nextFallbackSessionSequence += 1;
+      return context.nextFallbackSessionSequence;
+    })();
+
+    return {
       type: input.type,
       eventId: EventId.makeUnsafe(randomUUID()),
       provider: PROVIDER,
       threadId: context.session.threadId,
-      createdAt: input.createdAt ?? new Date().toISOString(),
+      createdAt,
       ...(input.turnId ? { turnId: input.turnId } : {}),
       ...(input.itemId ? { itemId: RuntimeItemId.makeUnsafe(input.itemId) } : {}),
       ...(input.requestId ? { requestId: RuntimeRequestId.makeUnsafe(input.requestId) } : {}),
       ...(input.providerItemId
         ? { providerRefs: { providerItemId: ProviderItemId.makeUnsafe(input.providerItemId) } }
         : {}),
+      sessionSequence,
       payload: input.payload,
       raw: {
         source: input.rawSource,
         method: input.rawMethod,
         payload: input.rawPayload,
       },
-    }) as ProviderRuntimeEventByType<TType>;
+    } as unknown as ProviderRuntimeEventByType<TType>;
+  };
 
   const completeTurn = (
     context: GitHubCopilotSessionContext,
@@ -765,48 +878,263 @@ const makeGitHubCopilotAdapter = Effect.fn("makeGitHubCopilotAdapter")(function*
 
   const ensureContentItem = (
     context: GitHubCopilotSessionContext,
-    kind: "assistant" | "reasoning",
+    input: {
+      readonly kind: "assistant" | "reasoning";
+      readonly providerContentId: string;
+      readonly createdAt?: string | undefined;
+      readonly rawMethod: string;
+      readonly rawSource: "github-copilot.sdk.event" | "github-copilot.sdk.permission";
+      readonly rawPayload: unknown;
+    },
   ): string | undefined => {
     const turnState = context.turnState;
     if (!turnState) {
       return undefined;
     }
-    const existing = kind === "assistant" ? turnState.assistantItemId : turnState.reasoningItemId;
+    const registry = contentItemRegistry(turnState, input.kind);
+    const existing = registry.get(input.providerContentId);
     if (existing) {
       return existing;
     }
     const itemId = randomUUID();
-    if (kind === "assistant") {
-      turnState.assistantItemId = itemId;
-    } else {
-      turnState.reasoningItemId = itemId;
-    }
-    const itemType: CanonicalItemType = kind === "assistant" ? "assistant_message" : "reasoning";
+    registry.set(input.providerContentId, itemId);
+    const itemType: CanonicalItemType =
+      input.kind === "assistant" ? "assistant_message" : "reasoning";
     const event = makeBaseEvent(context, {
       type: "item.started",
+      createdAt: input.createdAt,
       turnId: turnState.turnId,
       itemId,
       payload: {
         itemType,
-        title: kind === "assistant" ? "Assistant response" : "Reasoning",
+        title: input.kind === "assistant" ? "Assistant response" : "Reasoning",
         status: "inProgress",
       },
-      rawMethod: `item.started/${kind}`,
-      rawSource: "github-copilot.sdk.event",
-      rawPayload: { kind },
+      rawMethod: input.rawMethod,
+      rawSource: input.rawSource,
+      rawPayload: input.rawPayload,
+      providerItemId: input.providerContentId,
     });
     turnState.items.push(event);
     emitRuntimeEvent(event);
     return itemId;
   };
 
+  const releaseContentItem = (
+    turnState: TurnState,
+    kind: "assistant" | "reasoning",
+    providerContentId: string,
+  ) => {
+    contentItemRegistry(turnState, kind).delete(providerContentId);
+  };
+
+  const syncAnnouncedToolRequest = (
+    context: GitHubCopilotSessionContext,
+    event: SessionEvent,
+    request: Record<string, unknown>,
+  ): void => {
+    const turnState = context.turnState;
+    if (!turnState) {
+      return;
+    }
+    const providerItemId = stringValue(getObjectProperty(request, "toolCallId"));
+    const toolName = stringValue(getObjectProperty(request, "name"));
+    if (!providerItemId || !toolName) {
+      return;
+    }
+
+    const requestMetadata = context.toolRequestMetadata.get(providerItemId);
+    const toolArguments =
+      recordValue(getObjectProperty(request, "arguments")) ?? requestMetadata?.arguments;
+    const toolTitle =
+      stringValue(getObjectProperty(request, "toolTitle")) ?? requestMetadata?.toolTitle;
+    const intentionSummary =
+      stringValue(getObjectProperty(request, "intentionSummary")) ??
+      requestMetadata?.intentionSummary;
+    const existing = turnState.toolItems.get(providerItemId);
+    const itemType = existing?.itemType ?? classifyToolItemType(toolName);
+    const title = buildToolExecutionTitle({
+      toolName,
+      ...(toolTitle ? { toolTitle } : {}),
+      ...(intentionSummary ? { intentionSummary } : {}),
+    });
+    const detail = buildToolExecutionDetail(toolArguments ? { arguments: toolArguments } : {});
+    const data = {
+      toolName,
+      ...(toolArguments ? { arguments: toolArguments } : {}),
+      ...(toolTitle ? { toolTitle } : {}),
+      ...(intentionSummary ? { intentionSummary } : {}),
+    };
+
+    const toolItem: ToolItemState =
+      existing ??
+      ({
+        itemId: randomUUID(),
+        itemType,
+        toolName,
+        title,
+        ...(detail ? { detail } : {}),
+        data,
+        completed: false,
+      } satisfies ToolItemState);
+
+    toolItem.itemType = itemType;
+    toolItem.toolName = toolName;
+    toolItem.title = title;
+    toolItem.data = data;
+    toolItem.completed = false;
+    if (detail) {
+      toolItem.detail = detail;
+    } else {
+      delete toolItem.detail;
+    }
+    turnState.toolItems.set(providerItemId, toolItem);
+
+    const runtimeEvent = makeBaseEvent(context, {
+      type: existing ? "item.updated" : "item.started",
+      createdAt: getSessionEventTimestamp(event),
+      turnId: turnState.turnId,
+      itemId: toolItem.itemId,
+      providerItemId,
+      payload: {
+        itemType: toolItem.itemType,
+        status: "inProgress",
+        title: toolItem.title,
+        ...(toolItem.detail ? { detail: toolItem.detail } : {}),
+        data: toolItem.data,
+      },
+      rawMethod: event.type,
+      rawSource: "github-copilot.sdk.event",
+      rawPayload: event,
+    });
+    turnState.items.push(runtimeEvent);
+    emitRuntimeEvent(runtimeEvent);
+  };
+
+  const emitAssistantIntentAsReasoning = (
+    context: GitHubCopilotSessionContext,
+    event: SessionEvent,
+    data: object,
+  ): void => {
+    const turnState = context.turnState;
+    if (!turnState) {
+      return;
+    }
+    const intent = stringValue(getObjectProperty(data, "intent"));
+    if (!intent) {
+      return;
+    }
+    turnState.lastIntentText = intent;
+    turnState.reasoningOutputSeen = true;
+    const providerContentId = `intent:${event.id}`;
+    const itemId = ensureContentItem(context, {
+      kind: "reasoning",
+      providerContentId,
+      createdAt: getSessionEventTimestamp(event),
+      rawMethod: event.type,
+      rawSource: "github-copilot.sdk.event",
+      rawPayload: event,
+    });
+    if (!itemId) {
+      return;
+    }
+
+    const runtimeEvent = makeBaseEvent(context, {
+      type: "item.completed",
+      createdAt: getSessionEventTimestamp(event),
+      turnId: turnState.turnId,
+      itemId,
+      providerItemId: providerContentId,
+      payload: {
+        itemType: "reasoning",
+        status: "completed",
+        detail: intent,
+        data: {
+          content: intent,
+          source: "assistant.intent",
+        },
+      },
+      rawMethod: event.type,
+      rawSource: "github-copilot.sdk.event",
+      rawPayload: event,
+    });
+    turnState.items.push(runtimeEvent);
+    emitRuntimeEvent(runtimeEvent);
+    releaseContentItem(turnState, "reasoning", providerContentId);
+  };
+
+  const emitAssistantMessageReasoningFallback = (
+    context: GitHubCopilotSessionContext,
+    event: SessionEvent,
+    messageId: string,
+    data: object,
+  ): void => {
+    const turnState = context.turnState;
+    if (!turnState || turnState.reasoningOutputSeen) {
+      return;
+    }
+    const reasoningText = stringValue(getObjectProperty(data, "reasoningText"));
+    if (!reasoningText) {
+      return;
+    }
+
+    turnState.reasoningOutputSeen = true;
+    const providerContentId = `message-reasoning:${messageId}`;
+    const itemId = ensureContentItem(context, {
+      kind: "reasoning",
+      providerContentId,
+      createdAt: getSessionEventTimestamp(event),
+      rawMethod: event.type,
+      rawSource: "github-copilot.sdk.event",
+      rawPayload: event,
+    });
+    if (!itemId) {
+      return;
+    }
+
+    const runtimeEvent = makeBaseEvent(context, {
+      type: "item.completed",
+      createdAt: getSessionEventTimestamp(event),
+      turnId: turnState.turnId,
+      itemId,
+      providerItemId: providerContentId,
+      payload: {
+        itemType: "reasoning",
+        status: "completed",
+        detail: reasoningText,
+        data: {
+          content: reasoningText,
+          source: "assistant.message.reasoningText",
+        },
+      },
+      rawMethod: event.type,
+      rawSource: "github-copilot.sdk.event",
+      rawPayload: event,
+    });
+    turnState.items.push(runtimeEvent);
+    emitRuntimeEvent(runtimeEvent);
+    releaseContentItem(turnState, "reasoning", providerContentId);
+  };
+
   const handleSessionEvent = (context: GitHubCopilotSessionContext, event: SessionEvent): void => {
     const turnState = context.turnState;
     const data = getSessionEventData(event);
     switch (event.type) {
+      case "assistant.intent": {
+        emitAssistantIntentAsReasoning(context, event, data);
+        return;
+      }
       case "assistant.message_delta": {
         const delta = stringValue(getObjectProperty(data, "deltaContent"));
-        const itemId = ensureContentItem(context, "assistant");
+        const messageId = messageIdFromSessionEventData(data, event.id);
+        const itemId = ensureContentItem(context, {
+          kind: "assistant",
+          providerContentId: messageId,
+          createdAt: getSessionEventTimestamp(event),
+          rawMethod: event.type,
+          rawSource: "github-copilot.sdk.event",
+          rawPayload: event,
+        });
         if (!turnState || !itemId || !delta) {
           return;
         }
@@ -815,6 +1143,7 @@ const makeGitHubCopilotAdapter = Effect.fn("makeGitHubCopilotAdapter")(function*
           createdAt: getSessionEventTimestamp(event),
           turnId: turnState.turnId,
           itemId,
+          providerItemId: messageId,
           payload: {
             streamKind: "assistant_text",
             delta,
@@ -829,15 +1158,25 @@ const makeGitHubCopilotAdapter = Effect.fn("makeGitHubCopilotAdapter")(function*
       }
       case "assistant.reasoning_delta": {
         const delta = stringValue(getObjectProperty(data, "deltaContent"));
-        const itemId = ensureContentItem(context, "reasoning");
+        const reasoningId = reasoningIdFromSessionEventData(data, event.id);
+        const itemId = ensureContentItem(context, {
+          kind: "reasoning",
+          providerContentId: reasoningId,
+          createdAt: getSessionEventTimestamp(event),
+          rawMethod: event.type,
+          rawSource: "github-copilot.sdk.event",
+          rawPayload: event,
+        });
         if (!turnState || !itemId || !delta) {
           return;
         }
+        turnState.reasoningOutputSeen = true;
         const runtimeEvent = makeBaseEvent(context, {
           type: "content.delta",
           createdAt: getSessionEventTimestamp(event),
           turnId: turnState.turnId,
           itemId,
+          providerItemId: reasoningId,
           payload: {
             streamKind: "reasoning_text",
             delta,
@@ -852,8 +1191,33 @@ const makeGitHubCopilotAdapter = Effect.fn("makeGitHubCopilotAdapter")(function*
       }
       case "assistant.message": {
         rememberToolRequestMetadata(context, data);
+        const toolRequests = toolRequestsFromSessionEventData(data);
+        for (const toolRequest of toolRequests) {
+          syncAnnouncedToolRequest(context, event, toolRequest);
+        }
         const content = stringValue(getObjectProperty(data, "content"));
-        const itemId = ensureContentItem(context, "assistant");
+        const messageId = messageIdFromSessionEventData(data, event.id);
+        emitAssistantMessageReasoningFallback(context, event, messageId, data);
+        const hasStreamingItem = turnState?.assistantItemIdsByMessageId.has(messageId) ?? false;
+        const shouldSuppressAnnouncementMessage =
+          !!turnState &&
+          !hasStreamingItem &&
+          assistantMessageLooksLikeToolAnnouncement({
+            content,
+            toolRequests,
+            turnState,
+          });
+        if ((!content && !hasStreamingItem) || shouldSuppressAnnouncementMessage) {
+          return;
+        }
+        const itemId = ensureContentItem(context, {
+          kind: "assistant",
+          providerContentId: messageId,
+          createdAt: getSessionEventTimestamp(event),
+          rawMethod: event.type,
+          rawSource: "github-copilot.sdk.event",
+          rawPayload: event,
+        });
         if (!turnState || !itemId) {
           return;
         }
@@ -862,9 +1226,11 @@ const makeGitHubCopilotAdapter = Effect.fn("makeGitHubCopilotAdapter")(function*
           createdAt: getSessionEventTimestamp(event),
           turnId: turnState.turnId,
           itemId,
+          providerItemId: messageId,
           payload: {
             itemType: "assistant_message",
             status: "completed",
+            ...(content ? { detail: content } : {}),
             ...(content ? { data: { content } } : {}),
           },
           rawMethod: event.type,
@@ -873,11 +1239,27 @@ const makeGitHubCopilotAdapter = Effect.fn("makeGitHubCopilotAdapter")(function*
         });
         turnState.items.push(runtimeEvent);
         emitRuntimeEvent(runtimeEvent);
+        releaseContentItem(turnState, "assistant", messageId);
         return;
       }
       case "assistant.reasoning": {
         const content = stringValue(getObjectProperty(data, "content"));
-        const itemId = ensureContentItem(context, "reasoning");
+        const reasoningId = reasoningIdFromSessionEventData(data, event.id);
+        const hasStreamingItem = turnState?.reasoningItemIdsByReasoningId.has(reasoningId) ?? false;
+        if (!content && !hasStreamingItem) {
+          return;
+        }
+        if (turnState) {
+          turnState.reasoningOutputSeen = true;
+        }
+        const itemId = ensureContentItem(context, {
+          kind: "reasoning",
+          providerContentId: reasoningId,
+          createdAt: getSessionEventTimestamp(event),
+          rawMethod: event.type,
+          rawSource: "github-copilot.sdk.event",
+          rawPayload: event,
+        });
         if (!turnState || !itemId) {
           return;
         }
@@ -886,9 +1268,11 @@ const makeGitHubCopilotAdapter = Effect.fn("makeGitHubCopilotAdapter")(function*
           createdAt: getSessionEventTimestamp(event),
           turnId: turnState.turnId,
           itemId,
+          providerItemId: reasoningId,
           payload: {
             itemType: "reasoning",
             status: "completed",
+            ...(content ? { detail: content } : {}),
             ...(content ? { data: { content } } : {}),
           },
           rawMethod: event.type,
@@ -897,6 +1281,7 @@ const makeGitHubCopilotAdapter = Effect.fn("makeGitHubCopilotAdapter")(function*
         });
         turnState.items.push(runtimeEvent);
         emitRuntimeEvent(runtimeEvent);
+        releaseContentItem(turnState, "reasoning", reasoningId);
         return;
       }
       case "session.usage_info": {
@@ -953,11 +1338,7 @@ const makeGitHubCopilotAdapter = Effect.fn("makeGitHubCopilotAdapter")(function*
           recordValue(getObjectProperty(data, "arguments")) ?? requestMetadata?.arguments;
         const mcpServerName = stringValue(getObjectProperty(data, "mcpServerName"));
         const mcpToolName = stringValue(getObjectProperty(data, "mcpToolName"));
-        const toolItem: ToolItemState = {
-          itemId: randomUUID(),
-          itemType: classifyToolItemType(toolName),
-          toolName,
-        };
+        const existing = turnState.toolItems.get(providerItemId);
         const toolExecutionTitle = buildToolExecutionTitle({
           toolName,
           ...(requestMetadata?.toolTitle ? { toolTitle: requestMetadata.toolTitle } : {}),
@@ -971,9 +1352,36 @@ const makeGitHubCopilotAdapter = Effect.fn("makeGitHubCopilotAdapter")(function*
           ...(mcpServerName ? { mcpServerName } : {}),
           ...(mcpToolName ? { mcpToolName } : {}),
         });
+        const toolData = {
+          toolName,
+          ...(toolArguments ? { arguments: toolArguments } : {}),
+          ...(mcpServerName ? { mcpServerName } : {}),
+          ...(mcpToolName ? { mcpToolName } : {}),
+        };
+        const toolItem: ToolItemState =
+          existing ??
+          ({
+            itemId: randomUUID(),
+            itemType: classifyToolItemType(toolName),
+            toolName,
+            title: toolExecutionTitle,
+            ...(toolExecutionDetail ? { detail: toolExecutionDetail } : {}),
+            data: toolData,
+            completed: false,
+          } satisfies ToolItemState);
+        toolItem.itemType = existing?.itemType ?? classifyToolItemType(toolName);
+        toolItem.toolName = toolName;
+        toolItem.title = toolExecutionTitle;
+        toolItem.data = toolData;
+        toolItem.completed = false;
+        if (toolExecutionDetail) {
+          toolItem.detail = toolExecutionDetail;
+        } else {
+          delete toolItem.detail;
+        }
         turnState.toolItems.set(providerItemId, toolItem);
         const runtimeEvent = makeBaseEvent(context, {
-          type: "item.started",
+          type: existing ? "item.updated" : "item.started",
           createdAt: getSessionEventTimestamp(event),
           turnId: turnState.turnId,
           itemId: toolItem.itemId,
@@ -981,20 +1389,83 @@ const makeGitHubCopilotAdapter = Effect.fn("makeGitHubCopilotAdapter")(function*
           payload: {
             itemType: toolItem.itemType,
             status: "inProgress",
-            title: toolExecutionTitle,
-            ...(toolExecutionDetail
+            title: toolItem.title,
+            ...(toolItem.detail
               ? {
-                  detail: toolExecutionDetail,
+                  detail: toolItem.detail,
                 }
               : summarizePermissionRequestData(data)
                 ? { detail: summarizePermissionRequestData(data) }
                 : {}),
-            data: {
-              toolName,
-              ...(toolArguments ? { arguments: toolArguments } : {}),
-              ...(mcpServerName ? { mcpServerName } : {}),
-              ...(mcpToolName ? { mcpToolName } : {}),
-            },
+            data: toolItem.data,
+          },
+          rawMethod: event.type,
+          rawSource: "github-copilot.sdk.event",
+          rawPayload: event,
+        });
+        turnState.items.push(runtimeEvent);
+        emitRuntimeEvent(runtimeEvent);
+        return;
+      }
+      case "tool.execution_progress": {
+        if (!turnState) {
+          return;
+        }
+        const providerItemId = stringValue(getObjectProperty(data, "toolCallId"));
+        const toolItem = providerItemId ? turnState.toolItems.get(providerItemId) : undefined;
+        if (!providerItemId || !toolItem || toolItem.completed) {
+          return;
+        }
+        const progressMessage = stringValue(getObjectProperty(data, "progressMessage"));
+        if (progressMessage) {
+          toolItem.detail = progressMessage;
+        }
+        const runtimeEvent = makeBaseEvent(context, {
+          type: "item.updated",
+          createdAt: getSessionEventTimestamp(event),
+          turnId: turnState.turnId,
+          itemId: toolItem.itemId,
+          providerItemId,
+          payload: {
+            itemType: toolItem.itemType,
+            status: "inProgress",
+            title: toolItem.title,
+            ...(toolItem.detail ? { detail: toolItem.detail } : {}),
+            data: toolItem.data,
+          },
+          rawMethod: event.type,
+          rawSource: "github-copilot.sdk.event",
+          rawPayload: event,
+        });
+        turnState.items.push(runtimeEvent);
+        emitRuntimeEvent(runtimeEvent);
+        return;
+      }
+      case "tool.execution_partial_result": {
+        if (!turnState) {
+          return;
+        }
+        const providerItemId = stringValue(getObjectProperty(data, "toolCallId"));
+        const toolItem = providerItemId ? turnState.toolItems.get(providerItemId) : undefined;
+        if (!providerItemId || !toolItem || toolItem.completed) {
+          return;
+        }
+        const partialOutput = stringValue(getObjectProperty(data, "partialOutput"));
+        if (partialOutput) {
+          toolItem.detail = partialOutput;
+        }
+        const runtimeEvent = makeBaseEvent(context, {
+          type: "item.updated",
+          createdAt: getSessionEventTimestamp(event),
+          turnId: turnState.turnId,
+          itemId: toolItem.itemId,
+          providerItemId,
+          payload: {
+            itemType: toolItem.itemType,
+            status: "inProgress",
+            title: toolItem.title,
+            ...(toolItem.detail ? { detail: toolItem.detail } : {}),
+            data: toolItem.data,
           },
           rawMethod: event.type,
           rawSource: "github-copilot.sdk.event",
@@ -1012,17 +1483,23 @@ const makeGitHubCopilotAdapter = Effect.fn("makeGitHubCopilotAdapter")(function*
         const requestMetadata = providerItemId
           ? context.toolRequestMetadata.get(providerItemId)
           : undefined;
+        const completedToolName =
+          stringValue(getObjectProperty(data, "toolName")) ?? requestMetadata?.toolName ?? "Tool";
         const toolItem =
           (providerItemId ? turnState.toolItems.get(providerItemId) : undefined) ??
           ({
             itemId: randomUUID(),
-            itemType: classifyToolItemType(
-              stringValue(getObjectProperty(data, "toolName")) ?? requestMetadata?.toolName,
-            ),
-            toolName:
-              stringValue(getObjectProperty(data, "toolName")) ??
-              requestMetadata?.toolName ??
-              "Tool",
+            itemType: classifyToolItemType(completedToolName),
+            toolName: completedToolName,
+            title: buildToolExecutionTitle({
+              toolName: completedToolName,
+              ...(requestMetadata?.toolTitle ? { toolTitle: requestMetadata.toolTitle } : {}),
+              ...(requestMetadata?.intentionSummary
+                ? { intentionSummary: requestMetadata.intentionSummary }
+                : {}),
+            }),
+            data: {},
+            completed: false,
           } satisfies ToolItemState);
         if (providerItemId) {
           turnState.toolItems.delete(providerItemId);
@@ -1044,6 +1521,19 @@ const makeGitHubCopilotAdapter = Effect.fn("makeGitHubCopilotAdapter")(function*
           ...(result !== undefined ? { result } : {}),
           ...(error !== undefined ? { error } : {}),
         });
+        toolItem.title = toolExecutionTitle;
+        if (toolExecutionDetail) {
+          toolItem.detail = toolExecutionDetail;
+        }
+        toolItem.data = {
+          ...(requestMetadata?.toolName ? { toolName: requestMetadata.toolName } : {}),
+          ...(requestMetadata?.arguments ? { arguments: requestMetadata.arguments } : {}),
+          ...(result !== undefined ? { result } : {}),
+          ...(error !== undefined ? { error } : {}),
+          ...(model ? { model } : {}),
+          ...data,
+        };
+        toolItem.completed = true;
         const runtimeEvent = makeBaseEvent(context, {
           type: "item.completed",
           createdAt: getSessionEventTimestamp(event),
@@ -1053,22 +1543,15 @@ const makeGitHubCopilotAdapter = Effect.fn("makeGitHubCopilotAdapter")(function*
           payload: {
             itemType: toolItem.itemType,
             status: success === false ? "failed" : "completed",
-            title: toolExecutionTitle,
-            ...(toolExecutionDetail
+            title: toolItem.title,
+            ...(toolItem.detail
               ? {
-                  detail: toolExecutionDetail,
+                  detail: toolItem.detail,
                 }
               : error
                 ? { detail: getErrorMessage(error) }
                 : {}),
-            data: {
-              ...(requestMetadata?.toolName ? { toolName: requestMetadata.toolName } : {}),
-              ...(requestMetadata?.arguments ? { arguments: requestMetadata.arguments } : {}),
-              ...(result !== undefined ? { result } : {}),
-              ...(error !== undefined ? { error } : {}),
-              ...(model ? { model } : {}),
-              ...data,
-            },
+            data: toolItem.data,
           },
           rawMethod: event.type,
           rawSource: "github-copilot.sdk.event",
@@ -1343,6 +1826,8 @@ const makeGitHubCopilotAdapter = Effect.fn("makeGitHubCopilotAdapter")(function*
           toolRequestMetadata: new Map(),
           turns: [],
           unsubscribers: [],
+          sequenceTieBreakersByTimestampMs: new Map(),
+          nextFallbackSessionSequence: 0,
           turnState: undefined,
           stopped: false,
         };
@@ -1434,7 +1919,10 @@ const makeGitHubCopilotAdapter = Effect.fn("makeGitHubCopilotAdapter")(function*
         turnId,
         startedAt: createdAt,
         items: [],
+        assistantItemIdsByMessageId: new Map(),
+        reasoningItemIdsByReasoningId: new Map(),
         toolItems: new Map(),
+        reasoningOutputSeen: false,
         abortRequested: false,
       };
       context.session = {

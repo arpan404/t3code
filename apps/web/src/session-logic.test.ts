@@ -999,6 +999,39 @@ describe("deriveWorkLogEntries", () => {
     });
   });
 
+  it("extracts embedded intent text from tool metadata carried on the same work entry", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "tool-intent-combined",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.completed",
+        summary: "Running format & checks",
+        tone: "tool",
+        payload: {
+          itemType: "command_execution",
+          title: "Running format & checks",
+          detail: "Formatting and checks completed successfully.",
+          data: {
+            toolName: "run_in_terminal",
+            toolTitle:
+              'Report Intent - {"intent":"Running format & checks"} Running format & checks',
+            arguments: {
+              intent: "Running format & checks",
+              command: "bun fmt && bun lint && bun typecheck",
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry).toMatchObject({
+      toolTitle: "Running format & checks",
+      detail: "Formatting and checks completed successfully.",
+      intentText: "Running format & checks",
+    });
+  });
+
   it("extracts changed file paths for file-change tool activities", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -1320,6 +1353,37 @@ describe("deriveTimelineEntries", () => {
       kind: "work",
       entry: {
         intentText: "Running format and checks",
+      },
+    });
+  });
+
+  it("creates an intent row when a tool entry already carries embedded intent metadata", () => {
+    const entries = deriveTimelineEntries(
+      [],
+      [],
+      [
+        {
+          id: "work-tool-with-embedded-intent",
+          createdAt: "2026-02-23T00:00:01.000Z",
+          label: "Running format & checks",
+          toolTitle: "Running format & checks",
+          detail: "Formatting and checks completed successfully.",
+          tone: "tool",
+          intentText: "Running format & checks",
+        },
+      ],
+    );
+
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toMatchObject({
+      kind: "intent",
+      text: "Running format & checks",
+    });
+    expect(entries[1]).toMatchObject({
+      kind: "work",
+      entry: {
+        toolTitle: "Running format & checks",
+        intentText: "Running format & checks",
       },
     });
   });

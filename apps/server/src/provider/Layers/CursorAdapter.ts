@@ -1977,6 +1977,40 @@ export const CursorAdapterLive = Layer.effect(
       }
     };
 
+    const cancelPendingUserInputsForTurn = (
+      context: CursorSessionContext,
+      turnId: TurnId,
+      input: {
+        readonly rawMethod: string;
+        readonly rawPayload?: unknown;
+      },
+    ) => {
+      for (const [requestId, pending] of context.pendingUserInputs.entries()) {
+        if (pending.turnId !== turnId) {
+          continue;
+        }
+        context.pendingUserInputs.delete(requestId);
+        context.client.respond(pending.jsonRpcId, {
+          outcome: {
+            outcome: "cancelled",
+          },
+        });
+        emit({
+          ...baseEvent(context, {
+            turnId,
+            requestId,
+            rawMethod: input.rawMethod,
+            ...(input.rawPayload !== undefined ? { rawPayload: input.rawPayload } : {}),
+            rawSource: "cursor.acp.notification",
+          }),
+          type: "user-input.resolved",
+          payload: {
+            answers: {},
+          },
+        });
+      }
+    };
+
     const handleSessionUpdate = (context: CursorSessionContext, params: unknown) => {
       const record = asObject(params);
       const update = asObject(record?.update);
@@ -2830,6 +2864,14 @@ export const CursorAdapterLive = Layer.effect(
           cancelPendingApprovalsForTurn(context, activeTurnId, {
             rawMethod: "session/cancel",
             rawPayload: { sessionId },
+          });
+          cancelPendingUserInputsForTurn(context, activeTurnId, {
+            rawMethod: "session/cancel",
+            rawPayload: { sessionId },
+          });
+          settleTurn(context, activeTurnId, {
+            type: "aborted",
+            reason: "Turn cancelled",
           });
         },
         catch: (cause) => {

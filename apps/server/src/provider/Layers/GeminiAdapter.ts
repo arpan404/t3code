@@ -210,6 +210,8 @@ type GeminiSessionContext = {
   session: ProviderSession;
   metadata: GeminiSessionMetadata;
   readonly turns: Array<{ id: TurnId; items: Array<unknown> }>;
+  readonly sequenceTieBreakersByTimestampMs: Map<number, number>;
+  nextFallbackSessionSequence: number;
   activeTurn: GeminiTurnState | null;
   readonly pendingPermissions: Map<string, GeminiPendingPermission>;
   closed: boolean;
@@ -233,6 +235,11 @@ function isoNow(): string {
   return new Date().toISOString();
 }
 
+function parseIsoTimestampMs(value: string): number | undefined {
+  const timestampMs = Date.parse(value);
+  return Number.isFinite(timestampMs) ? timestampMs : undefined;
+}
+
 function toMessage(cause: unknown, fallback: string): string {
   return cause instanceof Error && cause.message.length > 0 ? cause.message : fallback;
 }
@@ -249,6 +256,19 @@ function asArray(value: unknown): ReadonlyArray<unknown> {
 
 function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function resolveGeminiNotificationCreatedAt(
+  params: Record<string, unknown>,
+  update: Record<string, unknown>,
+): string | undefined {
+  return (
+    asString(update.createdAt) ??
+    asString(update.timestamp) ??
+    asString(update.updatedAt) ??
+    asString(params.createdAt) ??
+    asString(params.timestamp)
+  );
 }
 
 function normalizeSessionModes(value: unknown): {
@@ -608,22 +628,37 @@ const makeGeminiAdapter = Effect.gen(function* () {
       readonly itemId?: RuntimeItemId;
       readonly requestId?: RuntimeRequestId;
     },
-  ): ProviderRuntimeEventByType<TType> =>
-    ({
+  ): ProviderRuntimeEventByType<TType> => {
+    const createdAt = input.createdAt ?? isoNow();
+    const timestampMs = parseIsoTimestampMs(createdAt);
+    const sessionSequence = (() => {
+      if (timestampMs !== undefined) {
+        const nextTieBreaker = (context.sequenceTieBreakersByTimestampMs.get(timestampMs) ?? 0) + 1;
+        context.sequenceTieBreakersByTimestampMs.set(timestampMs, nextTieBreaker);
+        return timestampMs * 1_000 + nextTieBreaker;
+      }
+      context.nextFallbackSessionSequence += 1;
+      return context.nextFallbackSessionSequence;
+    })();
+
+    return {
       type: input.type,
       eventId: EventId.makeUnsafe(randomUUID()),
       provider: PROVIDER,
       threadId: context.threadId,
-      createdAt: input.createdAt ?? isoNow(),
+      createdAt,
       ...(input.turnId ? { turnId: input.turnId } : {}),
       ...(input.itemId ? { itemId: input.itemId } : {}),
       ...(input.requestId ? { requestId: input.requestId } : {}),
+      sessionSequence,
       payload: input.payload,
-    }) as ProviderRuntimeEventByType<TType>;
+    } as unknown as ProviderRuntimeEventByType<TType>;
+  };
 
   const createToolItemState = (
     context: GeminiSessionContext,
     toolCall: GeminiToolCallLike,
+    createdAt?: string,
   ): GeminiToolItemState | null => {
     const turn = context.activeTurn;
     if (!turn) {
@@ -644,6 +679,7 @@ const makeGeminiAdapter = Effect.gen(function* () {
     emit(
       baseEvent(context, {
         type: "item.started",
+        ...(createdAt ? { createdAt } : {}),
         turnId: turn.id,
         itemId: item.itemId,
         payload: {
@@ -668,12 +704,16 @@ const makeGeminiAdapter = Effect.gen(function* () {
     return item;
   };
 
-  const updateToolItem = (context: GeminiSessionContext, toolCall: GeminiToolCallLike) => {
+  const updateToolItem = (
+    context: GeminiSessionContext,
+    toolCall: GeminiToolCallLike,
+    createdAt?: string,
+  ) => {
     const turn = context.activeTurn;
     if (!turn) {
       return;
     }
-    const item = createToolItemState(context, toolCall);
+    const item = createToolItemState(context, toolCall, createdAt);
     if (!item) {
       return;
     }
@@ -699,6 +739,7 @@ const makeGeminiAdapter = Effect.gen(function* () {
       emit(
         baseEvent(context, {
           type: "item.completed",
+          ...(createdAt ? { createdAt } : {}),
           turnId,
           itemId: item.itemId,
           payload: {
@@ -713,6 +754,7 @@ const makeGeminiAdapter = Effect.gen(function* () {
     emit(
       baseEvent(context, {
         type: "item.updated",
+        ...(createdAt ? { createdAt } : {}),
         turnId,
         itemId: item.itemId,
         payload: {
@@ -723,7 +765,7 @@ const makeGeminiAdapter = Effect.gen(function* () {
     );
   };
 
-  const ensureAssistantStarted = (context: GeminiSessionContext) => {
+  const ensureAssistantStarted = (context: GeminiSessionContext, createdAt?: string) => {
     const turn = context.activeTurn;
     if (!turn || turn.assistantStarted) {
       return;
@@ -732,6 +774,7 @@ const makeGeminiAdapter = Effect.gen(function* () {
     emit(
       baseEvent(context, {
         type: "item.started",
+        ...(createdAt ? { createdAt } : {}),
         turnId: turn.id,
         itemId: turn.assistantItemId,
         payload: {
@@ -742,7 +785,7 @@ const makeGeminiAdapter = Effect.gen(function* () {
     );
   };
 
-  const ensureReasoningStarted = (context: GeminiSessionContext) => {
+  const ensureReasoningStarted = (context: GeminiSessionContext, createdAt?: string) => {
     const turn = context.activeTurn;
     if (!turn || turn.reasoningStarted) {
       return;
@@ -751,6 +794,7 @@ const makeGeminiAdapter = Effect.gen(function* () {
     emit(
       baseEvent(context, {
         type: "item.started",
+        ...(createdAt ? { createdAt } : {}),
         turnId: turn.id,
         itemId: turn.reasoningItemId,
         payload: {
@@ -1058,6 +1102,7 @@ const makeGeminiAdapter = Effect.gen(function* () {
     if (!updateType) {
       return;
     }
+    const notificationCreatedAt = resolveGeminiNotificationCreatedAt(params, update);
 
     switch (updateType) {
       case "agent_message_chunk": {
@@ -1065,10 +1110,11 @@ const makeGeminiAdapter = Effect.gen(function* () {
         if (!delta || !context.activeTurn) {
           return;
         }
-        ensureAssistantStarted(context);
+        ensureAssistantStarted(context, notificationCreatedAt);
         emit(
           baseEvent(context, {
             type: "content.delta",
+            ...(notificationCreatedAt ? { createdAt: notificationCreatedAt } : {}),
             turnId: context.activeTurn.id,
             itemId: context.activeTurn.assistantItemId,
             payload: {
@@ -1084,10 +1130,11 @@ const makeGeminiAdapter = Effect.gen(function* () {
         if (!delta || !context.activeTurn) {
           return;
         }
-        ensureReasoningStarted(context);
+        ensureReasoningStarted(context, notificationCreatedAt);
         emit(
           baseEvent(context, {
             type: "content.delta",
+            ...(notificationCreatedAt ? { createdAt: notificationCreatedAt } : {}),
             turnId: context.activeTurn.id,
             itemId: context.activeTurn.reasoningItemId,
             payload: {
@@ -1110,20 +1157,24 @@ const makeGeminiAdapter = Effect.gen(function* () {
         if (!toolCallId) {
           return;
         }
-        updateToolItem(context, {
-          toolCallId,
-          ...(status ? { status: status as GeminiToolStatus } : {}),
-          ...(title ? { title } : {}),
-          ...(kind ? { kind: kind as GeminiToolKind } : {}),
-          ...(Array.isArray(update.content)
-            ? { content: update.content as ReadonlyArray<GeminiToolCallContent> }
-            : {}),
-          ...(Array.isArray(update.locations)
-            ? { locations: update.locations as ReadonlyArray<GeminiToolLocation> }
-            : {}),
-          ...("rawInput" in update ? { rawInput: update.rawInput } : {}),
-          ...("rawOutput" in update ? { rawOutput: update.rawOutput } : {}),
-        });
+        updateToolItem(
+          context,
+          {
+            toolCallId,
+            ...(status ? { status: status as GeminiToolStatus } : {}),
+            ...(title ? { title } : {}),
+            ...(kind ? { kind: kind as GeminiToolKind } : {}),
+            ...(Array.isArray(update.content)
+              ? { content: update.content as ReadonlyArray<GeminiToolCallContent> }
+              : {}),
+            ...(Array.isArray(update.locations)
+              ? { locations: update.locations as ReadonlyArray<GeminiToolLocation> }
+              : {}),
+            ...("rawInput" in update ? { rawInput: update.rawInput } : {}),
+            ...("rawOutput" in update ? { rawOutput: update.rawOutput } : {}),
+          },
+          notificationCreatedAt,
+        );
         return;
       }
       case "plan": {
@@ -1153,6 +1204,7 @@ const makeGeminiAdapter = Effect.gen(function* () {
         emit(
           baseEvent(context, {
             type: "turn.plan.updated",
+            ...(notificationCreatedAt ? { createdAt: notificationCreatedAt } : {}),
             turnId: context.activeTurn.id,
             payload: {
               plan: entries,
@@ -1172,6 +1224,7 @@ const makeGeminiAdapter = Effect.gen(function* () {
         emit(
           baseEvent(context, {
             type: "thread.token-usage.updated",
+            ...(notificationCreatedAt ? { createdAt: notificationCreatedAt } : {}),
             ...(context.activeTurn ? { turnId: context.activeTurn.id } : {}),
             payload: {
               usage: {
@@ -1192,6 +1245,7 @@ const makeGeminiAdapter = Effect.gen(function* () {
         emit(
           baseEvent(context, {
             type: "thread.metadata.updated",
+            ...(notificationCreatedAt ? { createdAt: notificationCreatedAt } : {}),
             payload: {
               ...(title ? { name: title } : {}),
               metadata: updatedAt ? { updatedAt } : {},
@@ -1212,6 +1266,7 @@ const makeGeminiAdapter = Effect.gen(function* () {
         emit(
           baseEvent(context, {
             type: "session.configured",
+            ...(notificationCreatedAt ? { createdAt: notificationCreatedAt } : {}),
             payload: {
               config: {
                 currentModeId,
@@ -1553,6 +1608,8 @@ const makeGeminiAdapter = Effect.gen(function* () {
             session,
             metadata: started.metadata,
             turns: [],
+            sequenceTieBreakersByTimestampMs: new Map(),
+            nextFallbackSessionSequence: 0,
             activeTurn: null,
             pendingPermissions: new Map(),
             closed: false,
@@ -1756,11 +1813,16 @@ const makeGeminiAdapter = Effect.gen(function* () {
         if (turnId && context.activeTurn.id !== turnId) {
           return;
         }
+        const activeTurnId = context.activeTurn.id;
         context.activeTurn.interruptedRequested = true;
         context.client.notify("session/cancel", {
           sessionId: context.sessionId,
         });
-        cancelPendingPermissionsForTurn(context, context.activeTurn.id);
+        cancelPendingPermissionsForTurn(context, activeTurnId);
+        completeTurn(context, {
+          state: "interrupted",
+          stopReason: "cancelled",
+        });
       },
       catch: (cause) =>
         isProviderAdapterSessionNotFoundError(cause) || isProviderAdapterRequestError(cause)
