@@ -154,6 +154,11 @@ const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
   "unknown thread",
   "does not exist",
 ];
+
+function messageFromUnknownError(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
+}
+
 export const CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS = `<collaboration_mode># Plan Mode (Conversational)
 
 You work in 3 phases, and you should *chat your way* to a great plan before finalizing it. A great plan is very detailed-intent- and implementation-wise-so that it can be handed to another engineer or agent to be implemented right away. It must be **decision complete**, where the implementer does not need to make any decisions.
@@ -501,22 +506,23 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
       this.writeMessage(context, { method: "initialized" });
       try {
-        const modelListResponse = await this.sendRequest(context, "model/list", {});
-        console.log("codex model/list response", modelListResponse);
+        await this.sendRequest(context, "model/list", {});
       } catch (error) {
-        console.log("codex model/list failed", error);
+        this.emitLifecycleEvent(
+          context,
+          "session/model-list-warning",
+          `Failed to load model list: ${messageFromUnknownError(error)}`,
+        );
       }
       try {
         const accountReadResponse = await this.sendRequest(context, "account/read", {});
-        console.log("codex account/read response", accountReadResponse);
         context.account = readCodexAccountSnapshot(accountReadResponse);
-        console.log("codex subscription status", {
-          type: context.account.type,
-          planType: context.account.planType,
-          sparkEnabled: context.account.sparkEnabled,
-        });
       } catch (error) {
-        console.log("codex account/read failed", error);
+        this.emitLifecycleEvent(
+          context,
+          "session/account-warning",
+          `Failed to read account state: ${messageFromUnknownError(error)}`,
+        );
       }
 
       const normalizedModel = resolveCodexModelForAccount(
@@ -897,11 +903,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
     context.stopping = true;
 
-    for (const pending of context.pending.values()) {
-      clearTimeout(pending.timeout);
-      pending.reject(new Error("Session stopped before request completed."));
-    }
-    context.pending.clear();
+    this.rejectPendingRequests(context, "Session stopped before request completed.");
     context.pendingApprovals.clear();
     context.pendingUserInputs.clear();
 
@@ -1188,15 +1190,41 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     });
   }
 
-  private handleResponse(context: CodexSessionContext, response: JsonRpcResponse): void {
-    const key = String(response.id);
+  private takePendingRequest(
+    context: CodexSessionContext,
+    id: string | number,
+  ): PendingRequest | undefined {
+    const key = String(id);
     const pending = context.pending.get(key);
+    if (!pending) {
+      return undefined;
+    }
+    clearTimeout(pending.timeout);
+    context.pending.delete(key);
+    return pending;
+  }
+
+  private storePendingRequest(
+    context: CodexSessionContext,
+    id: string | number,
+    pending: PendingRequest,
+  ): void {
+    context.pending.set(String(id), pending);
+  }
+
+  private rejectPendingRequests(context: CodexSessionContext, message: string): void {
+    for (const pending of context.pending.values()) {
+      clearTimeout(pending.timeout);
+      pending.reject(new Error(message));
+    }
+    context.pending.clear();
+  }
+
+  private handleResponse(context: CodexSessionContext, response: JsonRpcResponse): void {
+    const pending = this.takePendingRequest(context, response.id);
     if (!pending) {
       return;
     }
-
-    clearTimeout(pending.timeout);
-    context.pending.delete(key);
 
     if (response.error?.message) {
       pending.reject(new Error(`${pending.method} failed: ${String(response.error.message)}`));
@@ -1217,11 +1245,14 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
     const result = await new Promise<unknown>((resolve, reject) => {
       const timeout = setTimeout(() => {
-        context.pending.delete(String(id));
-        reject(new Error(`Timed out waiting for ${method}.`));
+        const pending = this.takePendingRequest(context, id);
+        if (!pending) {
+          return;
+        }
+        pending.reject(new Error(`Timed out waiting for ${method}.`));
       }, timeoutMs);
 
-      context.pending.set(String(id), {
+      this.storePendingRequest(context, id, {
         method,
         timeout,
         resolve,

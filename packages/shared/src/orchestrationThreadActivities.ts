@@ -10,10 +10,6 @@ export function compareOrchestrationThreadActivities(
     if (left.sequence !== right.sequence) {
       return left.sequence - right.sequence;
     }
-  } else if (left.sequence !== undefined) {
-    return 1;
-  } else if (right.sequence !== undefined) {
-    return -1;
   }
 
   return left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id);

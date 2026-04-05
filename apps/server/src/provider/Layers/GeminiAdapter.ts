@@ -23,11 +23,18 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { meaningfulErrorMessage } from "../errorCause.ts";
+import { logWarningEffect, runLoggedEffect } from "../fireAndForget.ts";
 import {
   buildBootstrapPromptFromReplayTurns,
   cloneReplayTurns,
   type TranscriptReplayTurn,
 } from "../providerTranscriptBootstrap.ts";
+import {
+  asArrayOrEmpty as asArray,
+  asNonEmptyString as asString,
+  asObject,
+  asRoundedNonNegativeInt,
+} from "../unknown.ts";
 import {
   AcpRequestError,
   startAcpClient,
@@ -264,27 +271,6 @@ function parseIsoTimestampMs(value: string): number | undefined {
 
 function toMessage(cause: unknown, fallback: string): string {
   return meaningfulErrorMessage(cause, fallback);
-}
-
-function asObject(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-function asArray(value: unknown): ReadonlyArray<unknown> {
-  return Array.isArray(value) ? value : [];
-}
-
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
-function asRoundedNonNegativeInt(value: unknown): number | undefined {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return undefined;
-  }
-  return Math.max(0, Math.round(value));
 }
 
 function firstRoundedNonNegativeInt(
@@ -982,7 +968,23 @@ const makeGeminiAdapter = Effect.gen(function* () {
   const sessions = new Map<ThreadId, GeminiSessionContext>();
 
   const emit = (event: ProviderRuntimeEvent): void => {
-    void runPromise(Queue.offer(runtimeEventQueue, event)).catch(() => undefined);
+    runLoggedEffect({
+      runPromise,
+      effect: Queue.offer(runtimeEventQueue, event).pipe(Effect.asVoid),
+      message: "Failed to emit Gemini runtime event.",
+      metadata: { eventId: event.eventId, threadId: event.threadId, type: event.type },
+    });
+  };
+
+  const reportClientCloseFailure = (cause: unknown, metadata?: Record<string, unknown>) => {
+    logWarningEffect({
+      runPromise,
+      message: "Failed to close Gemini ACP client.",
+      metadata: {
+        ...metadata,
+        cause: cause instanceof Error ? cause.message : String(cause),
+      },
+    });
   };
 
   const currentGeminiContextWindowTokens = (context: GeminiSessionContext) =>
@@ -1831,7 +1833,11 @@ const makeGeminiAdapter = Effect.gen(function* () {
         };
       } catch (cause) {
         lastError = cause;
-        await client.close().catch(() => undefined);
+        try {
+          await client.close();
+        } catch (closeCause) {
+          reportClientCloseFailure(closeCause, { phase: "connect" });
+        }
       }
     }
     throw lastError;
@@ -2124,7 +2130,11 @@ const makeGeminiAdapter = Effect.gen(function* () {
 
           return context.session;
         } catch (cause) {
-          await client.close().catch(() => undefined);
+          try {
+            await client.close();
+          } catch (closeCause) {
+            reportClientCloseFailure(closeCause, { phase: "startSession" });
+          }
           throw cause;
         }
       },
@@ -2575,7 +2585,14 @@ const makeGeminiAdapter = Effect.gen(function* () {
         if (context.activeTurn) {
           cancelPendingPermissionsForTurn(context, context.activeTurn.id);
         }
-        await context.client.close().catch(() => undefined);
+        try {
+          await context.client.close();
+        } catch (cause) {
+          reportClientCloseFailure(cause, {
+            phase: "stopAll",
+            threadId: context.session.threadId,
+          });
+        }
       }
       sessions.clear();
     });

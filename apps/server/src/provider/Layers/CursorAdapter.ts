@@ -7,22 +7,20 @@ import {
   type CanonicalRequestType,
   type CursorModelOptions,
   EventId,
+  type ProviderRuntimeEvent,
   type ProviderSendTurnInput,
   RuntimeItemId,
   RuntimeRequestId,
   RuntimeTaskId,
   ThreadId,
   TurnId,
-  type ProviderApprovalDecision,
-  type ProviderRuntimeEvent,
   type ProviderSession,
   type ProviderTurnStartResult,
-  type RuntimeContentStreamKind,
   type RuntimeItemStatus,
   type UserInputQuestion,
 } from "@ace/contracts";
 import { inferModelContextWindowTokens } from "@ace/shared/model";
-import { Effect, FileSystem, Layer, PubSub, Schema, Stream } from "effect";
+import { Effect, FileSystem, Layer, PubSub, Stream } from "effect";
 
 import {
   ProviderAdapterProcessError,
@@ -41,6 +39,56 @@ import {
   type TranscriptReplayTurn,
 } from "../providerTranscriptBootstrap.ts";
 import { resolveCursorCliModelId } from "./CursorProvider.ts";
+import {
+  describeCursorAdapterCause,
+  findKnownCursorAdapterError,
+  isMissingCursorSessionError,
+  isProviderAdapterProcessError,
+  isProviderAdapterRequestError,
+  isProviderAdapterSessionNotFoundError,
+  isProviderAdapterValidationError,
+} from "./CursorAdapterErrors.ts";
+import {
+  type CursorPermissionOption,
+  type CursorSessionConfigOption,
+  type CursorSessionConfigOptionValue,
+  type CursorSessionMetadata,
+  EMPTY_CURSOR_SESSION_METADATA,
+  buildCursorSessionMetadata,
+  cursorSessionMetadataSnapshot,
+  findCursorConfigOption,
+  parseCursorAvailableCommands,
+  parseCursorConfigOptions,
+  parseCursorInitializeState,
+  parseCursorSessionModeState,
+  parseCursorSessionModelState,
+} from "./CursorAdapterSessionMetadata.ts";
+import {
+  buildCursorToolData,
+  classifyCursorToolItemType,
+  cursorPermissionKindsForDecision,
+  cursorPermissionKindsForRuntimeMode,
+  defaultCursorToolTitle,
+  describePermissionRequest,
+  extractCursorStreamText,
+  extractCursorToolCommand,
+  extractCursorToolContentText,
+  extractCursorToolPath,
+  isFinalCursorToolStatus,
+  parseCursorPermissionOptions,
+  permissionOptionKindForRuntimeMode,
+  requestTypeForCursorTool,
+  resolveCursorToolTitle,
+  runtimeItemStatusFromCursorStatus,
+  selectCursorPermissionOption,
+  streamKindFromUpdateKind,
+} from "./CursorAdapterToolHelpers.ts";
+import {
+  type CursorUsageSnapshot,
+  buildCursorTurnUsageSnapshot,
+  buildCursorUsageSnapshot,
+} from "./CursorAdapterUsageParsing.ts";
+import { asObject, asTrimmedNonEmptyString as asString } from "../unknown.ts";
 
 const PROVIDER = "cursor" as const;
 const ACP_CONTROL_TIMEOUT_MS = 15_000;
@@ -48,85 +96,6 @@ const ROLLBACK_BOOTSTRAP_MAX_CHARS = 24_000;
 
 type CursorResumeCursor = {
   readonly sessionId: string;
-};
-
-type CursorPromptCapabilities = {
-  readonly image: boolean;
-  readonly audio: boolean;
-  readonly embeddedContext: boolean;
-};
-
-type CursorPermissionOptionKind = "allow_once" | "allow_always" | "reject_once" | "reject_always";
-
-type CursorPermissionOption = {
-  readonly optionId: string;
-  readonly kind?: CursorPermissionOptionKind;
-  readonly name?: string;
-};
-
-type CursorAuthMethod = {
-  readonly id: string;
-  readonly name?: string;
-  readonly description?: string;
-};
-
-type CursorInitializeState = {
-  readonly protocolVersion?: number;
-  readonly agentCapabilities: {
-    readonly loadSession: boolean;
-    readonly promptCapabilities: CursorPromptCapabilities;
-  };
-  readonly authMethods: ReadonlyArray<CursorAuthMethod>;
-};
-
-type CursorSessionModeDefinition = {
-  readonly id: string;
-  readonly name?: string;
-  readonly description?: string;
-};
-
-type CursorSessionModeState = {
-  readonly currentModeId?: string;
-  readonly availableModes: ReadonlyArray<CursorSessionModeDefinition>;
-};
-
-type CursorSessionModelDefinition = {
-  readonly modelId: string;
-  readonly name?: string;
-};
-
-type CursorSessionModelState = {
-  readonly currentModelId?: string;
-  readonly availableModels: ReadonlyArray<CursorSessionModelDefinition>;
-};
-
-type CursorSessionConfigOptionValue = {
-  readonly value: string;
-  readonly name: string;
-  readonly description?: string;
-};
-
-type CursorSessionConfigOption = {
-  readonly id: string;
-  readonly name: string;
-  readonly description?: string;
-  readonly category?: string;
-  readonly currentValue: string;
-  readonly options: ReadonlyArray<CursorSessionConfigOptionValue>;
-};
-
-type CursorAvailableCommand = {
-  readonly name: string;
-  readonly description?: string;
-};
-
-type CursorSessionMetadata = {
-  readonly initialize: CursorInitializeState;
-  readonly configOptions: ReadonlyArray<CursorSessionConfigOption>;
-  readonly modes?: CursorSessionModeState;
-  readonly models?: CursorSessionModelState;
-  readonly availableCommands: ReadonlyArray<CursorAvailableCommand>;
-  readonly defaultModeId?: string;
 };
 
 type PendingApproval = {
@@ -158,11 +127,6 @@ type CursorContentItemState = {
   readonly itemId: RuntimeItemId;
   text: string;
 };
-
-type CursorUsageSnapshot = Extract<
-  ProviderRuntimeEvent,
-  { type: "thread.token-usage.updated" }
->["payload"]["usage"];
 
 type TurnSnapshot = {
   readonly id: TurnId;
@@ -204,26 +168,6 @@ type CursorToolState = {
   readonly data: Record<string, unknown>;
 };
 
-const EMPTY_CURSOR_PROMPT_CAPABILITIES: CursorPromptCapabilities = {
-  image: false,
-  audio: false,
-  embeddedContext: false,
-};
-
-const EMPTY_CURSOR_INITIALIZE_STATE: CursorInitializeState = {
-  agentCapabilities: {
-    loadSession: false,
-    promptCapabilities: EMPTY_CURSOR_PROMPT_CAPABILITIES,
-  },
-  authMethods: [],
-};
-
-const EMPTY_CURSOR_SESSION_METADATA: CursorSessionMetadata = {
-  initialize: EMPTY_CURSOR_INITIALIZE_STATE,
-  configOptions: [],
-  availableCommands: [],
-};
-
 function isoNow(): string {
   return new Date().toISOString();
 }
@@ -236,733 +180,6 @@ function readResumeSessionId(value: unknown): string | undefined {
   return typeof sessionId === "string" && sessionId.trim().length > 0
     ? sessionId.trim()
     : undefined;
-}
-
-function asObject(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
-}
-
-function asStreamText(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
-function asRoundedNonNegativeInt(value: unknown): number | undefined {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return undefined;
-  }
-  return Math.max(0, Math.round(value));
-}
-
-function cursorToolUseCount(turn: TurnSnapshot | undefined): number | undefined {
-  const count = turn?.toolCalls.size ?? 0;
-  return count > 0 ? count : undefined;
-}
-
-export function buildCursorUsageSnapshot(
-  update: Record<string, unknown>,
-  turn: TurnSnapshot | undefined,
-  inferredMaxTokens?: number,
-):
-  | {
-      readonly usedTokens: number;
-      readonly maxTokens?: number;
-      readonly lastUsedTokens: number;
-      readonly toolUses?: number;
-    }
-  | undefined {
-  const usedTokens =
-    asRoundedNonNegativeInt(update.used) ??
-    asRoundedNonNegativeInt(update.usedTokens) ??
-    asRoundedNonNegativeInt(update.used_tokens) ??
-    asRoundedNonNegativeInt(update.promptTokenCount) ??
-    asRoundedNonNegativeInt(update.prompt_token_count) ??
-    asRoundedNonNegativeInt(update.lastPromptTokenCount) ??
-    asRoundedNonNegativeInt(update.last_prompt_token_count);
-  if (usedTokens === undefined || usedTokens <= 0) {
-    return undefined;
-  }
-
-  const maxTokens =
-    asRoundedNonNegativeInt(update.size) ??
-    asRoundedNonNegativeInt(update.maxTokens) ??
-    asRoundedNonNegativeInt(update.max_tokens) ??
-    asRoundedNonNegativeInt(update.tokenLimit) ??
-    asRoundedNonNegativeInt(update.token_limit) ??
-    asRoundedNonNegativeInt(update.limit) ??
-    inferredMaxTokens;
-  const toolUses = cursorToolUseCount(turn);
-
-  return {
-    usedTokens,
-    ...(maxTokens !== undefined && maxTokens > 0 ? { maxTokens } : {}),
-    lastUsedTokens: usedTokens,
-    ...(toolUses !== undefined ? { toolUses } : {}),
-  };
-}
-
-type CursorTokenCountTotals = {
-  readonly totalTokens?: number;
-  readonly inputTokens?: number;
-  readonly cachedReadTokens?: number;
-  readonly cachedWriteTokens?: number;
-  readonly outputTokens?: number;
-  readonly reasoningOutputTokens?: number;
-};
-
-function readCursorTokenCountRecord(
-  record: Record<string, unknown> | undefined,
-): Record<string, unknown> | undefined {
-  return asObject(record?.token_count) ?? asObject(record?.tokenCount);
-}
-
-function readCursorTokenCountTotals(value: unknown): CursorTokenCountTotals | undefined {
-  const record = asObject(value);
-  const tokenCount = readCursorTokenCountRecord(record);
-  const inputTokens = firstRoundedNonNegativeInt(tokenCount, ["input_tokens", "inputTokens"]);
-  const cachedReadTokens = firstRoundedNonNegativeInt(tokenCount, [
-    "cached_read_tokens",
-    "cachedReadTokens",
-  ]);
-  const cachedWriteTokens = firstRoundedNonNegativeInt(tokenCount, [
-    "cached_write_tokens",
-    "cachedWriteTokens",
-  ]);
-  const outputTokens = firstRoundedNonNegativeInt(tokenCount, ["output_tokens", "outputTokens"]);
-  const reasoningOutputTokens = firstRoundedNonNegativeInt(tokenCount, [
-    "thought_tokens",
-    "thoughtTokens",
-    "reasoning_output_tokens",
-    "reasoningOutputTokens",
-  ]);
-  const derivedTotalTokens =
-    (inputTokens ?? 0) +
-    (cachedReadTokens ?? 0) +
-    (cachedWriteTokens ?? 0) +
-    (outputTokens ?? 0) +
-    (reasoningOutputTokens ?? 0);
-  const totalTokens =
-    firstRoundedNonNegativeInt(tokenCount, ["total_tokens", "totalTokens"]) ??
-    (derivedTotalTokens > 0 ? derivedTotalTokens : undefined);
-
-  if (
-    totalTokens === undefined &&
-    inputTokens === undefined &&
-    cachedReadTokens === undefined &&
-    cachedWriteTokens === undefined &&
-    outputTokens === undefined &&
-    reasoningOutputTokens === undefined
-  ) {
-    return undefined;
-  }
-
-  return {
-    ...(totalTokens !== undefined ? { totalTokens } : {}),
-    ...(inputTokens !== undefined ? { inputTokens } : {}),
-    ...(cachedReadTokens !== undefined ? { cachedReadTokens } : {}),
-    ...(cachedWriteTokens !== undefined ? { cachedWriteTokens } : {}),
-    ...(outputTokens !== undefined ? { outputTokens } : {}),
-    ...(reasoningOutputTokens !== undefined ? { reasoningOutputTokens } : {}),
-  };
-}
-
-function firstRoundedNonNegativeInt(
-  record: Record<string, unknown> | undefined,
-  keys: ReadonlyArray<string>,
-): number | undefined {
-  if (!record) {
-    return undefined;
-  }
-
-  for (const key of keys) {
-    const value = asRoundedNonNegativeInt(record[key]);
-    if (value !== undefined) {
-      return value;
-    }
-  }
-
-  return undefined;
-}
-
-export function buildCursorTurnUsageSnapshot(
-  value: unknown,
-  turn: TurnSnapshot | undefined,
-  lastUsageSnapshot: CursorUsageSnapshot | undefined,
-  inferredMaxTokens?: number,
-): CursorUsageSnapshot | undefined {
-  const record = asObject(value);
-  const usageRecord =
-    asObject(record?.usage) ??
-    asObject(record?.usageMetadata) ??
-    asObject(record?.usage_metadata) ??
-    asObject(asObject(record?._meta)?.usage) ??
-    asObject(asObject(record?._meta)?.quota) ??
-    record;
-  const tokenCountTotals = readCursorTokenCountTotals(usageRecord);
-  const contextUsage =
-    usageRecord === undefined
-      ? undefined
-      : buildCursorUsageSnapshot(usageRecord, turn, inferredMaxTokens);
-  const totalTokens =
-    firstRoundedNonNegativeInt(usageRecord, ["totalTokens", "total_tokens"]) ??
-    tokenCountTotals?.totalTokens;
-  const inputTokens =
-    firstRoundedNonNegativeInt(usageRecord, ["inputTokens", "input_tokens"]) ??
-    tokenCountTotals?.inputTokens;
-  const cachedReadTokens =
-    firstRoundedNonNegativeInt(usageRecord, ["cachedReadTokens", "cached_read_tokens"]) ??
-    tokenCountTotals?.cachedReadTokens;
-  const cachedWriteTokens =
-    firstRoundedNonNegativeInt(usageRecord, ["cachedWriteTokens", "cached_write_tokens"]) ??
-    tokenCountTotals?.cachedWriteTokens;
-  const outputTokens =
-    firstRoundedNonNegativeInt(usageRecord, ["outputTokens", "output_tokens"]) ??
-    tokenCountTotals?.outputTokens;
-  const reasoningOutputTokens =
-    firstRoundedNonNegativeInt(usageRecord, [
-      "thoughtTokens",
-      "thought_tokens",
-      "reasoningTokens",
-      "reasoning_tokens",
-      "reasoningOutputTokens",
-      "reasoning_output_tokens",
-    ]) ?? tokenCountTotals?.reasoningOutputTokens;
-  const cachedInputTokens =
-    (cachedReadTokens ?? 0) + (cachedWriteTokens ?? 0) > 0
-      ? (cachedReadTokens ?? 0) + (cachedWriteTokens ?? 0)
-      : undefined;
-  const toolUses = cursorToolUseCount(turn);
-  const hasDetails =
-    contextUsage !== undefined ||
-    totalTokens !== undefined ||
-    inputTokens !== undefined ||
-    cachedInputTokens !== undefined ||
-    outputTokens !== undefined ||
-    reasoningOutputTokens !== undefined ||
-    toolUses !== undefined;
-
-  if (!hasDetails) {
-    return undefined;
-  }
-
-  const contextUsedTokens = lastUsageSnapshot?.usedTokens ?? contextUsage?.usedTokens;
-  const usedTokens = contextUsedTokens ?? totalTokens;
-  const maxTokens =
-    lastUsageSnapshot?.maxTokens ??
-    contextUsage?.maxTokens ??
-    (contextUsedTokens !== undefined ? inferredMaxTokens : undefined);
-
-  if (usedTokens === undefined || usedTokens <= 0) {
-    return undefined;
-  }
-
-  return {
-    usedTokens,
-    ...(maxTokens !== undefined && maxTokens > 0 ? { maxTokens } : {}),
-    ...(totalTokens !== undefined && totalTokens > 0
-      ? { lastUsedTokens: totalTokens }
-      : contextUsage?.lastUsedTokens !== undefined
-        ? { lastUsedTokens: contextUsage.lastUsedTokens }
-        : {}),
-    ...(inputTokens !== undefined && inputTokens > 0 ? { lastInputTokens: inputTokens } : {}),
-    ...(cachedInputTokens !== undefined && cachedInputTokens > 0
-      ? { lastCachedInputTokens: cachedInputTokens }
-      : {}),
-    ...(outputTokens !== undefined && outputTokens > 0 ? { lastOutputTokens: outputTokens } : {}),
-    ...(reasoningOutputTokens !== undefined && reasoningOutputTokens > 0
-      ? { lastReasoningOutputTokens: reasoningOutputTokens }
-      : {}),
-    ...(toolUses !== undefined
-      ? { toolUses }
-      : contextUsage?.toolUses !== undefined
-        ? { toolUses: contextUsage.toolUses }
-        : {}),
-  };
-}
-
-function parseCursorPromptCapabilities(value: unknown): CursorPromptCapabilities {
-  const record = asObject(value);
-  return {
-    image: record?.image === true,
-    audio: record?.audio === true,
-    embeddedContext: record?.embeddedContext === true,
-  };
-}
-
-function parseCursorAuthMethods(value: unknown): ReadonlyArray<CursorAuthMethod> {
-  const methods = asArray(value);
-  if (!methods) {
-    return [];
-  }
-  const parsed: Array<CursorAuthMethod> = [];
-  for (const method of methods) {
-    const entry = asObject(method);
-    if (!entry) {
-      continue;
-    }
-    const id = asString(entry.id);
-    if (!id) {
-      continue;
-    }
-    const normalized: { id: string; name?: string; description?: string } = { id };
-    const name = asString(entry.name);
-    if (name) {
-      normalized.name = name;
-    }
-    const description = asString(entry.description);
-    if (description) {
-      normalized.description = description;
-    }
-    parsed.push(normalized);
-  }
-  return parsed;
-}
-
-function parseCursorInitializeState(value: unknown): CursorInitializeState {
-  const record = asObject(value);
-  const agentCapabilities = asObject(record?.agentCapabilities);
-  return {
-    ...(typeof record?.protocolVersion === "number"
-      ? { protocolVersion: record.protocolVersion }
-      : {}),
-    agentCapabilities: {
-      loadSession: agentCapabilities?.loadSession === true,
-      promptCapabilities: parseCursorPromptCapabilities(agentCapabilities?.promptCapabilities),
-    },
-    authMethods: parseCursorAuthMethods(record?.authMethods),
-  };
-}
-
-function parseCursorSessionModeState(value: unknown): CursorSessionModeState | undefined {
-  const record = asObject(value);
-  const availableModesRaw = asArray(record?.availableModes);
-  const availableModes: Array<CursorSessionModeDefinition> = [];
-  if (availableModesRaw) {
-    for (const mode of availableModesRaw) {
-      const entry = asObject(mode);
-      if (!entry) {
-        continue;
-      }
-      const id = asString(entry.id);
-      if (!id) {
-        continue;
-      }
-      const normalized: { id: string; name?: string; description?: string } = { id };
-      const name = asString(entry.name);
-      if (name) {
-        normalized.name = name;
-      }
-      const description = asString(entry.description);
-      if (description) {
-        normalized.description = description;
-      }
-      availableModes.push(normalized);
-    }
-  }
-  const currentModeId = asString(record?.currentModeId);
-  if (!currentModeId && availableModes.length === 0) {
-    return undefined;
-  }
-  return {
-    ...(currentModeId ? { currentModeId } : {}),
-    availableModes,
-  };
-}
-
-function parseCursorSessionModelState(value: unknown): CursorSessionModelState | undefined {
-  const record = asObject(value);
-  const availableModelsRaw = asArray(record?.availableModels);
-  const availableModels: Array<CursorSessionModelDefinition> = [];
-  if (availableModelsRaw) {
-    for (const model of availableModelsRaw) {
-      const entry = asObject(model);
-      if (!entry) {
-        continue;
-      }
-      const modelId = asString(entry.modelId);
-      if (!modelId) {
-        continue;
-      }
-      const normalized: { modelId: string; name?: string } = { modelId };
-      const name = asString(entry.name);
-      if (name) {
-        normalized.name = name;
-      }
-      availableModels.push(normalized);
-    }
-  }
-  const currentModelId = asString(record?.currentModelId);
-  if (!currentModelId && availableModels.length === 0) {
-    return undefined;
-  }
-  return {
-    ...(currentModelId ? { currentModelId } : {}),
-    availableModels,
-  };
-}
-
-function parseCursorConfigOptionValues(
-  value: unknown,
-): ReadonlyArray<CursorSessionConfigOptionValue> {
-  const options = asArray(value);
-  if (!options) {
-    return [];
-  }
-  const parsed: Array<CursorSessionConfigOptionValue> = [];
-  for (const option of options) {
-    const entry = asObject(option);
-    if (!entry) {
-      continue;
-    }
-    const optionValue = asString(entry.value);
-    const name = asString(entry.name) ?? optionValue;
-    if (!optionValue || !name) {
-      continue;
-    }
-    const normalized: { value: string; name: string; description?: string } = {
-      value: optionValue,
-      name,
-    };
-    const description = asString(entry.description);
-    if (description) {
-      normalized.description = description;
-    }
-    parsed.push(normalized);
-  }
-  return parsed;
-}
-
-function parseCursorConfigOptions(value: unknown): ReadonlyArray<CursorSessionConfigOption> {
-  const configOptions = asArray(value);
-  if (!configOptions) {
-    return [];
-  }
-  const parsed: Array<CursorSessionConfigOption> = [];
-  for (const option of configOptions) {
-    const entry = asObject(option);
-    if (!entry) {
-      continue;
-    }
-    const id = asString(entry.id);
-    const name = asString(entry.name);
-    const currentValue = asString(entry.currentValue);
-    if (!id || !name || !currentValue) {
-      continue;
-    }
-    const normalized: {
-      id: string;
-      name: string;
-      currentValue: string;
-      options: ReadonlyArray<CursorSessionConfigOptionValue>;
-      description?: string;
-      category?: string;
-    } = {
-      id,
-      name,
-      currentValue,
-      options: parseCursorConfigOptionValues(entry.options),
-    };
-    const description = asString(entry.description);
-    if (description) {
-      normalized.description = description;
-    }
-    const category = asString(entry.category);
-    if (category) {
-      normalized.category = category;
-    }
-    parsed.push(normalized);
-  }
-  return parsed;
-}
-
-function parseCursorAvailableCommands(value: unknown): ReadonlyArray<CursorAvailableCommand> {
-  const commands = asArray(value);
-  if (!commands) {
-    return [];
-  }
-  const parsed: Array<CursorAvailableCommand> = [];
-  for (const command of commands) {
-    const entry = asObject(command);
-    if (!entry) {
-      continue;
-    }
-    const name = asString(entry.name);
-    if (!name) {
-      continue;
-    }
-    const normalized: { name: string; description?: string } = { name };
-    const description = asString(entry.description);
-    if (description) {
-      normalized.description = description;
-    }
-    parsed.push(normalized);
-  }
-  return parsed;
-}
-
-function findCursorConfigOption(
-  configOptions: ReadonlyArray<CursorSessionConfigOption>,
-  input: { readonly category?: string; readonly id?: string },
-): CursorSessionConfigOption | undefined {
-  const normalizedCategory = input.category?.trim().toLowerCase();
-  const normalizedId = input.id?.trim().toLowerCase();
-  return configOptions.find((option) => {
-    if (normalizedCategory && option.category?.trim().toLowerCase() === normalizedCategory) {
-      return true;
-    }
-    return normalizedId !== undefined && option.id.trim().toLowerCase() === normalizedId;
-  });
-}
-
-function replaceCursorConfigOptionCurrentValue(
-  configOptions: ReadonlyArray<CursorSessionConfigOption>,
-  optionId: string | undefined,
-  currentValue: string | undefined,
-): ReadonlyArray<CursorSessionConfigOption> {
-  if (!optionId || !currentValue) {
-    return configOptions;
-  }
-  return configOptions.map((option) =>
-    option.id === optionId && option.currentValue !== currentValue
-      ? { ...option, currentValue }
-      : option,
-  );
-}
-
-function cursorModeStateFromConfigOption(
-  option: CursorSessionConfigOption | undefined,
-): CursorSessionModeState | undefined {
-  if (!option) {
-    return undefined;
-  }
-  return {
-    currentModeId: option.currentValue,
-    availableModes: option.options.map((entry) => ({
-      id: entry.value,
-      name: entry.name,
-      ...(entry.description ? { description: entry.description } : {}),
-    })),
-  };
-}
-
-function cursorModelStateFromConfigOption(
-  option: CursorSessionConfigOption | undefined,
-): CursorSessionModelState | undefined {
-  if (!option) {
-    return undefined;
-  }
-  return {
-    currentModelId: option.currentValue,
-    availableModels: option.options.map((entry) => ({
-      modelId: entry.value,
-      name: entry.name,
-    })),
-  };
-}
-
-function mergeCursorModeStates(
-  primary: CursorSessionModeState | undefined,
-  secondary: CursorSessionModeState | undefined,
-): CursorSessionModeState | undefined {
-  const currentModeId = primary?.currentModeId ?? secondary?.currentModeId;
-  const availableModes =
-    primary?.availableModes && primary.availableModes.length > 0
-      ? primary.availableModes
-      : (secondary?.availableModes ?? []);
-  if (!currentModeId && availableModes.length === 0) {
-    return undefined;
-  }
-  return {
-    ...(currentModeId ? { currentModeId } : {}),
-    availableModes,
-  };
-}
-
-function mergeCursorModelStates(
-  primary: CursorSessionModelState | undefined,
-  secondary: CursorSessionModelState | undefined,
-): CursorSessionModelState | undefined {
-  const currentModelId = primary?.currentModelId ?? secondary?.currentModelId;
-  const availableModels =
-    primary?.availableModels && primary.availableModels.length > 0
-      ? primary.availableModels
-      : (secondary?.availableModels ?? []);
-  if (!currentModelId && availableModels.length === 0) {
-    return undefined;
-  }
-  return {
-    ...(currentModelId ? { currentModelId } : {}),
-    availableModels,
-  };
-}
-
-function buildCursorSessionMetadata(input: {
-  readonly previous?: CursorSessionMetadata | undefined;
-  readonly initialize?: CursorInitializeState | undefined;
-  readonly configOptions?: ReadonlyArray<CursorSessionConfigOption> | undefined;
-  readonly modes?: CursorSessionModeState | undefined;
-  readonly models?: CursorSessionModelState | undefined;
-  readonly availableCommands?: ReadonlyArray<CursorAvailableCommand> | undefined;
-  readonly currentModeId?: string | undefined;
-  readonly currentModelId?: string | undefined;
-}): CursorSessionMetadata {
-  const previous = input.previous ?? EMPTY_CURSOR_SESSION_METADATA;
-  let configOptions = input.configOptions ?? previous.configOptions;
-  const requestedModeOption = findCursorConfigOption(configOptions, {
-    category: "mode",
-    id: "mode",
-  });
-  configOptions = replaceCursorConfigOptionCurrentValue(
-    configOptions,
-    requestedModeOption?.id,
-    input.currentModeId,
-  );
-  const requestedModelOption = findCursorConfigOption(configOptions, {
-    category: "model",
-    id: "model",
-  });
-  configOptions = replaceCursorConfigOptionCurrentValue(
-    configOptions,
-    requestedModelOption?.id,
-    input.currentModelId,
-  );
-  const modeConfigState = cursorModeStateFromConfigOption(
-    findCursorConfigOption(configOptions, { category: "mode", id: "mode" }),
-  );
-  const modelConfigState = cursorModelStateFromConfigOption(
-    findCursorConfigOption(configOptions, { category: "model", id: "model" }),
-  );
-  const explicitModes = input.modes ?? previous.modes;
-  const explicitModels = input.models ?? previous.models;
-  let modes =
-    input.configOptions !== undefined
-      ? mergeCursorModeStates(modeConfigState, explicitModes)
-      : mergeCursorModeStates(explicitModes, modeConfigState);
-  let models =
-    input.configOptions !== undefined
-      ? mergeCursorModelStates(modelConfigState, explicitModels)
-      : mergeCursorModelStates(explicitModels, modelConfigState);
-  if (input.currentModeId) {
-    modes = {
-      currentModeId: input.currentModeId,
-      availableModes: modes?.availableModes ?? [],
-    };
-  }
-  if (input.currentModelId) {
-    models = {
-      currentModelId: input.currentModelId,
-      availableModels: models?.availableModels ?? [],
-    };
-  }
-  const currentModeId = modes?.currentModeId;
-  const defaultModeId =
-    (input.currentModeId && input.currentModeId !== "plan" ? input.currentModeId : undefined) ??
-    (currentModeId && currentModeId !== "plan" ? currentModeId : undefined) ??
-    previous.defaultModeId ??
-    currentModeId;
-  return {
-    initialize: input.initialize ?? previous.initialize,
-    configOptions,
-    ...(modes ? { modes } : {}),
-    ...(models ? { models } : {}),
-    availableCommands: input.availableCommands ?? previous.availableCommands,
-    ...(defaultModeId ? { defaultModeId } : {}),
-  };
-}
-
-function cursorSessionMetadataSnapshot(metadata: CursorSessionMetadata): Record<string, unknown> {
-  return {
-    initialize: metadata.initialize,
-    configOptions: metadata.configOptions,
-    ...(metadata.modes ? { modes: metadata.modes } : {}),
-    ...(metadata.models ? { models: metadata.models } : {}),
-    ...(metadata.availableCommands.length > 0
-      ? { availableCommands: metadata.availableCommands }
-      : {}),
-    ...(metadata.defaultModeId ? { defaultModeId: metadata.defaultModeId } : {}),
-  };
-}
-
-const isProviderAdapterValidationError = Schema.is(ProviderAdapterValidationError);
-const isProviderAdapterSessionNotFoundError = Schema.is(ProviderAdapterSessionNotFoundError);
-const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
-const isProviderAdapterProcessError = Schema.is(ProviderAdapterProcessError);
-
-function nextCause(value: unknown): unknown | undefined {
-  if (!value || typeof value !== "object" || !("cause" in value)) {
-    return undefined;
-  }
-  const cause = (value as { readonly cause?: unknown }).cause;
-  return cause === value ? undefined : cause;
-}
-
-function causeChain(cause: unknown): ReadonlyArray<unknown> {
-  const chain: Array<unknown> = [];
-  let current: unknown = cause;
-  let depth = 0;
-  while (current !== undefined && depth < 8) {
-    chain.push(current);
-    current = nextCause(current);
-    depth += 1;
-  }
-  return chain;
-}
-
-function findKnownCursorAdapterError(
-  cause: unknown,
-):
-  | ProviderAdapterValidationError
-  | ProviderAdapterSessionNotFoundError
-  | ProviderAdapterRequestError
-  | ProviderAdapterProcessError
-  | undefined {
-  for (const candidate of causeChain(cause)) {
-    if (
-      isProviderAdapterValidationError(candidate) ||
-      isProviderAdapterSessionNotFoundError(candidate) ||
-      isProviderAdapterRequestError(candidate) ||
-      isProviderAdapterProcessError(candidate)
-    ) {
-      return candidate;
-    }
-  }
-  return undefined;
-}
-
-function describeCursorAdapterCause(cause: unknown): string {
-  for (const candidate of causeChain(cause)) {
-    if (!(candidate instanceof Error)) {
-      continue;
-    }
-    if (
-      candidate.message !== "An error occurred in Effect.try" &&
-      candidate.message !== "An error occurred in Effect.tryPromise"
-    ) {
-      return candidate.message;
-    }
-  }
-  return cause instanceof Error ? cause.message : String(cause);
-}
-
-function isMissingCursorSessionError(cause: unknown): boolean {
-  const message = describeCursorAdapterCause(cause).toLowerCase();
-  return (
-    message.includes("session not found") ||
-    message.includes("unknown session") ||
-    (message.includes("not found") && message.includes("session"))
-  );
-}
-
-export function extractCursorStreamText(
-  update: Record<string, unknown> | undefined,
-): string | undefined {
-  const content = asObject(update?.content);
-  return asStreamText(content?.text) ?? asStreamText(update?.text);
 }
 
 function contentItemType(kind: "assistant" | "reasoning"): CanonicalItemType {
@@ -1004,284 +221,8 @@ function cursorToolLookupInput(input: {
   };
 }
 
-function asArray(value: unknown): ReadonlyArray<unknown> | undefined {
-  return Array.isArray(value) ? value : undefined;
-}
-
 function requestIdFromApprovalRequest(requestId: ApprovalRequestId) {
   return RuntimeRequestId.makeUnsafe(requestId);
-}
-
-function parseCursorPermissionOptions(value: unknown): ReadonlyArray<CursorPermissionOption> {
-  const options = asArray(value);
-  if (!options) {
-    return [];
-  }
-  const parsed: Array<CursorPermissionOption> = [];
-  for (const option of options) {
-    const entry = asObject(option);
-    if (!entry) {
-      continue;
-    }
-    const optionId = asString(entry.optionId);
-    if (!optionId) {
-      continue;
-    }
-    const normalized: {
-      optionId: string;
-      kind?: CursorPermissionOptionKind;
-      name?: string;
-    } = { optionId };
-    const kind = asString(entry.kind)?.toLowerCase();
-    if (
-      kind === "allow_once" ||
-      kind === "allow_always" ||
-      kind === "reject_once" ||
-      kind === "reject_always"
-    ) {
-      normalized.kind = kind;
-    }
-    const name = asString(entry.name);
-    if (name) {
-      normalized.name = name;
-    }
-    parsed.push(normalized);
-  }
-  return parsed;
-}
-
-function cursorPermissionKindsForDecision(
-  decision: ProviderApprovalDecision,
-): ReadonlyArray<CursorPermissionOptionKind> {
-  switch (decision) {
-    case "acceptForSession":
-      return ["allow_always", "allow_once"];
-    case "accept":
-      return ["allow_once", "allow_always"];
-    case "decline":
-    case "cancel":
-    default:
-      return ["reject_once", "reject_always"];
-  }
-}
-
-function cursorPermissionKindsForRuntimeMode(
-  runtimeMode: ProviderSession["runtimeMode"],
-): ReadonlyArray<CursorPermissionOptionKind> {
-  return runtimeMode === "full-access"
-    ? ["allow_always", "allow_once"]
-    : ["allow_once", "allow_always"];
-}
-
-function permissionOptionMatchesKind(
-  option: CursorPermissionOption,
-  kind: CursorPermissionOptionKind,
-): boolean {
-  if (option.kind === kind) {
-    return true;
-  }
-  const normalizedOptionId = option.optionId.toLowerCase();
-  const normalizedName = option.name?.toLowerCase() ?? "";
-  switch (kind) {
-    case "allow_once":
-      return (
-        (normalizedOptionId.includes("allow") || normalizedName.includes("allow")) &&
-        (normalizedOptionId.includes("once") || normalizedName.includes("once"))
-      );
-    case "allow_always":
-      return (
-        (normalizedOptionId.includes("allow") || normalizedName.includes("allow")) &&
-        (normalizedOptionId.includes("always") ||
-          normalizedOptionId.includes("session") ||
-          normalizedName.includes("always") ||
-          normalizedName.includes("session"))
-      );
-    case "reject_once":
-      return (
-        normalizedOptionId.includes("reject") ||
-        normalizedOptionId.includes("deny") ||
-        normalizedName.includes("reject") ||
-        normalizedName.includes("deny")
-      );
-    case "reject_always":
-      return (
-        (normalizedOptionId.includes("reject") ||
-          normalizedOptionId.includes("deny") ||
-          normalizedName.includes("reject") ||
-          normalizedName.includes("deny")) &&
-        (normalizedOptionId.includes("always") ||
-          normalizedOptionId.includes("session") ||
-          normalizedName.includes("always") ||
-          normalizedName.includes("session"))
-      );
-  }
-}
-
-function selectCursorPermissionOption(
-  options: ReadonlyArray<CursorPermissionOption>,
-  preferredKinds: ReadonlyArray<CursorPermissionOptionKind>,
-): CursorPermissionOption | undefined {
-  for (const kind of preferredKinds) {
-    const matched = options.find((option) => permissionOptionMatchesKind(option, kind));
-    if (matched) {
-      return matched;
-    }
-  }
-  return options[0];
-}
-
-function stripWrappingBackticks(value: string): string {
-  const trimmed = value.trim();
-  return trimmed.startsWith("`") && trimmed.endsWith("`") ? trimmed.slice(1, -1).trim() : trimmed;
-}
-
-function looksLikeShellCommand(value: string): boolean {
-  const normalized = stripWrappingBackticks(value);
-  return (
-    normalized.includes(" ") ||
-    normalized.includes("/") ||
-    normalized.includes("&&") ||
-    normalized.includes("||") ||
-    normalized.includes("|") ||
-    normalized.includes("$") ||
-    normalized.includes("=")
-  );
-}
-
-function defaultCursorToolTitle(itemType: CanonicalItemType): string {
-  switch (itemType) {
-    case "command_execution":
-      return "Terminal";
-    case "file_change":
-      return "File change";
-    case "mcp_tool_call":
-      return "MCP tool call";
-    case "web_search":
-      return "Web search";
-    case "image_view":
-      return "Image";
-    case "collab_agent_tool_call":
-      return "Subagent task";
-    default:
-      return "Tool call";
-  }
-}
-
-export function classifyCursorToolItemType(input: {
-  readonly kind?: string | undefined;
-  readonly title?: string | undefined;
-  readonly subagentType?: string | undefined;
-}): CanonicalItemType {
-  const normalized = [input.kind, input.title, input.subagentType]
-    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
-    .join(" ")
-    .toLowerCase();
-  if (
-    normalized.includes("subagent") ||
-    normalized.includes("sub-agent") ||
-    normalized.includes("agent") ||
-    normalized.includes("explore") ||
-    normalized.includes("browser_use") ||
-    normalized.includes("browser use") ||
-    normalized.includes("computer_use") ||
-    normalized.includes("computer use") ||
-    normalized.includes("video_review") ||
-    normalized.includes("video review") ||
-    normalized.includes("vm_setup_helper") ||
-    normalized.includes("vm setup helper")
-  ) {
-    return "collab_agent_tool_call";
-  }
-  if (
-    normalized.includes("execute") ||
-    normalized.includes("terminal") ||
-    normalized.includes("bash") ||
-    normalized.includes("shell") ||
-    normalized.includes("command")
-  ) {
-    return "command_execution";
-  }
-  if (
-    normalized.includes("edit") ||
-    normalized.includes("write") ||
-    normalized.includes("file") ||
-    normalized.includes("patch") ||
-    normalized.includes("replace") ||
-    normalized.includes("create") ||
-    normalized.includes("delete")
-  ) {
-    return "file_change";
-  }
-  if (normalized.includes("mcp")) {
-    return "mcp_tool_call";
-  }
-  if (
-    normalized.includes("web") ||
-    normalized.includes("search") ||
-    normalized.includes("url") ||
-    normalized.includes("browser")
-  ) {
-    return "web_search";
-  }
-  if (normalized.includes("image")) {
-    return "image_view";
-  }
-  return "dynamic_tool_call";
-}
-
-function isReadOnlyCursorTool(input: {
-  readonly kind?: string | undefined;
-  readonly title?: string | undefined;
-}): boolean {
-  const normalized = [input.kind, input.title]
-    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
-    .join(" ")
-    .toLowerCase();
-  return (
-    normalized.includes("read") ||
-    normalized.includes("view") ||
-    normalized.includes("grep") ||
-    normalized.includes("glob") ||
-    normalized.includes("search")
-  );
-}
-
-export function requestTypeForCursorTool(input: {
-  readonly kind?: string | undefined;
-  readonly title?: string | undefined;
-}): CanonicalRequestType {
-  if (isReadOnlyCursorTool(input)) {
-    return "file_read_approval";
-  }
-  const itemType = classifyCursorToolItemType(input);
-  return itemType === "command_execution"
-    ? "command_execution_approval"
-    : itemType === "file_change"
-      ? "file_change_approval"
-      : "dynamic_tool_call";
-}
-
-export function runtimeItemStatusFromCursorStatus(status: string | undefined): RuntimeItemStatus {
-  switch (status?.toLowerCase()) {
-    case "completed":
-    case "success":
-    case "succeeded":
-      return "completed";
-    case "failed":
-    case "error":
-      return "failed";
-    case "cancelled":
-    case "canceled":
-    case "rejected":
-    case "declined":
-      return "declined";
-    default:
-      return "inProgress";
-  }
-}
-
-function isFinalCursorToolStatus(status: RuntimeItemStatus): boolean {
-  return status !== "inProgress";
 }
 
 function cursorTaskSubagentType(value: unknown): string | undefined {
@@ -1291,219 +232,6 @@ function cursorTaskSubagentType(value: unknown): string | undefined {
   }
   const record = asObject(value);
   return asString(record?.custom);
-}
-
-function extractCursorToolContentText(
-  record: Record<string, unknown> | undefined,
-): string | undefined {
-  const content = asArray(record?.content);
-  if (!content) {
-    return undefined;
-  }
-  for (const entry of content) {
-    const contentRecord = asObject(entry);
-    const nested = asObject(contentRecord?.content);
-    const text = asString(nested?.text) ?? asString(contentRecord?.text);
-    if (text) {
-      return stripWrappingBackticks(text);
-    }
-  }
-  return undefined;
-}
-
-function extractCursorToolCommand(record: Record<string, unknown> | undefined): string | undefined {
-  if (!record) {
-    return undefined;
-  }
-  const rawInput = asObject(record.rawInput) ?? asObject(record.input);
-  const rawOutput = asObject(record.rawOutput) ?? asObject(record.output);
-  for (const candidate of [
-    asString(record.command),
-    asString(rawInput?.command),
-    asString(rawInput?.cmd),
-    asString(rawOutput?.command),
-  ]) {
-    if (candidate) {
-      return stripWrappingBackticks(candidate);
-    }
-  }
-  const title = asString(record.title);
-  const kind = asString(record.kind);
-  if (title && ((kind && kind.toLowerCase().includes("execute")) || looksLikeShellCommand(title))) {
-    return stripWrappingBackticks(title);
-  }
-  return undefined;
-}
-
-function extractCursorToolPath(record: Record<string, unknown> | undefined): string | undefined {
-  if (!record) {
-    return undefined;
-  }
-  const rawInput = asObject(record.rawInput) ?? asObject(record.input);
-  const rawOutput = asObject(record.rawOutput) ?? asObject(record.output);
-  for (const candidate of [
-    asString(record.filePath),
-    asString(record.path),
-    asString(record.relativePath),
-    asString(rawInput?.filePath),
-    asString(rawInput?.path),
-    asString(rawOutput?.filePath),
-    asString(rawOutput?.path),
-  ]) {
-    if (candidate) {
-      return candidate;
-    }
-  }
-  return undefined;
-}
-
-function resolveCursorToolTitle(
-  itemType: CanonicalItemType,
-  rawTitle: string | undefined,
-  previousTitle?: string,
-): string {
-  const titleCandidate = rawTitle ? stripWrappingBackticks(rawTitle) : undefined;
-  if (titleCandidate && !looksLikeShellCommand(titleCandidate)) {
-    return titleCandidate;
-  }
-  return previousTitle ?? defaultCursorToolTitle(itemType);
-}
-
-function buildCursorToolData(
-  existingData: Record<string, unknown> | undefined,
-  record: Record<string, unknown>,
-): Record<string, unknown> {
-  const rawInput = asObject(record.rawInput) ?? asObject(record.input);
-  const rawOutput = asObject(record.rawOutput) ?? asObject(record.output);
-  const command = extractCursorToolCommand(record);
-  const path = extractCursorToolPath(record);
-  const previousItem = asObject(existingData?.item);
-  return {
-    ...existingData,
-    ...(command ? { command } : {}),
-    ...(path ? { path } : {}),
-    ...(rawInput ? { input: rawInput } : {}),
-    ...(rawOutput ? { result: rawOutput } : {}),
-    item: {
-      ...previousItem,
-      ...(asString(record.title)
-        ? { title: stripWrappingBackticks(asString(record.title) ?? "") }
-        : {}),
-      ...(asString(record.kind) ? { kind: asString(record.kind) } : {}),
-      ...(asString(record.status) ? { status: asString(record.status) } : {}),
-      ...(asString(record.toolCallId) ? { toolCallId: asString(record.toolCallId) } : {}),
-      ...(command ? { command } : {}),
-      ...(path ? { path } : {}),
-      ...(rawInput ? { input: rawInput } : {}),
-      ...(rawOutput ? { result: rawOutput } : {}),
-    },
-  };
-}
-
-export function describePermissionRequest(params: unknown): string | undefined {
-  const record = asObject(params);
-  if (!record) {
-    return undefined;
-  }
-
-  const toolCall = asObject(record.toolCall);
-  if (toolCall) {
-    const itemType = classifyCursorToolItemType(
-      cursorToolLookupInput({
-        kind: asString(toolCall.kind),
-        title: asString(toolCall.title),
-      }),
-    );
-    const detail = extractCursorToolCommand(toolCall) ?? extractCursorToolPath(toolCall);
-    if (detail) {
-      return detail;
-    }
-    const toolDetail = extractCursorToolContentText(toolCall);
-    if (toolDetail) {
-      return toolDetail;
-    }
-    const title = resolveCursorToolTitle(itemType, asString(toolCall.title));
-    if (title.length > 0 && title !== defaultCursorToolTitle(itemType)) {
-      return title;
-    }
-  }
-
-  for (const key of [
-    "command",
-    "title",
-    "message",
-    "reason",
-    "toolName",
-    "tool",
-    "filePath",
-    "path",
-  ] as const) {
-    const value = asString(record[key]);
-    if (value) {
-      return value;
-    }
-  }
-
-  const request = asObject(record.request);
-  if (!request) {
-    return undefined;
-  }
-
-  for (const key of [
-    "command",
-    "title",
-    "message",
-    "reason",
-    "toolName",
-    "tool",
-    "filePath",
-    "path",
-  ] as const) {
-    const value = asString(request[key]);
-    if (value) {
-      return value;
-    }
-  }
-
-  return undefined;
-}
-
-export function streamKindFromUpdateKind(updateKind: string): RuntimeContentStreamKind {
-  const normalized = updateKind.toLowerCase();
-  if (normalized.includes("summary")) {
-    return "reasoning_summary_text";
-  }
-  if (
-    normalized.includes("reason") ||
-    normalized.includes("thought") ||
-    normalized.includes("thinking")
-  ) {
-    return "reasoning_text";
-  }
-  if (normalized.includes("plan")) {
-    return "plan_text";
-  }
-  return "assistant_text";
-}
-
-export function permissionOptionKindForRuntimeMode(runtimeMode: ProviderSession["runtimeMode"]): {
-  readonly primary: CursorPermissionOptionKind;
-  readonly fallback: CursorPermissionOptionKind;
-  readonly decision: ProviderApprovalDecision;
-} {
-  if (runtimeMode === "full-access") {
-    return {
-      primary: "allow_always",
-      fallback: "allow_once",
-      decision: "acceptForSession",
-    };
-  }
-
-  return {
-    primary: "allow_once",
-    fallback: "allow_always",
-    decision: "accept",
-  };
 }
 
 function cursorModelTokens(value: string): ReadonlySet<string> {
@@ -2189,8 +917,8 @@ export const CursorAdapterLive = Layer.effect(
         finalUsageSnapshot !== undefined
           ? {
               ...finalUsageSnapshot,
-              ...(cursorToolUseCount(context.activeTurn) !== undefined
-                ? { toolUses: cursorToolUseCount(context.activeTurn) }
+              ...(context.activeTurn.toolCalls.size > 0
+                ? { toolUses: context.activeTurn.toolCalls.size }
                 : {}),
               ...(Date.now() - context.activeTurn.startedAtMs > 0
                 ? { durationMs: Math.round(Date.now() - context.activeTurn.startedAtMs) }
@@ -3612,3 +2340,17 @@ export const CursorAdapterLive = Layer.effect(
     } satisfies CursorAdapterShape;
   }),
 );
+
+export {
+  buildCursorUsageSnapshot,
+  buildCursorTurnUsageSnapshot,
+} from "./CursorAdapterUsageParsing.ts";
+export {
+  classifyCursorToolItemType,
+  describePermissionRequest,
+  extractCursorStreamText,
+  permissionOptionKindForRuntimeMode,
+  requestTypeForCursorTool,
+  runtimeItemStatusFromCursorStatus,
+  streamKindFromUpdateKind,
+} from "./CursorAdapterToolHelpers.ts";
