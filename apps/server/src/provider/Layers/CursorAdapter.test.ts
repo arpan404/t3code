@@ -442,6 +442,27 @@ describe("CursorAdapterLive", () => {
     });
   });
 
+  it("returns a typed missing-session failure from readThread", async () => {
+    await withAdapter(async (adapter) => {
+      const result = await Effect.runPromise(
+        adapter.readThread(asThreadId("thread-missing-read")).pipe(Effect.result),
+      );
+
+      expect(result._tag).toBe("Failure");
+      if (result._tag !== "Failure") {
+        return;
+      }
+
+      expect(result.failure._tag).toBe("ProviderAdapterSessionNotFoundError");
+      if (result.failure._tag !== "ProviderAdapterSessionNotFoundError") {
+        return;
+      }
+
+      expect(result.failure.provider).toBe("cursor");
+      expect(result.failure.threadId).toBe("thread-missing-read");
+    });
+  });
+
   it("waits for an in-flight startup instead of returning a connecting session", async () => {
     const sessionNew = deferred<ReturnType<typeof cursorSessionResult>>();
     const client = makeFakeCursorClient({

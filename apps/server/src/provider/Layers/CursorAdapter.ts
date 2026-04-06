@@ -2174,10 +2174,10 @@ export const CursorAdapterLive = Layer.effect(
       Effect.sync(() => sessions.has(threadId));
 
     const readThread: CursorAdapterShape["readThread"] = (threadId) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
         const context = sessions.get(threadId);
         if (!context) {
-          throw new ProviderAdapterSessionNotFoundError({
+          return yield* new ProviderAdapterSessionNotFoundError({
             provider: PROVIDER,
             threadId,
           });
