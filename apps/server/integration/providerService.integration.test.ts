@@ -15,8 +15,10 @@ import {
 } from "../src/provider/Services/ProviderService.ts";
 import { ServerSettingsService } from "../src/serverSettings.ts";
 import { AnalyticsService } from "../src/telemetry/Services/AnalyticsService.ts";
+import { ProjectionThreadMessageRepositoryLive } from "../src/persistence/Layers/ProjectionThreadMessages.ts";
 import { SqlitePersistenceMemory } from "../src/persistence/Layers/Sqlite.ts";
 import { ProviderSessionRuntimeRepositoryLive } from "../src/persistence/Layers/ProviderSessionRuntime.ts";
+import { ProjectionThreadMessageRepository } from "../src/persistence/Services/ProjectionThreadMessages.ts";
 
 import {
   makeTestProviderAdapterHarness,
@@ -40,7 +42,7 @@ const makeWorkspaceDirectory = Effect.gen(function* () {
 interface IntegrationFixture {
   readonly cwd: string;
   readonly harness: TestProviderAdapterHarness;
-  readonly layer: Layer.Layer<ProviderService, unknown, never>;
+  readonly layer: Layer.Layer<ProviderService | ProjectionThreadMessageRepository, unknown, never>;
 }
 
 const makeIntegrationFixture = Effect.gen(function* () {
@@ -58,15 +60,17 @@ const makeIntegrationFixture = Effect.gen(function* () {
   const directoryLayer = ProviderSessionDirectoryLive.pipe(
     Layer.provide(ProviderSessionRuntimeRepositoryLive),
   );
+  const projectionMessageRepositoryLayer = ProjectionThreadMessageRepositoryLive;
 
   const shared = Layer.mergeAll(
     directoryLayer,
+    projectionMessageRepositoryLayer,
     Layer.succeed(ProviderAdapterRegistry, registry),
     ServerSettingsService.layerTest(DEFAULT_SERVER_SETTINGS),
     AnalyticsService.layerTest,
   ).pipe(Layer.provide(SqlitePersistenceMemory));
 
-  const layer = makeProviderServiceLive().pipe(Layer.provide(shared));
+  const layer = Layer.mergeAll(shared, makeProviderServiceLive().pipe(Layer.provide(shared)));
 
   return {
     cwd,

@@ -528,10 +528,23 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
                   if (command === "codex") {
                     return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
                   }
+                  if (command === "cursor-agent") {
+                    return { stdout: "1.0.0\n", stderr: "", code: 0 };
+                  }
                   return { stdout: "", stderr: "spawn ENOENT", code: 1 };
                 }
                 if (joined === "login status") {
                   return { stdout: "Logged in\n", stderr: "", code: 0 };
+                }
+                if (joined === "models") {
+                  return { stdout: "", stderr: "", code: 0 };
+                }
+                if (joined === "about") {
+                  return {
+                    stdout: "User Email cursor@example.com\n",
+                    stderr: "",
+                    code: 0,
+                  };
                 }
                 throw new Error(`Unexpected args: ${joined}`);
               }),
