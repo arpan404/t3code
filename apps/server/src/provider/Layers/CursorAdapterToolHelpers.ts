@@ -183,7 +183,7 @@ export function isFinalCursorToolStatus(status: RuntimeItemStatus): boolean {
   return status !== "inProgress";
 }
 
-function cursorToolLookupInput(input: {
+export function cursorToolLookupInput(input: {
   readonly kind?: string | undefined;
   readonly title?: string | undefined;
   readonly subagentType?: string | undefined;

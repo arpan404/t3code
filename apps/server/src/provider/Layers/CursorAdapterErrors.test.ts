@@ -42,13 +42,19 @@ describe("CursorAdapterErrors", () => {
     );
   });
 
-  it("detects missing session errors from adapter errors and plain messages", () => {
-    const missingAdapterError = new ProviderAdapterSessionNotFoundError({
+  it("detects missing remote session errors from request failures and plain messages, but excludes local adapter thread misses", () => {
+    const missingAdapterThreadError = new ProviderAdapterSessionNotFoundError({
       provider: "cursor",
       threadId: "thread-404",
     });
+    const missingRequestError = new ProviderAdapterRequestError({
+      provider: "cursor",
+      method: "session/load",
+      detail: "Session not found: abc123",
+    });
 
-    assert.equal(isMissingCursorSessionError(missingAdapterError), false);
+    assert.equal(isMissingCursorSessionError(missingAdapterThreadError), false);
+    assert.equal(isMissingCursorSessionError(missingRequestError), true);
     assert.equal(
       isMissingCursorSessionError(new Error("Request failed: Session not found: abc123")),
       true,

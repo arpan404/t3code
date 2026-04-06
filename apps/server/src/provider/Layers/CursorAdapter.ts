@@ -65,6 +65,7 @@ import {
 import {
   buildCursorToolData,
   classifyCursorToolItemType,
+  cursorToolLookupInput,
   cursorPermissionKindsForDecision,
   cursorPermissionKindsForRuntimeMode,
   defaultCursorToolTitle,
@@ -199,18 +200,6 @@ function setContentItemState(
     return;
   }
   turn.reasoningItem = state;
-}
-
-function cursorToolLookupInput(input: {
-  readonly kind?: string | undefined;
-  readonly title?: string | undefined;
-  readonly subagentType?: string | undefined;
-}) {
-  return {
-    ...(input.kind ? { kind: input.kind } : {}),
-    ...(input.title ? { title: input.title } : {}),
-    ...(input.subagentType ? { subagentType: input.subagentType } : {}),
-  };
 }
 
 function requestIdFromApprovalRequest(requestId: ApprovalRequestId) {
@@ -1502,9 +1491,9 @@ export const CursorAdapterLive = Layer.effect(
           }),
         );
         const prompt = asString(params?.prompt);
-        const itemId = RuntimeItemId.makeUnsafe(
-          asString(params?.agentId) ?? `cursor-task:${randomUUID()}`,
-        );
+        const agentId = asString(params?.agentId);
+        const taskIdentity = agentId ?? `cursor-task:${randomUUID()}`;
+        const itemId = RuntimeItemId.makeUnsafe(taskIdentity);
         emit({
           ...baseEvent(context, {
             ...(turnId ? { turnId } : {}),
@@ -1522,7 +1511,7 @@ export const CursorAdapterLive = Layer.effect(
               ...(subagentType ? { subagentType } : {}),
               ...(prompt ? { prompt } : {}),
               ...(asString(params?.model) ? { model: asString(params?.model) } : {}),
-              ...(asString(params?.agentId) ? { agentId: asString(params?.agentId) } : {}),
+              ...(agentId ? { agentId } : {}),
               ...(typeof params?.durationMs === "number" ? { durationMs: params.durationMs } : {}),
             },
           },
@@ -1535,9 +1524,7 @@ export const CursorAdapterLive = Layer.effect(
           }),
           type: "task.completed",
           payload: {
-            taskId: RuntimeTaskId.makeUnsafe(
-              asString(params?.agentId) ?? `cursor-task:${randomUUID()}`,
-            ),
+            taskId: RuntimeTaskId.makeUnsafe(taskIdentity),
             status: "completed",
             ...(asString(params?.description) ? { summary: asString(params?.description) } : {}),
             ...(params && "durationMs" in params

@@ -1216,6 +1216,76 @@ describe("CursorAdapterLive", () => {
     });
   });
 
+  it("reuses one fallback id for cursor task item and task completion events", async () => {
+    const client = makeFakeCursorClient({
+      requestImpl: async (method) => {
+        switch (method) {
+          case "initialize":
+            return cursorInitializeResult();
+          case "authenticate":
+            return {};
+          case "session/new":
+            return cursorSessionResult("cursor-session-task-fallback");
+          default:
+            throw new Error(`Unexpected Cursor ACP request: ${method}`);
+        }
+      },
+    });
+    mockedStartCursorAcpClient.mockReturnValue(client);
+
+    await withAdapter(async (adapter) => {
+      try {
+        await Effect.runPromise(
+          adapter.startSession({
+            provider: "cursor",
+            threadId: asThreadId("thread-cursor-task-fallback"),
+            cwd: "/repo/cursor-task-fallback",
+            runtimeMode: "full-access",
+          }),
+        );
+
+        const notificationHandler = client.getNotificationHandler();
+        expect(notificationHandler).toBeTypeOf("function");
+        if (!notificationHandler) {
+          return;
+        }
+
+        const completedEventsPromise = Effect.runPromise(
+          Stream.runCollect(Stream.take(adapter.streamEvents, 2)),
+        );
+
+        notificationHandler({
+          method: "cursor/task",
+          params: {
+            description: "Run a subagent task",
+            prompt: "Investigate the failure",
+            subagentType: "explore",
+            durationMs: 123,
+          },
+        });
+
+        const completedEvents = Array.from(await completedEventsPromise);
+        expect(completedEvents).toHaveLength(2);
+
+        const itemCompletedEvent = completedEvents[0];
+        const taskCompletedEvent = completedEvents[1];
+        expect(itemCompletedEvent?.type).toBe("item.completed");
+        expect(taskCompletedEvent?.type).toBe("task.completed");
+        if (itemCompletedEvent?.type !== "item.completed") {
+          return;
+        }
+        if (taskCompletedEvent?.type !== "task.completed") {
+          return;
+        }
+
+        expect(itemCompletedEvent.itemId).toBe(taskCompletedEvent.payload.taskId);
+        expect(itemCompletedEvent.itemId).toMatch(/^cursor-task:/);
+      } finally {
+        await Effect.runPromise(adapter.stopAll());
+      }
+    });
+  });
+
   it("restarts Cursor sessions on rollback and bootstraps the next prompt from preserved transcript", async () => {
     const firstPromptResult = deferred<{ readonly stopReason: string }>();
     const secondPromptResult = deferred<{ readonly stopReason: string }>();

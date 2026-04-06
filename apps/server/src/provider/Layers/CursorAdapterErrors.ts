@@ -69,6 +69,10 @@ export function describeCursorAdapterCause(cause: unknown): string {
 }
 
 export function isMissingCursorSessionError(cause: unknown): boolean {
+  const known = findKnownCursorAdapterError(cause);
+  if (isProviderAdapterSessionNotFoundError(known)) {
+    return false;
+  }
   const message = describeCursorAdapterCause(cause).toLowerCase();
   return (
     message.includes("session not found") ||
