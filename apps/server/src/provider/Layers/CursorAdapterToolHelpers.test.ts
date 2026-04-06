@@ -116,6 +116,13 @@ describe("CursorAdapterToolHelpers", () => {
       optionId: "deny-now",
       name: "Reject",
     });
+    assert.equal(
+      selectCursorPermissionOption(
+        [{ optionId: "allow-once", name: "Allow once" }],
+        ["reject_once", "reject_always"],
+      ),
+      undefined,
+    );
   });
 
   it("falls back to default titles when a raw title looks like a shell command", () => {

@@ -529,5 +529,5 @@ export function selectCursorPermissionOption(
       return matched;
     }
   }
-  return options[0];
+  return preferredKinds.every((kind) => kind.startsWith("allow_")) ? options[0] : undefined;
 }

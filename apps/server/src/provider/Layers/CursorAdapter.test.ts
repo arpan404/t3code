@@ -1123,6 +1123,113 @@ describe("CursorAdapterLive", () => {
     });
   });
 
+  it("cancels declined permission requests when Cursor exposes no reject option", async () => {
+    const client = makeFakeCursorClient({
+      requestImpl: async (method) => {
+        switch (method) {
+          case "initialize":
+            return cursorInitializeResult();
+          case "authenticate":
+            return {};
+          case "session/new":
+            return cursorSessionResult("cursor-session-decline-fallback");
+          default:
+            throw new Error(`Unexpected Cursor ACP request: ${method}`);
+        }
+      },
+    });
+    mockedStartCursorAcpClient.mockReturnValue(client);
+
+    await withAdapter(async (adapter) => {
+      try {
+        const session = await Effect.runPromise(
+          adapter.startSession({
+            provider: "cursor",
+            threadId: asThreadId("thread-decline-fallback"),
+            cwd: "/repo/decline-fallback",
+            runtimeMode: "approval-required",
+          }),
+        );
+
+        const requestHandler = client.getRequestHandler();
+        expect(requestHandler).toBeTypeOf("function");
+        if (!requestHandler) {
+          return;
+        }
+
+        const openedEventPromise = Effect.runPromise(Stream.runHead(adapter.streamEvents));
+        requestHandler({
+          id: 61,
+          method: "session/request_permission",
+          params: {
+            toolCall: {
+              toolCallId: "tool-decline-fallback",
+              title: "`npm run build`",
+              kind: "execute",
+              status: "pending",
+            },
+            options: [
+              { optionId: "approve-per-run", kind: "allow_once", name: "Allow once" },
+              {
+                optionId: "approve-this-session",
+                kind: "allow_always",
+                name: "Allow for session",
+              },
+            ],
+          },
+        });
+
+        const openedEvent = await openedEventPromise;
+        expect(openedEvent._tag).toBe("Some");
+        if (openedEvent._tag !== "Some") {
+          return;
+        }
+        expect(openedEvent.value.type).toBe("request.opened");
+        if (openedEvent.value.type !== "request.opened") {
+          return;
+        }
+        const requestId = openedEvent.value.requestId;
+        expect(typeof requestId).toBe("string");
+        if (!requestId) {
+          return;
+        }
+
+        const resolvedEventPromise = Effect.runPromise(Stream.runHead(adapter.streamEvents));
+        await Effect.runPromise(
+          adapter.respondToRequest(
+            session.threadId,
+            ApprovalRequestId.makeUnsafe(requestId),
+            "decline",
+          ),
+        );
+
+        const resolvedEvent = await resolvedEventPromise;
+        expect(resolvedEvent._tag).toBe("Some");
+        if (resolvedEvent._tag !== "Some") {
+          return;
+        }
+        expect(resolvedEvent.value.type).toBe("request.resolved");
+        if (resolvedEvent.value.type !== "request.resolved") {
+          return;
+        }
+        expect(resolvedEvent.value.payload).toEqual({
+          requestType: "command_execution_approval",
+          decision: "decline",
+          resolution: {
+            outcome: "cancelled",
+          },
+        });
+        expect(client.respond).toHaveBeenCalledWith(61, {
+          outcome: {
+            outcome: "cancelled",
+          },
+        });
+      } finally {
+        await Effect.runPromise(adapter.stopAll());
+      }
+    });
+  });
+
   it("cancels active turns with ACP notifications and cancels pending approvals", async () => {
     const firstPromptResult = deferred<{ readonly stopReason: string }>();
     const secondPromptResult = deferred<{ readonly stopReason: string }>();
