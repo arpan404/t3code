@@ -141,6 +141,43 @@ function orchestrationSessionStatusFromRuntimeState(
   }
 }
 
+function isTerminalTurnLifecycleEvent(
+  event: ProviderRuntimeEvent,
+): event is Extract<ProviderRuntimeEvent, { type: "turn.completed" | "turn.aborted" }> {
+  return event.type === "turn.completed" || event.type === "turn.aborted";
+}
+
+function orchestrationSessionStatusFromTerminalTurnEvent(
+  event: Extract<ProviderRuntimeEvent, { type: "turn.completed" | "turn.aborted" }>,
+): "ready" | "interrupted" | "error" {
+  if (event.type === "turn.aborted") {
+    return "interrupted";
+  }
+
+  switch (normalizeRuntimeTurnState(event.payload.state)) {
+    case "failed":
+      return "error";
+    case "interrupted":
+    case "cancelled":
+      return "interrupted";
+    case "completed":
+      return "ready";
+  }
+}
+
+function lastErrorFromTerminalTurnEvent(
+  event: Extract<ProviderRuntimeEvent, { type: "turn.completed" | "turn.aborted" }>,
+  previousLastError: string | null,
+): string | null {
+  if (event.type === "turn.aborted") {
+    return null;
+  }
+
+  return normalizeRuntimeTurnState(event.payload.state) === "failed"
+    ? (event.payload.errorMessage ?? previousLastError ?? "Turn failed")
+    : null;
+}
+
 function requestKindFromCanonicalRequestType(
   requestType: string | undefined,
 ): "command" | "file-read" | "file-change" | undefined {
@@ -900,6 +937,7 @@ const make = Effect.fn("make")(function* () {
         case "turn.started":
           return !conflictsWithActiveTurn;
         case "turn.completed":
+        case "turn.aborted":
           if (conflictsWithActiveTurn || missingTurnForActiveTurn) {
             return false;
           }
@@ -924,12 +962,13 @@ const make = Effect.fn("make")(function* () {
       event.type === "session.exited" ||
       event.type === "thread.started" ||
       event.type === "turn.started" ||
-      event.type === "turn.completed"
+      event.type === "turn.completed" ||
+      event.type === "turn.aborted"
     ) {
       const nextActiveTurnId =
         event.type === "turn.started"
           ? (eventTurnId ?? null)
-          : event.type === "turn.completed" || event.type === "session.exited"
+          : isTerminalTurnLifecycleEvent(event) || event.type === "session.exited"
             ? null
             : activeTurnId;
       const status = (() => {
@@ -941,7 +980,8 @@ const make = Effect.fn("make")(function* () {
           case "session.exited":
             return "stopped";
           case "turn.completed":
-            return normalizeRuntimeTurnState(event.payload.state) === "failed" ? "error" : "ready";
+          case "turn.aborted":
+            return orchestrationSessionStatusFromTerminalTurnEvent(event);
           case "session.started":
           case "thread.started":
             // Provider thread/session start notifications can arrive during an
@@ -952,10 +992,9 @@ const make = Effect.fn("make")(function* () {
       const lastError =
         event.type === "session.state.changed" && event.payload.state === "error"
           ? (event.payload.reason ?? thread.session?.lastError ?? "Provider session error")
-          : event.type === "turn.completed" &&
-              normalizeRuntimeTurnState(event.payload.state) === "failed"
-            ? (event.payload.errorMessage ?? thread.session?.lastError ?? "Turn failed")
-            : status === "ready"
+          : isTerminalTurnLifecycleEvent(event)
+            ? lastErrorFromTerminalTurnEvent(event, thread.session?.lastError ?? null)
+            : status === "ready" || status === "interrupted"
               ? null
               : (thread.session?.lastError ?? null);
 
@@ -1106,7 +1145,7 @@ const make = Effect.fn("make")(function* () {
       });
     }
 
-    if (event.type === "turn.completed") {
+    if (isTerminalTurnLifecycleEvent(event)) {
       const turnId = toTurnId(event.turnId);
       if (turnId) {
         const assistantMessageIds = yield* getAssistantMessageIdsForTurn(thread.id, turnId);
@@ -1126,14 +1165,18 @@ const make = Effect.fn("make")(function* () {
         ).pipe(Effect.asVoid);
         yield* clearAssistantMessageIdsForTurn(thread.id, turnId);
 
-        yield* finalizeBufferedProposedPlan({
-          event,
-          threadId: thread.id,
-          threadProposedPlans: thread.proposedPlans,
-          planId: proposedPlanIdForTurn(thread.id, turnId),
-          turnId,
-          updatedAt: now,
-        });
+        if (event.type === "turn.completed") {
+          yield* finalizeBufferedProposedPlan({
+            event,
+            threadId: thread.id,
+            threadProposedPlans: thread.proposedPlans,
+            planId: proposedPlanIdForTurn(thread.id, turnId),
+            turnId,
+            updatedAt: now,
+          });
+        } else {
+          yield* clearBufferedProposedPlan(proposedPlanIdForTurn(thread.id, turnId));
+        }
       }
     }
 
