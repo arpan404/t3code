@@ -93,7 +93,9 @@ function getProviderStateFromCapabilities(
     modelOptionsForDispatch: normalizedOptions,
     ...(ultrathinkActive ? { composerFrameClassName: "ultrathink-frame" } : {}),
     ...(ultrathinkActive
-      ? { composerSurfaceClassName: "shadow-[0_0_0_1px_rgba(255,255,255,0.04)_inset]" }
+      ? {
+          composerSurfaceClassName: "shadow-[0_0_0_1px_rgba(255,255,255,0.04)_inset]",
+        }
       : {}),
     ...(ultrathinkActive ? { modelPickerIconClassName: "ultrathink-chroma" } : {}),
   };

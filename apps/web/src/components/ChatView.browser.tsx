@@ -88,14 +88,44 @@ const COMPACT_FOOTER_VIEWPORT: ViewportSpec = {
 };
 const TEXT_VIEWPORT_MATRIX = [
   DEFAULT_VIEWPORT,
-  { name: "tablet", width: 720, height: 1_024, textTolerancePx: 44, attachmentTolerancePx: 56 },
-  { name: "mobile", width: 430, height: 932, textTolerancePx: 56, attachmentTolerancePx: 56 },
-  { name: "narrow", width: 320, height: 700, textTolerancePx: 84, attachmentTolerancePx: 56 },
+  {
+    name: "tablet",
+    width: 720,
+    height: 1_024,
+    textTolerancePx: 44,
+    attachmentTolerancePx: 56,
+  },
+  {
+    name: "mobile",
+    width: 430,
+    height: 932,
+    textTolerancePx: 56,
+    attachmentTolerancePx: 56,
+  },
+  {
+    name: "narrow",
+    width: 320,
+    height: 700,
+    textTolerancePx: 84,
+    attachmentTolerancePx: 56,
+  },
 ] as const satisfies readonly ViewportSpec[];
 const ATTACHMENT_VIEWPORT_MATRIX = [
   DEFAULT_VIEWPORT,
-  { name: "mobile", width: 430, height: 932, textTolerancePx: 56, attachmentTolerancePx: 56 },
-  { name: "narrow", width: 320, height: 700, textTolerancePx: 84, attachmentTolerancePx: 56 },
+  {
+    name: "mobile",
+    width: 430,
+    height: 932,
+    textTolerancePx: 56,
+    attachmentTolerancePx: 56,
+  },
+  {
+    name: "narrow",
+    width: 320,
+    height: 700,
+    textTolerancePx: 84,
+    attachmentTolerancePx: 56,
+  },
 ] as const satisfies readonly ViewportSpec[];
 
 interface UserRowMeasurement {
@@ -1059,7 +1089,11 @@ async function measureUserRow(options: {
     },
   );
 
-  return { measuredRowHeightPx, timelineWidthMeasuredPx, renderedInVirtualizedRegion };
+  return {
+    measuredRowHeightPx,
+    timelineWidthMeasuredPx,
+    renderedInVirtualizedRegion,
+  };
 }
 
 async function mountChatView(options: {
@@ -1262,7 +1296,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
     try {
       const measurements: Array<
-        UserRowMeasurement & { viewport: ViewportSpec; estimatedHeightPx: number }
+        UserRowMeasurement & {
+          viewport: ViewportSpec;
+          estimatedHeightPx: number;
+        }
       > = [];
 
       for (const viewport of TEXT_VIEWPORT_MATRIX) {
@@ -2023,7 +2060,11 @@ describe("ChatView timeline estimator parity (full app)", () => {
                 type?: string;
                 bootstrap?: {
                   createThread?: { projectId?: string };
-                  prepareWorktree?: { projectCwd?: string; baseBranch?: string; branch?: string };
+                  prepareWorktree?: {
+                    projectCwd?: string;
+                    baseBranch?: string;
+                    branch?: string;
+                  };
                   runSetupScript?: boolean;
                 };
               }

@@ -3713,7 +3713,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
           trigger.rangeStart,
           replacementRangeEnd,
           replacement,
-          { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
+          {
+            expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
+          },
         );
         if (applied) {
           setComposerHighlightedItemId(null);
@@ -3732,7 +3734,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
             trigger.rangeStart,
             replacementRangeEnd,
             replacement,
-            { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
+            {
+              expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
+            },
           );
           if (applied) {
             setComposerHighlightedItemId(null);
