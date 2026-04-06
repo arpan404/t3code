@@ -8,7 +8,7 @@ import {
 } from "./baseSchemas";
 import { KeybindingRule, ResolvedKeybindingsConfig } from "./keybindings";
 import { EditorId } from "./editor";
-import { ModelCapabilities } from "./model";
+import { CursorModelMetadata, ModelCapabilities } from "./model";
 import { ProviderKind } from "./orchestration";
 import { ServerSettings } from "./settings";
 
@@ -53,6 +53,7 @@ export const ServerProviderModel = Schema.Struct({
   name: TrimmedNonEmptyString,
   isCustom: Schema.Boolean,
   capabilities: Schema.NullOr(ModelCapabilities),
+  cursorMetadata: Schema.optional(CursorModelMetadata),
 });
 export type ServerProviderModel = typeof ServerProviderModel.Type;
 

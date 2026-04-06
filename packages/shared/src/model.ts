@@ -4,14 +4,46 @@ import {
   type ClaudeCodeEffort,
   type ClaudeModelOptions,
   type CodexModelOptions,
+  type CursorModelOptions,
   type ModelCapabilities,
   type ModelSelection,
   type ProviderKind,
+  type ProviderModelOptions,
 } from "@t3tools/contracts";
 
 export interface SelectableModelOption {
   slug: string;
   name: string;
+}
+
+type ModelSelectionByProvider<TProvider extends ProviderKind> = Extract<
+  ModelSelection,
+  { provider: TProvider }
+>;
+
+function withoutKnownCursorVariantSuffix(value: string): string {
+  let normalized = value;
+
+  if (normalized.endsWith("-fast")) {
+    normalized = normalized.substring(0, normalized.length - "-fast".length);
+  }
+
+  for (const suffix of ["-xhigh", "-high", "-medium", "-low", "-none"] as const) {
+    if (normalized.endsWith(suffix)) {
+      return normalized.substring(0, normalized.length - suffix.length);
+    }
+  }
+
+  return normalized;
+}
+
+function normalizeCursorVariantSelectionCandidate(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const normalized = withoutKnownCursorVariantSuffix(trimmed);
+  return normalized !== trimmed ? normalized : null;
 }
 
 // ── Effort helpers ────────────────────────────────────────────────────
@@ -117,6 +149,33 @@ export function normalizeClaudeModelOptionsWithCapabilities(
   return Object.keys(nextOptions).length > 0 ? nextOptions : undefined;
 }
 
+export function normalizeCursorModelOptionsWithCapabilities(
+  caps: ModelCapabilities,
+  modelOptions: CursorModelOptions | null | undefined,
+): CursorModelOptions | undefined {
+  const reasoningEffort = resolveEffort(caps, modelOptions?.reasoningEffort);
+  const fastMode = caps.supportsFastMode ? modelOptions?.fastMode : undefined;
+  const nextOptions: CursorModelOptions = {
+    ...(reasoningEffort
+      ? { reasoningEffort: reasoningEffort as CursorModelOptions["reasoningEffort"] }
+      : {}),
+    ...(fastMode !== undefined ? { fastMode } : {}),
+  };
+  return Object.keys(nextOptions).length > 0 ? nextOptions : undefined;
+}
+
+export function buildProviderModelSelection<TProvider extends ProviderKind>(
+  provider: TProvider,
+  model: string,
+  options?: ProviderModelOptions[TProvider],
+): ModelSelectionByProvider<TProvider> {
+  return {
+    provider,
+    model,
+    ...(options === undefined ? {} : { options }),
+  } as ModelSelectionByProvider<TProvider>;
+}
+
 export function isClaudeUltrathinkPrompt(text: string | null | undefined): boolean {
   return typeof text === "string" && /\bultrathink\b/i.test(text);
 }
@@ -171,7 +230,20 @@ export function resolveSelectableModel(
   }
 
   const resolved = options.find((option) => option.slug === normalized);
-  return resolved ? resolved.slug : null;
+  if (resolved) {
+    return resolved.slug;
+  }
+
+  if (provider === "cursor") {
+    const canonicalCursorSlug = normalizeCursorVariantSelectionCandidate(normalized);
+    if (!canonicalCursorSlug) {
+      return null;
+    }
+    const canonicalCursorOption = options.find((option) => option.slug === canonicalCursorSlug);
+    return canonicalCursorOption ? canonicalCursorOption.slug : null;
+  }
+
+  return null;
 }
 
 export function resolveModelSlug(model: string | null | undefined, provider: ProviderKind): string {
@@ -194,6 +266,64 @@ export function trimOrNull<T extends string>(value: T | null | undefined): T | n
   if (typeof value !== "string") return null;
   const trimmed = value.trim() as T;
   return trimmed || null;
+}
+
+function includesAny(value: string, candidates: ReadonlyArray<string>): boolean {
+  return candidates.some((candidate) => value.includes(candidate));
+}
+
+export function inferModelContextWindowTokens(
+  provider: ProviderKind,
+  model: string | null | undefined,
+): number | undefined {
+  const normalized = normalizeModelSlug(model, provider);
+  const lookupValue = (normalized ?? trimOrNull(model) ?? "").toLowerCase();
+  if (!lookupValue) {
+    return undefined;
+  }
+
+  switch (provider) {
+    case "cursor": {
+      if (includesAny(lookupValue, ["composer-2", "composer 2"])) {
+        return 200_000;
+      }
+      if (
+        includesAny(lookupValue, [
+          "claude-4-sonnet",
+          "claude 4 sonnet",
+          "claude-sonnet-4-6",
+          "claude sonnet 4.6",
+          "claude-4.6-sonnet",
+          "sonnet-4",
+          "sonnet 4",
+          "claude-opus-4-6",
+          "claude opus 4.6",
+          "claude-4.6-opus",
+          "opus-4.6",
+          "opus 4.6",
+          "gemini-3.1-pro",
+          "gemini 3.1 pro",
+        ])
+      ) {
+        return 200_000;
+      }
+      if (
+        lookupValue === "gpt-5.3-codex" ||
+        lookupValue.startsWith("gpt-5.3-codex ") ||
+        lookupValue === "gpt 5.3 codex" ||
+        lookupValue.startsWith("gpt 5.3 codex ") ||
+        lookupValue === "gpt-5.4" ||
+        lookupValue.startsWith("gpt-5.4 ") ||
+        lookupValue === "gpt 5.4" ||
+        lookupValue.startsWith("gpt 5.4 ")
+      ) {
+        return 272_000;
+      }
+      return undefined;
+    }
+    default:
+      return undefined;
+  }
 }
 
 /**

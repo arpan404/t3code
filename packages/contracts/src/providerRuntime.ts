@@ -24,6 +24,8 @@ const RuntimeEventRawSource = Schema.Literals([
   "claude.sdk.message",
   "claude.sdk.permission",
   "codex.sdk.thread-event",
+  "cursor.acp.notification",
+  "cursor.acp.request",
 ]);
 export type RuntimeEventRawSource = typeof RuntimeEventRawSource.Type;
 

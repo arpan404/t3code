@@ -46,12 +46,20 @@ export const ProviderSession = Schema.Struct({
 });
 export type ProviderSession = typeof ProviderSession.Type;
 
+export const ProviderReplayTurn = Schema.Struct({
+  prompt: Schema.String,
+  attachmentNames: Schema.Array(TrimmedNonEmptyString),
+  assistantResponse: Schema.optional(Schema.String),
+});
+export type ProviderReplayTurn = typeof ProviderReplayTurn.Type;
+
 export const ProviderSessionStartInput = Schema.Struct({
   threadId: ThreadId,
   provider: Schema.optional(ProviderKind),
   cwd: Schema.optional(TrimmedNonEmptyString),
   modelSelection: Schema.optional(ModelSelection),
   resumeCursor: Schema.optional(Schema.Unknown),
+  replayTurns: Schema.optional(Schema.Array(ProviderReplayTurn)),
   approvalPolicy: Schema.optional(ProviderApprovalPolicy),
   sandboxMode: Schema.optional(ProviderSandboxMode),
   runtimeMode: RuntimeMode,
