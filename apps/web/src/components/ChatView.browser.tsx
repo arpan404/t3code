@@ -149,6 +149,52 @@ function createBaseServerConfig(): ServerConfig {
   };
 }
 
+const CURSOR_TEST_PROVIDER = {
+  provider: "cursor",
+  enabled: true,
+  installed: true,
+  version: "0.1.0",
+  status: "ready",
+  auth: { status: "authenticated" },
+  checkedAt: NOW_ISO,
+  models: [
+    {
+      slug: "gpt-5.4",
+      name: "GPT-5.4",
+      isCustom: false,
+      capabilities: null,
+    },
+    {
+      slug: "claude-4.6-opus-high",
+      name: "Opus 4.6 High",
+      isCustom: false,
+      capabilities: null,
+      cursorMetadata: {
+        familySlug: "claude-4.6-opus",
+        familyName: "Opus 4.6",
+        reasoningEffort: "high",
+        fastMode: false,
+        thinking: false,
+        maxMode: false,
+      },
+    },
+    {
+      slug: "claude-4.6-opus-max",
+      name: "Opus 4.6 Max",
+      isCustom: false,
+      capabilities: null,
+      cursorMetadata: {
+        familySlug: "claude-4.6-opus",
+        familyName: "Opus 4.6",
+        reasoningEffort: undefined,
+        fastMode: false,
+        thinking: false,
+        maxMode: true,
+      },
+    },
+  ],
+} satisfies ServerConfig["providers"][number];
+
 function createUserMessage(options: {
   id: MessageId;
   text: string;
@@ -2672,6 +2718,98 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         activeProvider: "codex",
       });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("clears stale cursor traits when switching to a cursor model from the picker", async () => {
+    setDraftThreadWithoutWorktree();
+    useComposerDraftStore.setState({
+      draftsByThreadId: {
+        [THREAD_ID]: {
+          prompt: "",
+          images: [],
+          nonPersistedImageIds: [],
+          persistedAttachments: [],
+          terminalContexts: [],
+          modelSelectionByProvider: {
+            codex: {
+              provider: "codex",
+              model: "gpt-5.4",
+            },
+            cursor: {
+              provider: "cursor",
+              model: "claude-4.6-opus-high",
+              options: {
+                reasoningEffort: "high",
+              },
+            },
+          },
+          activeProvider: "codex",
+          runtimeMode: null,
+          interactionMode: null,
+        },
+      },
+      stickyModelSelectionByProvider: {
+        cursor: {
+          provider: "cursor",
+          model: "claude-4.6-opus-high",
+          options: {
+            reasoningEffort: "high",
+          },
+        },
+      },
+      stickyActiveProvider: "codex",
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          providers: [...nextFixture.serverConfig.providers, CURSOR_TEST_PROVIDER],
+        };
+      },
+    });
+
+    try {
+      const providerModelPicker = await waitForElement(
+        findComposerProviderModelPicker,
+        "Unable to find provider model picker.",
+      );
+
+      providerModelPicker.click();
+      await page.getByRole("menuitem", { name: "Cursor" }).hover();
+      await page.getByRole("menuitemradio", { name: "GPT-5.4" }).click();
+
+      await vi.waitFor(
+        () => {
+          expect(useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]).toMatchObject({
+            modelSelectionByProvider: {
+              codex: {
+                provider: "codex",
+                model: "gpt-5.4",
+              },
+              cursor: {
+                provider: "cursor",
+                model: "gpt-5.4",
+              },
+            },
+            activeProvider: "cursor",
+          });
+          expect(
+            useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]?.modelSelectionByProvider
+              .cursor?.options,
+          ).toBeUndefined();
+          expect(useComposerDraftStore.getState().stickyModelSelectionByProvider.cursor).toEqual({
+            provider: "cursor",
+            model: "gpt-5.4",
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
     } finally {
       await mounted.cleanup();
     }

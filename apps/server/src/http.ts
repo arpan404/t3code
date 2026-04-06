@@ -99,7 +99,15 @@ export const attachmentsRouteLayer = HttpRouter.add(
 
     const config = yield* ServerConfig;
     const rawRelativePath = url.value.pathname.slice(ATTACHMENTS_ROUTE_PREFIX.length);
-    const normalizedRelativePath = normalizeAttachmentRelativePath(rawRelativePath);
+    const decodedRelativePath = yield* Effect.try({
+      try: () => decodeURIComponent(rawRelativePath),
+      catch: () => null,
+    });
+    if (decodedRelativePath === null) {
+      return HttpServerResponse.text("Invalid attachment path", { status: 400 });
+    }
+
+    const normalizedRelativePath = normalizeAttachmentRelativePath(decodedRelativePath);
     if (!normalizedRelativePath) {
       return HttpServerResponse.text("Invalid attachment path", { status: 400 });
     }

@@ -3,7 +3,7 @@ import {
   type OrchestrationMessage,
   type OrchestrationProposedPlan,
   type ProjectId,
-  type ProviderKind,
+  ProviderKind,
   ThreadId,
   type OrchestrationReadModel,
   type OrchestrationSession,
@@ -11,6 +11,7 @@ import {
   type OrchestrationThread,
   type OrchestrationSessionStatus,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { resolveModelSlugForProvider } from "@t3tools/shared/model";
 import { create } from "zustand";
 import {
@@ -494,7 +495,7 @@ function toLegacySessionStatus(
 }
 
 function toLegacyProvider(providerName: string | null): ProviderKind {
-  if (providerName === "codex" || providerName === "claudeAgent") {
+  if (Schema.is(ProviderKind)(providerName)) {
     return providerName;
   }
   return "codex";

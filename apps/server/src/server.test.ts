@@ -549,7 +549,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const config = yield* buildAppUnderTest();
       const attachmentPath = resolveAttachmentRelativePath({
         attachmentsDir: config.attachmentsDir,
-        relativePath: "thread%20folder/message%20folder/file%20name.png",
+        relativePath: "thread folder/message folder/file name.png",
       });
       assert.isNotNull(attachmentPath, "Attachment path should be resolvable");
 
