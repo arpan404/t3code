@@ -39,6 +39,7 @@ import {
   TurnId,
   type UserInputQuestion,
   ClaudeCodeEffort,
+  type ClaudeThinkingBudget,
 } from "@t3tools/contracts";
 import {
   applyClaudePromptEffortPrefix,
@@ -77,6 +78,14 @@ import { ClaudeAdapter, type ClaudeAdapterShape } from "../Services/ClaudeAdapte
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
 const PROVIDER = "claudeAgent" as const;
+
+/** Thinking budget → max token count mapping. */
+const THINKING_BUDGET_TOKENS: Record<ClaudeThinkingBudget, number> = {
+  low: 5_000,
+  medium: 20_000,
+  high: 80_000,
+};
+
 type ClaudeTextStreamKind = Extract<RuntimeContentStreamKind, "assistant_text" | "reasoning_text">;
 type ClaudeToolResultStreamKind = Extract<
   RuntimeContentStreamKind,
@@ -2692,6 +2701,12 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         typeof modelSelection?.options?.thinking === "boolean" && caps.supportsThinkingToggle
           ? modelSelection.options.thinking
           : undefined;
+      const thinkingBudget =
+        thinking === true && modelSelection?.options?.thinkingBudget
+          ? (THINKING_BUDGET_TOKENS[
+              modelSelection.options.thinkingBudget as ClaudeThinkingBudget
+            ] ?? null)
+          : null;
       const effectiveEffort = getEffectiveClaudeCodeEffort(effort);
       const permissionMode = input.runtimeMode === "full-access" ? "bypassPermissions" : undefined;
       const settings = {
@@ -2732,6 +2747,10 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             cause,
           }),
       });
+
+      if (thinkingBudget !== null) {
+        yield* Effect.promise(() => queryRuntime.setMaxThinkingTokens(thinkingBudget));
+      }
 
       const session: ProviderSession = {
         threadId,
@@ -2868,6 +2887,22 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...context.session,
         model: modelSelection.model,
       };
+
+      // Apply thinking budget when options change on subsequent turns.
+      const caps = getClaudeModelCapabilities(modelSelection.model);
+      const turnThinking =
+        typeof modelSelection.options?.thinking === "boolean" && caps.supportsThinkingToggle
+          ? modelSelection.options.thinking
+          : undefined;
+      const turnThinkingBudget =
+        turnThinking === true && modelSelection.options?.thinkingBudget
+          ? (THINKING_BUDGET_TOKENS[
+              modelSelection.options.thinkingBudget as ClaudeThinkingBudget
+            ] ?? null)
+          : null;
+      if (turnThinkingBudget !== null) {
+        yield* Effect.promise(() => context.query.setMaxThinkingTokens(turnThinkingBudget));
+      }
     }
 
     // Apply interaction mode by switching the SDK's permission mode.

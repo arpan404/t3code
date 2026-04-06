@@ -17,7 +17,7 @@ import {
   hasContextWindowOption,
   resolveEffort,
 } from "@t3tools/shared/model";
-import { memo, useCallback, useState } from "react";
+import { Fragment, memo, type ReactElement, useCallback, useState } from "react";
 import type { VariantProps } from "class-variance-authority";
 import { ChevronDownIcon } from "lucide-react";
 import { Button, buttonVariants } from "../ui/button";
@@ -89,7 +89,10 @@ function buildNextOptions(
   patch: Record<string, unknown>,
 ): ProviderOptions {
   if (provider === "codex") {
-    return { ...(modelOptions as CodexModelOptions | undefined), ...patch } as CodexModelOptions;
+    return {
+      ...(modelOptions as CodexModelOptions | undefined),
+      ...patch,
+    } as CodexModelOptions;
   }
   if (provider === "cursor") {
     return {
@@ -97,7 +100,10 @@ function buildNextOptions(
       ...patch,
     } as CursorModelOptions;
   }
-  return { ...(modelOptions as ClaudeModelOptions | undefined), ...patch } as ClaudeModelOptions;
+  return {
+    ...(modelOptions as ClaudeModelOptions | undefined),
+    ...patch,
+  } as ClaudeModelOptions;
 }
 
 function getSelectedTraits(
@@ -119,10 +125,22 @@ function getSelectedTraits(
   const rawEffort = getRawEffort(provider, modelOptions);
   const effort = resolveEffort(caps, rawEffort) ?? null;
 
+  // Thinking budget options (replaces binary toggle when available)
+  const thinkingBudgetOptions = caps.thinkingBudgetOptions ?? [];
+
   // Thinking toggle (only for models that support it)
   const thinkingEnabled = caps.supportsThinkingToggle
     ? ((modelOptions as ClaudeModelOptions | undefined)?.thinking ?? true)
     : null;
+
+  // Thinking budget (selected budget level, or default)
+  const thinkingBudget =
+    thinkingBudgetOptions.length > 0 && thinkingEnabled !== null
+      ? ((modelOptions as ClaudeModelOptions | undefined)?.thinkingBudget ??
+        thinkingBudgetOptions.find((o) => o.isDefault)?.value ??
+        thinkingBudgetOptions[0]?.value ??
+        null)
+      : null;
 
   // Fast mode
   const fastModeEnabled =
@@ -153,6 +171,8 @@ function getSelectedTraits(
     effort,
     effortLevels,
     thinkingEnabled,
+    thinkingBudget,
+    thinkingBudgetOptions,
     fastModeEnabled,
     contextWindowOptions,
     contextWindow,
@@ -185,7 +205,7 @@ function hasVisibleCursorTraits(
     return false;
   }
   return (
-    family.reasoningEffortOptions.length > 0 ||
+    hasSelectableCursorReasoningEffort(family) ||
     family.supportsThinkingToggle ||
     family.supportsFastMode ||
     family.supportsMaxMode
@@ -202,20 +222,25 @@ function readDefaultCursorTraits(
   });
 }
 
+function hasSelectableCursorReasoningEffort(family: CursorSelectorFamily): boolean {
+  return family.reasoningEffortOptions.length > 1;
+}
+
 function buildCursorTriggerLabel(input: {
   family: CursorSelectorFamily;
   model: string | null | undefined;
 }): string {
   const selectedTraits = readCursorSelectedTraits(input);
-  const primaryLabel = selectedTraits.reasoningEffort
-    ? CURSOR_REASONING_LABELS[selectedTraits.reasoningEffort]
-    : input.family.supportsThinkingToggle
-      ? `Thinking ${selectedTraits.thinking ? "On" : "Off"}`
-      : input.family.supportsFastMode
-        ? `Fast ${selectedTraits.fastMode ? "On" : "Off"}`
-        : input.family.supportsMaxMode
-          ? `Max ${selectedTraits.maxMode ? "On" : "Off"}`
-          : "Variants";
+  const primaryLabel =
+    hasSelectableCursorReasoningEffort(input.family) && selectedTraits.reasoningEffort
+      ? CURSOR_REASONING_LABELS[selectedTraits.reasoningEffort]
+      : input.family.supportsThinkingToggle
+        ? `Thinking ${selectedTraits.thinking ? "On" : "None"}`
+        : input.family.supportsFastMode
+          ? `Fast ${selectedTraits.fastMode ? "On" : "Off"}`
+          : input.family.supportsMaxMode
+            ? `Max ${selectedTraits.maxMode ? "On" : "Off"}`
+            : "Variants";
 
   return [
     primaryLabel,
@@ -270,7 +295,9 @@ export const CursorTraitsMenuContent = memo(function CursorTraitsMenuContent(pro
     (nextModelSlug: string) => {
       const modelSelection = buildProviderModelSelection("cursor", nextModelSlug);
       setModelSelection(props.threadId, modelSelection);
-      setProviderModelOptions(props.threadId, "cursor", undefined, { persistSticky: true });
+      setProviderModelOptions(props.threadId, "cursor", undefined, {
+        persistSticky: true,
+      });
       setStickyModelSelection(modelSelection);
     },
     [props.threadId, setModelSelection, setProviderModelOptions, setStickyModelSelection],
@@ -299,47 +326,57 @@ export const CursorTraitsMenuContent = memo(function CursorTraitsMenuContent(pro
     const defaultValue = defaultTraits[key];
 
     return (
-      <>
-        <MenuDivider />
-        <MenuGroup>
-          <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">{label}</div>
-          <MenuRadioGroup
-            value={selectedValue ? "on" : "off"}
-            onValueChange={(value) => {
-              const nextModel = pickCursorModelFromTraits({
-                family,
-                selections: {
-                  ...selectedTraits,
-                  [key]: value === "on",
-                },
-              });
-              if (nextModel) {
-                applySelection(nextModel.slug);
-              }
-            }}
-          >
-            {[
-              { value: "off", label: "off", enabled: values.includes("false"), active: false },
-              { value: "on", label: "on", enabled: values.includes("true"), active: true },
-            ].map((option) => (
-              <MenuRadioItem
-                key={`cursor-${key}:${option.value}`}
-                value={option.value}
-                disabled={!option.enabled}
-              >
-                {option.label}
-                {defaultValue === option.active ? " (default)" : ""}
-              </MenuRadioItem>
-            ))}
-          </MenuRadioGroup>
-        </MenuGroup>
-      </>
+      <MenuGroup>
+        <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">{label}</div>
+        <MenuRadioGroup
+          value={selectedValue ? "on" : "off"}
+          onValueChange={(value) => {
+            const nextModel = pickCursorModelFromTraits({
+              family,
+              selections: {
+                ...selectedTraits,
+                [key]: value === "on",
+              },
+            });
+            if (nextModel) {
+              applySelection(nextModel.slug);
+            }
+          }}
+        >
+          {[
+            {
+              value: "off",
+              label: key === "thinking" ? "None" : "off",
+              enabled: values.includes("false"),
+              active: false,
+            },
+            {
+              value: "on",
+              label: "on",
+              enabled: values.includes("true"),
+              active: true,
+            },
+          ].map((option) => (
+            <MenuRadioItem
+              key={`cursor-${key}:${option.value}`}
+              value={option.value}
+              disabled={!option.enabled}
+            >
+              {option.label}
+              {defaultValue === option.active ? " (default)" : ""}
+            </MenuRadioItem>
+          ))}
+        </MenuRadioGroup>
+      </MenuGroup>
     );
   };
 
-  return (
-    <>
-      {family.reasoningEffortOptions.length > 0 ? (
+  const sections: Array<{ key: string; element: ReactElement }> = [];
+
+  if (hasSelectableCursorReasoningEffort(family)) {
+    sections.push({
+      key: "effort",
+      element: (
         <MenuGroup>
           <div className="px-2 pt-1.5 pb-1 font-medium text-muted-foreground text-xs">Effort</div>
           <MenuRadioGroup
@@ -371,10 +408,37 @@ export const CursorTraitsMenuContent = memo(function CursorTraitsMenuContent(pro
             ))}
           </MenuRadioGroup>
         </MenuGroup>
-      ) : null}
-      {renderBinaryFacet("thinking", "Thinking", selectedTraits.thinking)}
-      {renderBinaryFacet("fastMode", "Fast Mode", selectedTraits.fastMode)}
-      {renderBinaryFacet("maxMode", "Max Mode", selectedTraits.maxMode)}
+      ),
+    });
+  }
+
+  for (const section of [
+    {
+      key: "thinking",
+      element: renderBinaryFacet("thinking", "Thinking", selectedTraits.thinking),
+    },
+    {
+      key: "fastMode",
+      element: renderBinaryFacet("fastMode", "Fast Mode", selectedTraits.fastMode),
+    },
+    {
+      key: "maxMode",
+      element: renderBinaryFacet("maxMode", "Max Mode", selectedTraits.maxMode),
+    },
+  ]) {
+    if (section.element) {
+      sections.push({ key: section.key, element: section.element });
+    }
+  }
+
+  return (
+    <>
+      {sections.map((section, index) => (
+        <Fragment key={`cursor-traits-section:${section.key}`}>
+          {index > 0 ? <MenuDivider /> : null}
+          {section.element}
+        </Fragment>
+      ))}
     </>
   );
 });
@@ -457,7 +521,9 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
         persistence.onModelOptionsChange(nextOptions);
         return;
       }
-      setProviderModelOptions(persistence.threadId, provider, nextOptions, { persistSticky: true });
+      setProviderModelOptions(persistence.threadId, provider, nextOptions, {
+        persistSticky: true,
+      });
     },
     [persistence, provider, setProviderModelOptions],
   );
@@ -466,6 +532,8 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
     effort,
     effortLevels,
     thinkingEnabled,
+    thinkingBudget,
+    thinkingBudgetOptions,
     fastModeEnabled,
     contextWindowOptions,
     contextWindow,
@@ -495,7 +563,9 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
       }
       const effortKey = provider === "claudeAgent" ? "effort" : "reasoningEffort";
       updateModelOptions(
-        buildNextOptions(provider, modelOptions, { [effortKey]: nextOption.value }),
+        buildNextOptions(provider, modelOptions, {
+          [effortKey]: nextOption.value,
+        }),
       );
     },
     [
@@ -550,19 +620,53 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
             </MenuRadioGroup>
           </MenuGroup>
         </>
+      ) : thinkingEnabled !== null && thinkingBudgetOptions.length > 0 ? (
+        <MenuGroup>
+          <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Thinking</div>
+          <MenuRadioGroup
+            value={thinkingEnabled ? (thinkingBudget ?? "on") : "none"}
+            onValueChange={(value) => {
+              if (value === "none") {
+                updateModelOptions(
+                  buildNextOptions(provider, modelOptions, {
+                    thinking: false,
+                    thinkingBudget: undefined,
+                  }),
+                );
+              } else {
+                updateModelOptions(
+                  buildNextOptions(provider, modelOptions, {
+                    thinking: true,
+                    thinkingBudget: value,
+                  }),
+                );
+              }
+            }}
+          >
+            <MenuRadioItem value="none">None</MenuRadioItem>
+            {thinkingBudgetOptions.map((option) => (
+              <MenuRadioItem key={option.value} value={option.value}>
+                {option.label}
+                {option.isDefault ? " (default)" : ""}
+              </MenuRadioItem>
+            ))}
+          </MenuRadioGroup>
+        </MenuGroup>
       ) : thinkingEnabled !== null ? (
         <MenuGroup>
           <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Thinking</div>
           <MenuRadioGroup
-            value={thinkingEnabled ? "on" : "off"}
+            value={thinkingEnabled ? "on" : "none"}
             onValueChange={(value) => {
               updateModelOptions(
-                buildNextOptions(provider, modelOptions, { thinking: value === "on" }),
+                buildNextOptions(provider, modelOptions, {
+                  thinking: value === "on",
+                }),
               );
             }}
           >
-            <MenuRadioItem value="on">On (default)</MenuRadioItem>
-            <MenuRadioItem value="off">Off</MenuRadioItem>
+            <MenuRadioItem value="none">None</MenuRadioItem>
+            <MenuRadioItem value="on">Enabled (default)</MenuRadioItem>
           </MenuRadioGroup>
         </MenuGroup>
       ) : null}
@@ -575,7 +679,9 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
               value={fastModeEnabled ? "on" : "off"}
               onValueChange={(value) => {
                 updateModelOptions(
-                  buildNextOptions(provider, modelOptions, { fastMode: value === "on" }),
+                  buildNextOptions(provider, modelOptions, {
+                    fastMode: value === "on",
+                  }),
                 );
               }}
             >
@@ -634,6 +740,8 @@ export const TraitsPicker = memo(function TraitsPicker({
     effort,
     effortLevels,
     thinkingEnabled,
+    thinkingBudget,
+    thinkingBudgetOptions,
     fastModeEnabled,
     contextWindowOptions,
     contextWindow,
@@ -644,18 +752,22 @@ export const TraitsPicker = memo(function TraitsPicker({
   const effortLabel = effort
     ? (effortLevels.find((l) => l.value === effort)?.label ?? effort)
     : null;
+  const thinkingLabel =
+    thinkingEnabled === null
+      ? null
+      : thinkingBudgetOptions.length > 0
+        ? thinkingEnabled
+          ? (thinkingBudgetOptions.find((o) => o.value === thinkingBudget)?.label ?? "Thinking On")
+          : "Thinking None"
+        : thinkingEnabled
+          ? "Thinking On"
+          : "Thinking None";
   const contextWindowLabel =
     contextWindowOptions.length > 1 && contextWindow !== defaultContextWindow
       ? (contextWindowOptions.find((o) => o.value === contextWindow)?.label ?? null)
       : null;
   const triggerLabel = [
-    ultrathinkPromptControlled
-      ? "Ultrathink"
-      : effortLabel
-        ? effortLabel
-        : thinkingEnabled === null
-          ? null
-          : `Thinking ${thinkingEnabled ? "On" : "Off"}`,
+    ultrathinkPromptControlled ? "Ultrathink" : effortLabel ? effortLabel : thinkingLabel,
     ...(caps.supportsFastMode && fastModeEnabled ? ["Fast"] : []),
     ...(contextWindowLabel ? [contextWindowLabel] : []),
   ]

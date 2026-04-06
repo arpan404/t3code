@@ -138,10 +138,20 @@ export function normalizeClaudeModelOptionsWithCapabilities(
 ): ClaudeModelOptions | undefined {
   const effort = resolveEffort(caps, modelOptions?.effort);
   const thinking = caps.supportsThinkingToggle ? modelOptions?.thinking : undefined;
+  const thinkingBudgetOptions = caps.thinkingBudgetOptions ?? [];
+  const thinkingBudget =
+    thinking === true && thinkingBudgetOptions.length > 0
+      ? (thinkingBudgetOptions.find((o) => o.value === modelOptions?.thinkingBudget)?.value ??
+        thinkingBudgetOptions.find((o) => o.isDefault)?.value ??
+        undefined)
+      : undefined;
   const fastMode = caps.supportsFastMode ? modelOptions?.fastMode : undefined;
   const contextWindow = resolveContextWindow(caps, modelOptions?.contextWindow);
   const nextOptions: ClaudeModelOptions = {
     ...(thinking !== undefined ? { thinking } : {}),
+    ...(thinkingBudget !== undefined
+      ? { thinkingBudget: thinkingBudget as ClaudeModelOptions["thinkingBudget"] }
+      : {}),
     ...(effort ? { effort: effort as ClaudeModelOptions["effort"] } : {}),
     ...(fastMode !== undefined ? { fastMode } : {}),
     ...(contextWindow !== undefined ? { contextWindow } : {}),

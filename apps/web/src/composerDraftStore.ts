@@ -1,6 +1,8 @@
 import {
   CODEX_REASONING_EFFORT_OPTIONS,
+  CLAUDE_THINKING_BUDGET_OPTIONS,
   type ClaudeCodeEffort,
+  type ClaudeThinkingBudget,
   type CodexReasoningEffort,
   DEFAULT_MODEL_BY_PROVIDER,
   ModelSelection,
@@ -467,6 +469,10 @@ function normalizeProviderModelOptions(
       : claudeCandidate?.thinking === false
         ? false
         : undefined;
+  const claudeThinkingBudget: ClaudeThinkingBudget | undefined =
+    CLAUDE_THINKING_BUDGET_OPTIONS.includes(claudeCandidate?.thinkingBudget as ClaudeThinkingBudget)
+      ? (claudeCandidate!.thinkingBudget as ClaudeThinkingBudget)
+      : undefined;
   const claudeEffort: ClaudeCodeEffort | undefined =
     claudeCandidate?.effort === "low" ||
     claudeCandidate?.effort === "medium" ||
@@ -487,11 +493,13 @@ function normalizeProviderModelOptions(
       : undefined;
   const claude =
     claudeThinking !== undefined ||
+    claudeThinkingBudget !== undefined ||
     claudeEffort !== undefined ||
     claudeFastMode !== undefined ||
     claudeContextWindow !== undefined
       ? {
           ...(claudeThinking !== undefined ? { thinking: claudeThinking } : {}),
+          ...(claudeThinkingBudget !== undefined ? { thinkingBudget: claudeThinkingBudget } : {}),
           ...(claudeEffort !== undefined ? { effort: claudeEffort } : {}),
           ...(claudeFastMode !== undefined ? { fastMode: claudeFastMode } : {}),
           ...(claudeContextWindow !== undefined ? { contextWindow: claudeContextWindow } : {}),

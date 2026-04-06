@@ -220,14 +220,16 @@ export function resolveExactCursorModelSelection(input: {
   readonly model: string | null | undefined;
   readonly options?: CursorModelOptions | null | undefined;
 }): string | null {
+  const hasTraitOptions =
+    input.options?.reasoningEffort !== undefined || input.options?.fastMode !== undefined;
   const direct = input.models.find((candidate) => candidate.slug === input.model);
-  if (direct) {
+  if (direct && !hasTraitOptions) {
     return direct.slug;
   }
   const families = buildCursorSelectorFamilies(input.models);
   const family = findFamilyByModel(families, input.model);
   if (!family) {
-    return null;
+    return direct?.slug ?? null;
   }
   return (
     pickCursorModelForFamily({
@@ -238,7 +240,9 @@ export function resolveExactCursorModelSelection(input: {
           : {}),
         ...(input.options?.fastMode !== undefined ? { fastMode: input.options.fastMode } : {}),
       },
-    })?.slug ?? null
+    })?.slug ??
+    direct?.slug ??
+    null
   );
 }
 

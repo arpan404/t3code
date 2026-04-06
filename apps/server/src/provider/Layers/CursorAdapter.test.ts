@@ -855,6 +855,145 @@ describe("CursorAdapterLive", () => {
     });
   });
 
+  it("matches Cursor Spark Preview variants when ACP omits the preview token", async () => {
+    const modelOptions = [
+      {
+        value: "gpt-5.3-codex-spark[]",
+        name: "GPT-5.3 Codex Spark",
+      },
+      {
+        value: "gpt-5.3-codex-spark-xhigh[]",
+        name: "GPT-5.3 Codex Spark Extra High",
+      },
+    ] as const;
+    const client = makeFakeCursorClient({
+      requestImpl: async (method, params) => {
+        switch (method) {
+          case "initialize":
+            return cursorInitializeResult();
+          case "authenticate":
+            return {};
+          case "session/new":
+            return cursorSessionResult("cursor-session-spark-preview", {
+              model: "gpt-5.3-codex-spark[]",
+              modelOptions,
+            });
+          case "session/set_config_option": {
+            const record = params as { readonly value?: string };
+            return {
+              configOptions: cursorSessionConfigOptions({
+                modelOptions,
+                ...(record.value ? { model: record.value } : {}),
+              }),
+            };
+          }
+          default:
+            throw new Error(`Unexpected Cursor ACP request: ${method}`);
+        }
+      },
+    });
+    mockedStartCursorAcpClient.mockReturnValue(client);
+
+    await withAdapter(async (adapter) => {
+      try {
+        await Effect.runPromise(
+          adapter.startSession({
+            provider: "cursor",
+            threadId: asThreadId("thread-cursor-spark-preview"),
+            cwd: "/repo/cursor-spark-preview",
+            modelSelection: {
+              provider: "cursor",
+              model: "gpt-5.3-codex-spark-preview-xhigh",
+            },
+            runtimeMode: "full-access",
+          }),
+        );
+
+        expect(client.request).toHaveBeenCalledWith(
+          "session/set_config_option",
+          {
+            sessionId: "cursor-session-spark-preview",
+            configId: "model",
+            value: "gpt-5.3-codex-spark-xhigh[]",
+          },
+          { timeoutMs: 15000 },
+        );
+      } finally {
+        await Effect.runPromise(adapter.stopAll());
+      }
+    });
+  });
+
+  it("matches Cursor Sonnet 1M thinking variants when ACP exposes 1M in descriptions", async () => {
+    const modelOptions = [
+      {
+        value: "claude-4-sonnet[]",
+        name: "Sonnet 4",
+      },
+      {
+        value: "claude-4-sonnet-thinking[]",
+        name: "Sonnet 4 Thinking",
+        description: "1M context",
+      },
+    ] as const;
+    const client = makeFakeCursorClient({
+      requestImpl: async (method, params) => {
+        switch (method) {
+          case "initialize":
+            return cursorInitializeResult();
+          case "authenticate":
+            return {};
+          case "session/new":
+            return cursorSessionResult("cursor-session-sonnet-1m-thinking", {
+              model: "claude-4-sonnet[]",
+              modelOptions,
+            });
+          case "session/set_config_option": {
+            const record = params as { readonly value?: string };
+            return {
+              configOptions: cursorSessionConfigOptions({
+                modelOptions,
+                ...(record.value ? { model: record.value } : {}),
+              }),
+            };
+          }
+          default:
+            throw new Error(`Unexpected Cursor ACP request: ${method}`);
+        }
+      },
+    });
+    mockedStartCursorAcpClient.mockReturnValue(client);
+
+    await withAdapter(async (adapter) => {
+      try {
+        await Effect.runPromise(
+          adapter.startSession({
+            provider: "cursor",
+            threadId: asThreadId("thread-cursor-sonnet-1m-thinking"),
+            cwd: "/repo/cursor-sonnet-1m-thinking",
+            modelSelection: {
+              provider: "cursor",
+              model: "claude-4-sonnet-1m-thinking",
+            },
+            runtimeMode: "full-access",
+          }),
+        );
+
+        expect(client.request).toHaveBeenCalledWith(
+          "session/set_config_option",
+          {
+            sessionId: "cursor-session-sonnet-1m-thinking",
+            configId: "model",
+            value: "claude-4-sonnet-thinking[]",
+          },
+          { timeoutMs: 15000 },
+        );
+      } finally {
+        await Effect.runPromise(adapter.stopAll());
+      }
+    });
+  });
+
   it("maps approval decisions to ACP-provided option ids", async () => {
     const client = makeFakeCursorClient({
       requestImpl: async (method) => {

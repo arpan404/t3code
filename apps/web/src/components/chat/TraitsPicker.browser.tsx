@@ -15,7 +15,7 @@ import { useCallback } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
-import { TraitsPicker } from "./TraitsPicker";
+import { CursorTraitsPicker, TraitsPicker } from "./TraitsPicker";
 import {
   COMPOSER_DRAFT_STORAGE_KEY,
   ComposerThreadDraftState,
@@ -109,6 +109,95 @@ const TEST_PROVIDERS: ReadonlyArray<ServerProvider> = [
           supportsThinkingToggle: true,
           contextWindowOptions: [],
           promptInjectedEffortLevels: [],
+        },
+      },
+    ],
+  },
+  {
+    provider: "cursor",
+    enabled: true,
+    installed: true,
+    version: "0.1.0",
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-01-01T00:00:00.000Z",
+    models: [
+      {
+        slug: "composer-2-fast",
+        name: "Composer 2 Fast",
+        isCustom: false,
+        capabilities: {
+          reasoningEffortLevels: [],
+          supportsFastMode: true,
+          supportsThinkingToggle: false,
+          contextWindowOptions: [],
+          promptInjectedEffortLevels: [],
+        },
+        cursorMetadata: {
+          familySlug: "composer-2",
+          familyName: "Composer 2",
+          fastMode: true,
+          thinking: false,
+          maxMode: false,
+        },
+      },
+      {
+        slug: "composer-2",
+        name: "Composer 2",
+        isCustom: false,
+        capabilities: {
+          reasoningEffortLevels: [],
+          supportsFastMode: true,
+          supportsThinkingToggle: false,
+          contextWindowOptions: [],
+          promptInjectedEffortLevels: [],
+        },
+        cursorMetadata: {
+          familySlug: "composer-2",
+          familyName: "Composer 2",
+          fastMode: false,
+          thinking: false,
+          maxMode: false,
+        },
+      },
+      {
+        slug: "claude-4.5-opus-high",
+        name: "Opus 4.5",
+        isCustom: false,
+        capabilities: {
+          reasoningEffortLevels: [{ value: "high", label: "High", isDefault: true }],
+          supportsFastMode: false,
+          supportsThinkingToggle: true,
+          contextWindowOptions: [],
+          promptInjectedEffortLevels: [],
+        },
+        cursorMetadata: {
+          familySlug: "claude-4.5-opus",
+          familyName: "Opus 4.5",
+          reasoningEffort: "high",
+          fastMode: false,
+          thinking: false,
+          maxMode: false,
+        },
+      },
+      {
+        slug: "claude-4.5-opus-high-thinking",
+        name: "Opus 4.5 Thinking",
+        isCustom: false,
+        capabilities: {
+          reasoningEffortLevels: [{ value: "high", label: "High", isDefault: true }],
+          supportsFastMode: false,
+          supportsThinkingToggle: true,
+          contextWindowOptions: [],
+          promptInjectedEffortLevels: [],
+        },
+        cursorMetadata: {
+          familySlug: "claude-4.5-opus",
+          familyName: "Opus 4.5",
+          reasoningEffort: "high",
+          fastMode: false,
+          thinking: true,
+          maxMode: false,
         },
       },
     ],
@@ -291,8 +380,8 @@ describe("TraitsPicker (Claude)", () => {
     await vi.waitFor(() => {
       const text = document.body.textContent ?? "";
       expect(text).toContain("Thinking");
-      expect(text).toContain("On (default)");
-      expect(text).toContain("Off");
+      expect(text).toContain("Enabled (default)");
+      expect(text).toContain("None");
     });
   });
 
@@ -488,6 +577,133 @@ describe("TraitsPicker (Codex)", () => {
     expect(useComposerDraftStore.getState().stickyModelSelectionByProvider.codex).toMatchObject({
       provider: "codex",
       options: { fastMode: true },
+    });
+  });
+});
+
+// ── Cursor TraitsPicker tests ─────────────────────────────────────────
+
+const CURSOR_THREAD_ID = ThreadId.makeUnsafe("thread-cursor-traits");
+
+async function mountCursorPicker(props?: { model?: string }) {
+  const model = props?.model ?? "composer-2";
+  const draftsByThreadId: Record<ThreadId, ComposerThreadDraftState> = {
+    [CURSOR_THREAD_ID]: {
+      prompt: "",
+      images: [],
+      nonPersistedImageIds: [],
+      persistedAttachments: [],
+      terminalContexts: [],
+      modelSelectionByProvider: {
+        cursor: {
+          provider: "cursor",
+          model,
+        },
+      },
+      activeProvider: "cursor",
+      runtimeMode: null,
+      interactionMode: null,
+    },
+  };
+
+  useComposerDraftStore.setState({
+    draftsByThreadId,
+    draftThreadsByThreadId: {},
+    projectDraftThreadIdByProjectId: {},
+  });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const screen = await render(<CursorTraitsPickerHarness model={model} />, { container: host });
+
+  const cleanup = async () => {
+    await screen.unmount();
+    host.remove();
+  };
+
+  return {
+    [Symbol.asyncDispose]: cleanup,
+    cleanup,
+  };
+}
+
+function CursorTraitsPickerHarness(props: { model: string }) {
+  const { selectedModel } = useEffectiveComposerModelState({
+    threadId: CURSOR_THREAD_ID,
+    providers: TEST_PROVIDERS,
+    selectedProvider: "cursor",
+    threadModelSelection: null,
+    projectModelSelection: null,
+    settings: {
+      ...DEFAULT_SERVER_SETTINGS,
+      ...DEFAULT_CLIENT_SETTINGS,
+    },
+  });
+
+  return (
+    <CursorTraitsPicker
+      threadId={CURSOR_THREAD_ID}
+      models={TEST_PROVIDERS[2]!.models}
+      model={selectedModel ?? props.model}
+    />
+  );
+}
+
+describe("CursorTraitsPicker", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+    useComposerDraftStore.setState({
+      draftsByThreadId: {},
+      draftThreadsByThreadId: {},
+      projectDraftThreadIdByProjectId: {},
+      stickyModelSelectionByProvider: {},
+    });
+  });
+
+  it("does not render a leading separator for fast-only Cursor families", async () => {
+    await using _ = await mountCursorPicker();
+
+    await page.getByRole("button").click();
+
+    await vi.waitFor(() => {
+      expect(document.body.textContent ?? "").toContain("Fast Mode");
+      expect(document.body.querySelectorAll('[role="separator"]').length).toBe(0);
+    });
+  });
+
+  it("hides fixed effort when a Cursor family only toggles thinking", async () => {
+    await using _ = await mountCursorPicker({ model: "claude-4.5-opus-high" });
+
+    await vi.waitFor(() => {
+      const text = document.body.textContent ?? "";
+      expect(text).toContain("Thinking None");
+      expect(text).not.toContain("High · Thinking");
+    });
+
+    await page.getByRole("button").click();
+
+    await vi.waitFor(() => {
+      const text = document.body.textContent ?? "";
+      expect(text).toContain("Thinking");
+      expect(text).not.toContain("Effort");
+      expect(document.body.querySelectorAll('[role="separator"]').length).toBe(0);
+    });
+  });
+
+  it("switches Compose 2 to the fast variant when Fast Mode is enabled", async () => {
+    await using _ = await mountCursorPicker();
+
+    await page.getByRole("button").click();
+    await page.getByRole("menuitemradio", { name: "on" }).click();
+
+    await vi.waitFor(() => {
+      expect(
+        useComposerDraftStore.getState().draftsByThreadId[CURSOR_THREAD_ID]
+          ?.modelSelectionByProvider.cursor,
+      ).toMatchObject({
+        provider: "cursor",
+        model: "composer-2-fast",
+      });
+      expect(document.body.textContent ?? "").toContain("Fast On");
     });
   });
 });

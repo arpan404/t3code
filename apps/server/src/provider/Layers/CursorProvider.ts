@@ -271,7 +271,8 @@ function buildCursorFamilyCapabilities(
 
   const defaultReasoningEffort = supportsBaseEffort
     ? ("medium" as const)
-    : (CURSOR_REASONING_ORDER.find((value) => discoveredEffortLevels.has(value)) ?? null);
+    : (CURSOR_REASONING_ORDER.toReversed().find((value) => discoveredEffortLevels.has(value)) ??
+      null);
 
   return {
     ...EMPTY_CURSOR_CAPABILITIES,

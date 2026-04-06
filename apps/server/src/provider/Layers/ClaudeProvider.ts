@@ -78,6 +78,11 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
       reasoningEffortLevels: [],
       supportsFastMode: false,
       supportsThinkingToggle: true,
+      thinkingBudgetOptions: [
+        { value: "low", label: "Low" },
+        { value: "medium", label: "Medium", isDefault: true },
+        { value: "high", label: "High" },
+      ],
       contextWindowOptions: [],
       promptInjectedEffortLevels: [],
     } satisfies ModelCapabilities,

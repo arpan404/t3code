@@ -14,8 +14,12 @@ export const CodexModelOptions = Schema.Struct({
 });
 export type CodexModelOptions = typeof CodexModelOptions.Type;
 
+export const CLAUDE_THINKING_BUDGET_OPTIONS = ["low", "medium", "high"] as const;
+export type ClaudeThinkingBudget = (typeof CLAUDE_THINKING_BUDGET_OPTIONS)[number];
+
 export const ClaudeModelOptions = Schema.Struct({
   thinking: Schema.optional(Schema.Boolean),
+  thinkingBudget: Schema.optional(Schema.Literals(CLAUDE_THINKING_BUDGET_OPTIONS)),
   effort: Schema.optional(Schema.Literals(CLAUDE_CODE_EFFORT_OPTIONS)),
   fastMode: Schema.optional(Schema.Boolean),
   contextWindow: Schema.optional(Schema.String),
@@ -63,6 +67,7 @@ export const ModelCapabilities = Schema.Struct({
   reasoningEffortLevels: Schema.Array(EffortOption),
   supportsFastMode: Schema.Boolean,
   supportsThinkingToggle: Schema.Boolean,
+  thinkingBudgetOptions: Schema.optional(Schema.Array(EffortOption)),
   contextWindowOptions: Schema.Array(ContextWindowOption),
   promptInjectedEffortLevels: Schema.Array(TrimmedNonEmptyString),
 });
@@ -107,7 +112,6 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string,
   },
   cursor: {
     composer: "composer-2",
-    "composer-2-fast": "composer-2",
     "composer-2": "composer-2",
     sonnet: "claude-4-sonnet",
     "sonnet-4": "claude-4-sonnet",

@@ -295,6 +295,25 @@ function sameCursorTokenSet(left: ReadonlySet<string>, right: ReadonlySet<string
   return true;
 }
 
+function isCursorTokenSubset(subset: ReadonlySet<string>, superset: ReadonlySet<string>): boolean {
+  for (const token of subset) {
+    if (!superset.has(token)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function compatibleCursorCoreTokenSets(
+  left: ReadonlySet<string>,
+  right: ReadonlySet<string>,
+): boolean {
+  if (left.size === 0 || right.size === 0) {
+    return true;
+  }
+  return isCursorTokenSubset(left, right) || isCursorTokenSubset(right, left);
+}
+
 type ParsedCursorModelConfigChoice = {
   readonly choice: CursorSessionConfigOptionValue;
   readonly valuePrefix: string;
@@ -354,10 +373,16 @@ function resolveCursorModelConfigValue(input: {
       return choice.value;
     }
     const choiceCoreTokens = stripCursorVariantTokens(parsed.identityTokens);
-    if (targetCoreTokens.size > 0 && !sameCursorTokenSet(choiceCoreTokens, targetCoreTokens)) {
+    if (
+      targetCoreTokens.size > 0 &&
+      !compatibleCursorCoreTokenSets(choiceCoreTokens, targetCoreTokens)
+    ) {
       continue;
     }
     let score = 0;
+    if (sameCursorTokenSet(choiceCoreTokens, targetCoreTokens)) {
+      score += 24;
+    }
     for (const token of targetCoreTokens) {
       if (parsed.tokens.has(token)) {
         score += 12;
