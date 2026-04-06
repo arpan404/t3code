@@ -253,7 +253,7 @@ function buildCursorFamilyCapabilities(
   const discoveredEffortLevels = new Set<CodexReasoningEffort>();
   const hasExplicitEffortVariants = variants.some((variant) => variant.reasoningEffort !== null);
   const supportsBaseEffort =
-    variants.some((variant) => variant.reasoningEffort === null) ||
+    (hasExplicitEffortVariants && variants.some((variant) => variant.reasoningEffort === null)) ||
     variants.some((variant) => variant.reasoningEffort === "medium");
 
   for (const variant of variants) {
@@ -319,14 +319,13 @@ function buildCursorProviderModels(
     return parsed;
   });
 
-  for (const parsed of parsedVariants) {
+  return parsedVariants.map((parsed) => {
     const groupedVariants = variantsByFamilySlug.get(parsed.familySlug) ?? [parsed];
-    const capabilities = buildCursorFamilyCapabilities(groupedVariants);
-    parsed.rawModel.capabilities = capabilities;
-    parsed.rawModel.cursorMetadata = cursorMetadataFromVariant(parsed);
-  }
-
-  return parsedVariants.map((variant) => variant.rawModel);
+    return Object.assign({}, parsed.rawModel, {
+      capabilities: buildCursorFamilyCapabilities(groupedVariants),
+      cursorMetadata: cursorMetadataFromVariant(parsed),
+    });
+  });
 }
 
 export function parseCursorModelsOutput(output: string): ReadonlyArray<ServerProviderModel> {

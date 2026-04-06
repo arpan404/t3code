@@ -1134,32 +1134,79 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
     });
 
     describe("parseCursorModelsOutput", () => {
-      it("normalizes fast and reasoning-only Cursor variants into single picker entries", () => {
+      it("keeps exact Cursor model slugs and annotates them with family metadata", () => {
         const models = parseCursorModelsOutput(CURSOR_MODELS_OUTPUT);
         assert.deepStrictEqual(
-          models.map(({ slug, name, capabilities }) => ({
+          models.map(({ slug, name, capabilities, cursorMetadata }) => ({
             slug,
             name,
             capabilities,
+            cursorMetadata,
           })),
           [
-            { slug: "auto", name: "Auto", capabilities: null },
             {
-              slug: "composer-2",
-              name: "Composer 2",
+              slug: "auto",
+              name: "Auto",
+              capabilities: null,
+              cursorMetadata: {
+                familySlug: "auto",
+                familyName: "Auto",
+                fastMode: false,
+                thinking: false,
+                maxMode: false,
+              },
+            },
+            {
+              slug: "composer-2-fast",
+              name: "Composer 2 Fast",
+              capabilities: null,
+              cursorMetadata: {
+                familySlug: "composer-2",
+                familyName: "Composer 2",
+                fastMode: true,
+                thinking: false,
+                maxMode: false,
+              },
+            },
+            {
+              slug: "claude-4-sonnet",
+              name: "Sonnet 4",
               capabilities: {
                 reasoningEffortLevels: [],
-                supportsFastMode: true,
-                supportsThinkingToggle: false,
+                supportsFastMode: false,
+                supportsThinkingToggle: true,
                 contextWindowOptions: [],
                 promptInjectedEffortLevels: [],
               },
+              cursorMetadata: {
+                familySlug: "claude-4-sonnet",
+                familyName: "Sonnet 4",
+                fastMode: false,
+                thinking: false,
+                maxMode: false,
+              },
             },
-            { slug: "claude-4-sonnet", name: "Sonnet 4", capabilities: null },
-            { slug: "claude-4-sonnet-thinking", name: "Sonnet 4 Thinking", capabilities: null },
             {
-              slug: "gpt-5.4-nano",
-              name: "GPT-5.4 Nano",
+              slug: "claude-4-sonnet-thinking",
+              name: "Sonnet 4 Thinking",
+              capabilities: {
+                reasoningEffortLevels: [],
+                supportsFastMode: false,
+                supportsThinkingToggle: true,
+                contextWindowOptions: [],
+                promptInjectedEffortLevels: [],
+              },
+              cursorMetadata: {
+                familySlug: "claude-4-sonnet",
+                familyName: "Sonnet 4",
+                fastMode: false,
+                thinking: true,
+                maxMode: false,
+              },
+            },
+            {
+              slug: "gpt-5.4-nano-xhigh",
+              name: "GPT-5.4 Nano Extra High",
               capabilities: {
                 reasoningEffortLevels: [{ value: "xhigh", label: "Extra High", isDefault: true }],
                 supportsFastMode: false,
@@ -1167,53 +1214,59 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
                 contextWindowOptions: [],
                 promptInjectedEffortLevels: [],
               },
+              cursorMetadata: {
+                familySlug: "gpt-5.4-nano",
+                familyName: "GPT-5.4 Nano",
+                reasoningEffort: "xhigh",
+                fastMode: false,
+                thinking: false,
+                maxMode: false,
+              },
             },
           ],
         );
       });
 
-      it("normalizes Cursor reasoning variants into one model with traits", () => {
+      it("keeps exact Cursor reasoning variants while sharing family capabilities", () => {
         const models = parseCursorModelsOutput(CURSOR_VARIANT_MODELS_OUTPUT);
-        assert.deepStrictEqual(models, [
-          {
-            slug: "gpt-5.3-codex",
-            name: "GPT-5.3 Codex",
-            isCustom: false,
-            capabilities: {
-              reasoningEffortLevels: [
-                { value: "xhigh", label: "Extra High", isDefault: false },
-                { value: "high", label: "High", isDefault: false },
-                { value: "medium", label: "Medium", isDefault: true },
-                { value: "low", label: "Low", isDefault: false },
-              ],
-              supportsFastMode: true,
-              supportsThinkingToggle: false,
-              contextWindowOptions: [],
-              promptInjectedEffortLevels: [],
-            },
-          },
-        ]);
+        assert.strictEqual(models.length, 8);
+        assert.deepStrictEqual(
+          models.every((model) => model.cursorMetadata?.familySlug === "gpt-5.3-codex"),
+          true,
+        );
+        assert.deepStrictEqual(models[0]?.slug, "gpt-5.3-codex-low");
+        assert.deepStrictEqual(models[0]?.cursorMetadata?.reasoningEffort, "low");
+        assert.deepStrictEqual(models[1]?.cursorMetadata?.fastMode, true);
+        assert.deepStrictEqual(models[2]?.cursorMetadata?.reasoningEffort, "medium");
+        assert.deepStrictEqual(models[0]?.capabilities, {
+          reasoningEffortLevels: [
+            { value: "xhigh", label: "Extra High", isDefault: false },
+            { value: "high", label: "High", isDefault: false },
+            { value: "medium", label: "Medium", isDefault: true },
+            { value: "low", label: "Low", isDefault: false },
+          ],
+          supportsFastMode: true,
+          supportsThinkingToggle: false,
+          contextWindowOptions: [],
+          promptInjectedEffortLevels: [],
+        });
       });
 
-      it("treats Cursor none variants as the base model with medium effort", () => {
+      it("treats Cursor none variants as medium-effort exact models", () => {
         const models = parseCursorModelsOutput(CURSOR_NONE_VARIANT_MODELS_OUTPUT);
-        assert.deepStrictEqual(models, [
-          {
-            slug: "gpt-5.4-mini",
-            name: "GPT-5.4 Mini",
-            isCustom: false,
-            capabilities: {
-              reasoningEffortLevels: [
-                { value: "high", label: "High", isDefault: false },
-                { value: "medium", label: "Medium", isDefault: true },
-              ],
-              supportsFastMode: true,
-              supportsThinkingToggle: false,
-              contextWindowOptions: [],
-              promptInjectedEffortLevels: [],
-            },
-          },
-        ]);
+        assert.deepStrictEqual(
+          models.map((model) => ({
+            slug: model.slug,
+            reasoningEffort: model.cursorMetadata?.reasoningEffort,
+            fastMode: model.cursorMetadata?.fastMode,
+          })),
+          [
+            { slug: "gpt-5.4-mini-none", reasoningEffort: "medium", fastMode: false },
+            { slug: "gpt-5.4-mini-none-fast", reasoningEffort: "medium", fastMode: true },
+            { slug: "gpt-5.4-mini-high", reasoningEffort: "high", fastMode: false },
+            { slug: "gpt-5.4-mini-high-fast", reasoningEffort: "high", fastMode: true },
+          ],
+        );
       });
 
       it("rebuilds the concrete Cursor CLI slug from normalized picker options", () => {
@@ -1273,11 +1326,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           assert.strictEqual(status.installed, true);
           assert.strictEqual(status.auth.status, "authenticated");
           assert.strictEqual(
-            status.models.some((model) => model.slug === "composer-2"),
+            status.models.some((model) => model.slug === "composer-2-fast"),
             true,
           );
           assert.strictEqual(
-            status.models.some((model) => model.slug === "gpt-5.4-nano"),
+            status.models.some((model) => model.slug === "gpt-5.4-nano-xhigh"),
             true,
           );
           assert.strictEqual(

@@ -16,6 +16,7 @@ import {
   getProviderModels,
   resolveSelectableProvider,
 } from "./providerModels";
+import { resolveExactCursorModelSelection } from "./cursorModelSelector";
 
 const MAX_CUSTOM_MODEL_COUNT = 32;
 export const MAX_CUSTOM_MODEL_LENGTH = 256;
@@ -172,6 +173,15 @@ export function resolveAppModelSelection(
 ): string {
   const resolvedProvider = resolveSelectableProvider(providers, provider);
   const options = getAppModelOptions(settings, providers, resolvedProvider, selectedModel);
+  if (resolvedProvider === "cursor") {
+    const exactCursorModel = resolveExactCursorModelSelection({
+      models: getProviderModels(providers, resolvedProvider),
+      model: selectedModel,
+    });
+    if (exactCursorModel) {
+      return exactCursorModel;
+    }
+  }
   return (
     resolveSelectableModel(resolvedProvider, selectedModel, options) ??
     getDefaultServerModel(providers, resolvedProvider)
@@ -237,6 +247,15 @@ export function resolveAppModelSelectionState(
   // When the provider changed due to fallback (e.g. selected provider was disabled),
   // don't carry over the old provider's model — use the fallback provider's default.
   const selectedModel = provider === selection.provider ? selection.model : null;
+  if (provider === "cursor") {
+    const exactCursorModel =
+      resolveExactCursorModelSelection({
+        models: getProviderModels(providers, provider),
+        model: selectedModel,
+        options: provider === selection.provider ? selection.options : undefined,
+      }) ?? resolveAppModelSelection(provider, settings, providers, selectedModel);
+    return buildProviderModelSelection(provider, exactCursorModel);
+  }
   const model = resolveAppModelSelection(provider, settings, providers, selectedModel);
   const { modelOptionsForDispatch } = getComposerProviderState({
     provider,

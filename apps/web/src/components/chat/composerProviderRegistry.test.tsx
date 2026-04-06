@@ -139,8 +139,8 @@ const GITHUB_COPILOT_MODELS: ReadonlyArray<ServerProviderModel> = [
 
 const CURSOR_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
-    slug: "gpt-5.3-codex",
-    name: "GPT-5.3 Codex",
+    slug: "gpt-5.3-codex-low",
+    name: "GPT-5.3 Codex Low",
     isCustom: false,
     capabilities: {
       reasoningEffortLevels: [
@@ -153,6 +153,39 @@ const CURSOR_MODELS: ReadonlyArray<ServerProviderModel> = [
       supportsThinkingToggle: false,
       contextWindowOptions: [],
       promptInjectedEffortLevels: [],
+    },
+    cursorMetadata: {
+      familySlug: "gpt-5.3-codex",
+      familyName: "GPT-5.3 Codex",
+      reasoningEffort: "low",
+      fastMode: false,
+      thinking: false,
+      maxMode: false,
+    },
+  },
+  {
+    slug: "gpt-5.3-codex-low-fast",
+    name: "GPT-5.3 Codex Low Fast",
+    isCustom: false,
+    capabilities: {
+      reasoningEffortLevels: [
+        { value: "xhigh", label: "Extra High" },
+        { value: "high", label: "High" },
+        { value: "medium", label: "Medium", isDefault: true },
+        { value: "low", label: "Low" },
+      ],
+      supportsFastMode: true,
+      supportsThinkingToggle: false,
+      contextWindowOptions: [],
+      promptInjectedEffortLevels: [],
+    },
+    cursorMetadata: {
+      familySlug: "gpt-5.3-codex",
+      familyName: "GPT-5.3 Codex",
+      reasoningEffort: "low",
+      fastMode: true,
+      thinking: false,
+      maxMode: false,
     },
   },
 ];
@@ -506,10 +539,10 @@ describe("getComposerProviderState", () => {
     });
   });
 
-  it("normalizes Cursor effort and fast mode like the Codex-style providers", () => {
+  it("dispatches exact Cursor model slugs without a Cursor options bag", () => {
     const state = getComposerProviderState({
       provider: "cursor",
-      model: "gpt-5.3-codex",
+      model: "gpt-5.3-codex-low-fast",
       models: CURSOR_MODELS,
       prompt: "",
       modelOptions: {
@@ -522,11 +555,8 @@ describe("getComposerProviderState", () => {
 
     expect(state).toEqual({
       provider: "cursor",
-      promptEffort: "low",
-      modelOptionsForDispatch: {
-        reasoningEffort: "low",
-        fastMode: true,
-      },
+      promptEffort: null,
+      modelOptionsForDispatch: undefined,
     });
   });
 });
@@ -544,5 +574,19 @@ describe("renderProviderTraitsPicker", () => {
     });
 
     expect(picker).toBeNull();
+  });
+
+  it("renders Cursor traits picker when the selected family exposes variant controls", () => {
+    const picker = renderProviderTraitsPicker({
+      provider: "cursor",
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      model: "gpt-5.3-codex-low-fast",
+      models: CURSOR_MODELS,
+      modelOptions: undefined,
+      prompt: "",
+      onPromptChange: () => undefined,
+    });
+
+    expect(picker).not.toBeNull();
   });
 });

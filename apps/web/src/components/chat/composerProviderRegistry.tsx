@@ -7,7 +7,13 @@ import {
 import { isClaudeUltrathinkPrompt, resolveEffort } from "@ace/shared/model";
 import type { ReactNode } from "react";
 import { getProviderModelCapabilities } from "../../providerModels";
-import { shouldRenderTraitsPicker, TraitsMenuContent, TraitsPicker } from "./TraitsPicker";
+import {
+  shouldRenderTraitsPicker,
+  TraitsMenuContent,
+  TraitsPicker,
+  CursorTraitsMenuContent,
+  CursorTraitsPicker,
+} from "./TraitsPicker";
 import {
   normalizeClaudeModelOptionsWithCapabilities,
   normalizeCodexModelOptionsWithCapabilities,
@@ -202,35 +208,16 @@ const composerProviderRegistry: Record<ProviderKind, ProviderRegistryEntry> = {
     ),
   },
   cursor: {
-    getState: (input) => getProviderStateFromCapabilities(input),
-    renderTraitsMenuContent: ({
-      threadId,
-      model,
-      models,
-      modelOptions,
-      prompt,
-      onPromptChange,
-    }) => (
-      <TraitsMenuContent
-        provider="cursor"
-        models={models}
-        threadId={threadId}
-        model={model}
-        modelOptions={modelOptions}
-        prompt={prompt}
-        onPromptChange={onPromptChange}
-      />
+    getState: (input) => ({
+      ...getProviderStateFromCapabilities(input),
+      promptEffort: null,
+      modelOptionsForDispatch: undefined,
+    }),
+    renderTraitsMenuContent: ({ threadId, model, models }) => (
+      <CursorTraitsMenuContent threadId={threadId} model={model} models={models} />
     ),
-    renderTraitsPicker: ({ threadId, model, models, modelOptions, prompt, onPromptChange }) => (
-      <TraitsPicker
-        provider="cursor"
-        models={models}
-        threadId={threadId}
-        model={model}
-        modelOptions={modelOptions}
-        prompt={prompt}
-        onPromptChange={onPromptChange}
-      />
+    renderTraitsPicker: ({ threadId, model, models }) => (
+      <CursorTraitsPicker threadId={threadId} model={model} models={models} />
     ),
   },
   gemini: {

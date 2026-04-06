@@ -296,6 +296,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const nonPersistedComposerImageIds = composerDraft.nonPersistedImageIds;
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const setComposerDraftModelSelection = useComposerDraftStore((store) => store.setModelSelection);
+  const setComposerDraftProviderModelOptions = useComposerDraftStore(
+    (store) => store.setProviderModelOptions,
+  );
   const setComposerDraftRuntimeMode = useComposerDraftStore((store) => store.setRuntimeMode);
   const setComposerDraftInteractionMode = useComposerDraftStore(
     (store) => store.setInteractionMode,
@@ -4370,6 +4373,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
         provider: resolvedProvider,
         model: resolvedModel,
       };
+      if (resolvedProvider === "cursor") {
+        setComposerDraftProviderModelOptions(activeThread.id, "cursor", undefined, {
+          persistSticky: true,
+        });
+      }
       setComposerDraftModelSelection(activeThread.id, nextModelSelection);
       setStickyComposerModelSelection(nextModelSelection);
       scheduleComposerFocus();
@@ -4379,6 +4387,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       lockedProvider,
       scheduleComposerFocus,
       setComposerDraftModelSelection,
+      setComposerDraftProviderModelOptions,
       setStickyComposerModelSelection,
       providerStatuses,
       settings,

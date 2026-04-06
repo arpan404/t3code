@@ -25,6 +25,12 @@ import { ClaudeAI, CursorIcon, Gemini, GitHubIcon, Icon, OpenAI, OpenCodeIcon } 
 import { searchOpenCodeModelsInfiniteQueryOptions } from "~/lib/serverReactQuery";
 import { cn } from "~/lib/utils";
 import { getProviderSnapshot } from "../../providerModels";
+import {
+  buildCursorSelectorFamilies,
+  pickCursorModelFromTraits,
+  resolveCursorSelectorFamily,
+  resolveExactCursorModelSelection,
+} from "../../cursorModelSelector";
 
 function isAvailableProviderOption(option: (typeof PROVIDER_OPTIONS)[number]): option is {
   value: ProviderKind;
@@ -183,6 +189,59 @@ const OpenCodeModelMenuContent = memo(function OpenCodeModelMenuContent(props: {
   );
 });
 
+const CursorModelMenuContent = memo(function CursorModelMenuContent(props: {
+  models: ReadonlyArray<NonNullable<ServerProvider["models"]>[number]>;
+  selectedModel: string;
+  onModelChange: (value: string) => void;
+}) {
+  const families = useMemo(() => buildCursorSelectorFamilies(props.models), [props.models]);
+  const selectedExactModel = useMemo(
+    () =>
+      resolveExactCursorModelSelection({
+        models: props.models,
+        model: props.selectedModel,
+      }) ?? props.selectedModel,
+    [props.models, props.selectedModel],
+  );
+  const selectedFamily =
+    resolveCursorSelectorFamily(props.models, selectedExactModel) ?? families[0] ?? null;
+
+  if (families.length === 0 || !selectedFamily) {
+    return <MenuItem disabled>No Cursor models available.</MenuItem>;
+  }
+
+  const applyFamilySelection = (familySlug: string) => {
+    const family = families.find((candidate) => candidate.familySlug === familySlug);
+    if (!family) {
+      return;
+    }
+    const nextModel =
+      familySlug === selectedFamily.familySlug
+        ? (props.models.find((model) => model.slug === selectedExactModel) ?? null)
+        : pickCursorModelFromTraits({ family, selections: {} });
+    if (!nextModel) {
+      return;
+    }
+    props.onModelChange(nextModel.slug);
+  };
+
+  return (
+    <MenuGroup>
+      <div className="px-2 pt-1.5 pb-1 font-medium text-muted-foreground text-xs">Model Family</div>
+      <MenuRadioGroup
+        value={selectedFamily.familySlug}
+        onValueChange={(value) => applyFamilySelection(value)}
+      >
+        {families.map((family) => (
+          <MenuRadioItem key={`cursor-family:${family.familySlug}`} value={family.familySlug}>
+            {family.familyName}
+          </MenuRadioItem>
+        ))}
+      </MenuRadioGroup>
+    </MenuGroup>
+  );
+});
+
 function providerIconClassName(
   provider: ProviderKind | ProviderPickerKind,
   fallbackClassName: string,
@@ -212,21 +271,71 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const activeProvider = props.lockedProvider ?? props.provider;
   const selectedProviderOptions = props.modelOptionsByProvider[activeProvider];
+  const cursorModels = useMemo(
+    () => (props.providers ? (getProviderSnapshot(props.providers, "cursor")?.models ?? []) : []),
+    [props.providers],
+  );
+  const selectedCursorModel = useMemo(
+    () =>
+      activeProvider === "cursor"
+        ? resolveExactCursorModelSelection({
+            models: cursorModels,
+            model: props.model,
+          })
+        : null,
+    [activeProvider, cursorModels, props.model],
+  );
+  const selectedCursorFamily = useMemo(
+    () =>
+      activeProvider === "cursor" && selectedCursorModel
+        ? resolveCursorSelectorFamily(cursorModels, selectedCursorModel)
+        : null,
+    [activeProvider, cursorModels, selectedCursorModel],
+  );
   const selectedModelLabel =
-    selectedProviderOptions.find((option) => option.slug === props.model)?.name ?? props.model;
+    activeProvider === "cursor"
+      ? (selectedCursorFamily?.familyName ?? props.model)
+      : (selectedProviderOptions.find((option) => option.slug === props.model)?.name ??
+        props.model);
   const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[activeProvider];
   const handleModelChange = (
     provider: ProviderKind,
     value: string,
     options: ReadonlyArray<{ slug: string; name: string }> = props.modelOptionsByProvider[provider],
+    closeMenu = true,
   ) => {
     if (props.disabled) return;
     if (!value) return;
     const resolvedModel = resolveSelectableModel(provider, value, options);
     if (!resolvedModel) return;
     props.onProviderModelChange(provider, resolvedModel);
-    setIsMenuOpen(false);
+    if (closeMenu) {
+      setIsMenuOpen(false);
+    }
   };
+  const renderCursorModelMenu = (provider: "cursor") =>
+    cursorModels.length > 0 ? (
+      <CursorModelMenuContent
+        models={cursorModels}
+        selectedModel={
+          props.provider === provider ? props.model : provider === activeProvider ? props.model : ""
+        }
+        onModelChange={(value) => handleModelChange(provider, value)}
+      />
+    ) : (
+      <MenuGroup>
+        <MenuRadioGroup
+          value={props.provider === provider ? props.model : ""}
+          onValueChange={(value) => handleModelChange(provider, value)}
+        >
+          {props.modelOptionsByProvider[provider].map((modelOption) => (
+            <MenuRadioItem key={`${provider}:${modelOption.slug}`} value={modelOption.slug}>
+              {modelOption.name}
+            </MenuRadioItem>
+          ))}
+        </MenuRadioGroup>
+      </MenuGroup>
+    );
 
   return (
     <Menu
@@ -280,6 +389,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               selectedModel={props.model}
               onModelChange={(value, options) => handleModelChange("opencode", value, options)}
             />
+          ) : props.lockedProvider === "cursor" ? (
+            renderCursorModelMenu("cursor")
           ) : (
             <MenuGroup>
               <MenuRadioGroup
@@ -348,6 +459,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                           handleModelChange("opencode", value, options)
                         }
                       />
+                    ) : option.value === "cursor" ? (
+                      renderCursorModelMenu("cursor")
                     ) : (
                       <MenuGroup>
                         <MenuRadioGroup

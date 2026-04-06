@@ -28,8 +28,9 @@ import {
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { createDebouncedStorage, createMemoryStorage } from "./lib/storage";
-import { getDefaultServerModel } from "./providerModels";
+import { getDefaultServerModel, getProviderModels } from "./providerModels";
 import { UnifiedSettings } from "@ace/contracts/settings";
+import { resolveExactCursorModelSelection } from "./cursorModelSelector";
 
 export const COMPOSER_DRAFT_STORAGE_KEY = "ace:composer-drafts:v1";
 const COMPOSER_DRAFT_STORAGE_VERSION = 3;
@@ -738,9 +739,17 @@ export function deriveEffectiveComposerModelState(input: {
     providerModelOptionsFromSelection(input.threadModelSelection) ??
     providerModelOptionsFromSelection(input.projectModelSelection) ??
     null;
+  const resolvedCursorModel =
+    input.selectedProvider === "cursor"
+      ? resolveExactCursorModelSelection({
+          models: getProviderModels(input.providers, input.selectedProvider),
+          model: activeSelection?.model ?? baseModel,
+          options: modelOptions?.cursor,
+        })
+      : null;
 
   return {
-    selectedModel,
+    selectedModel: resolvedCursorModel ?? selectedModel,
     modelOptions,
   };
 }

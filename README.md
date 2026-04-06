@@ -34,5 +34,3 @@ We are not accepting contributions yet.
 ## If you REALLY want to contribute still.... read this first
 
 Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening an issue or PR.
-
-Need support? Join the [Discord](https://discord.gg/jn4EGJjrvv).
