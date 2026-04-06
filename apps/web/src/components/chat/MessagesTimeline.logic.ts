@@ -69,6 +69,11 @@ export function deriveMessagesTimelineRows(input: {
   const durationStartByMessageId = computeMessageDurationStart(
     input.timelineEntries.flatMap((entry) => (entry.kind === "message" ? [entry.message] : [])),
   );
+  const groupedWorkEntries = input.timelineEntries.flatMap((entry) =>
+    entry.kind === "work" ? [entry.entry] : [],
+  );
+  const firstWorkTimelineEntry = input.timelineEntries.find((entry) => entry.kind === "work");
+  let emittedGroupedWorkRow = false;
 
   for (let index = 0; index < input.timelineEntries.length; index += 1) {
     const timelineEntry = input.timelineEntries[index];
@@ -77,21 +82,17 @@ export function deriveMessagesTimelineRows(input: {
     }
 
     if (timelineEntry.kind === "work") {
-      const groupedEntries = [timelineEntry.entry];
-      let cursor = index + 1;
-      while (cursor < input.timelineEntries.length) {
-        const nextEntry = input.timelineEntries[cursor];
-        if (!nextEntry || nextEntry.kind !== "work") break;
-        groupedEntries.push(nextEntry.entry);
-        cursor += 1;
+      if (emittedGroupedWorkRow || !firstWorkTimelineEntry || groupedWorkEntries.length === 0) {
+        continue;
       }
+
       nextRows.push({
         kind: "work",
-        id: timelineEntry.id,
-        createdAt: timelineEntry.createdAt,
-        groupedEntries,
+        id: firstWorkTimelineEntry.id,
+        createdAt: firstWorkTimelineEntry.createdAt,
+        groupedEntries: groupedWorkEntries,
       });
-      index = cursor - 1;
+      emittedGroupedWorkRow = true;
       continue;
     }
 

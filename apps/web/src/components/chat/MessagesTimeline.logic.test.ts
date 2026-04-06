@@ -1,5 +1,11 @@
+import { MessageId } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
-import { computeMessageDurationStart, normalizeCompactToolLabel } from "./MessagesTimeline.logic";
+import { deriveTimelineEntries, type WorkLogEntry } from "../../session-logic";
+import {
+  computeMessageDurationStart,
+  deriveMessagesTimelineRows,
+  normalizeCompactToolLabel,
+} from "./MessagesTimeline.logic";
 
 describe("computeMessageDurationStart", () => {
   it("returns message createdAt when there is no preceding user message", () => {
@@ -141,5 +147,59 @@ describe("normalizeCompactToolLabel", () => {
 
   it("removes trailing completion wording from other labels", () => {
     expect(normalizeCompactToolLabel("Read file completed")).toBe("Read file");
+  });
+});
+
+describe("deriveMessagesTimelineRows", () => {
+  it("groups interleaved work entries into one container row", () => {
+    const workEntries: WorkLogEntry[] = [
+      {
+        id: "work-1",
+        createdAt: "2026-01-01T00:00:01Z",
+        label: "Grep",
+        tone: "tool",
+        toolTitle: "grep",
+      },
+      {
+        id: "work-2",
+        createdAt: "2026-01-01T00:00:03Z",
+        label: "Find",
+        tone: "tool",
+        toolTitle: "find",
+      },
+    ];
+
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: deriveTimelineEntries(
+        [
+          {
+            id: MessageId.makeUnsafe("user-1"),
+            role: "user",
+            text: "Help me inspect this repo",
+            createdAt: "2026-01-01T00:00:00Z",
+            streaming: false,
+          },
+          {
+            id: MessageId.makeUnsafe("assistant-1"),
+            role: "assistant",
+            text: "Looking around",
+            createdAt: "2026-01-01T00:00:02Z",
+            streaming: true,
+          },
+        ],
+        [],
+        workEntries,
+      ),
+      completionDividerBeforeEntryId: null,
+      isWorking: false,
+      activeTurnStartedAt: null,
+    });
+
+    expect(rows.map((row) => row.kind)).toEqual(["message", "work", "message"]);
+    expect(rows[1]).toMatchObject({
+      kind: "work",
+      id: "work-1",
+      groupedEntries: workEntries,
+    });
   });
 });
