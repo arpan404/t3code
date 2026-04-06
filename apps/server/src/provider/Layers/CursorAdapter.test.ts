@@ -1,7 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { ApprovalRequestId, RuntimeItemId, ThreadId } from "@t3tools/contracts";
+import { ApprovalRequestId, ThreadId } from "@t3tools/contracts";
 import { Effect, Layer, Stream } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -15,8 +15,6 @@ vi.mock("../cursorAcp.ts", async (importOriginal) => {
 
 import {
   CursorAdapterLive,
-  buildCursorTurnUsageSnapshot,
-  buildCursorUsageSnapshot,
   classifyCursorToolItemType,
   describePermissionRequest,
   extractCursorStreamText,
@@ -1461,106 +1459,6 @@ describe("CursorAdapterLive", () => {
       } finally {
         await Effect.runPromise(adapter.stopAll());
       }
-    });
-  });
-
-  it("normalizes Cursor usage updates into thread usage details", () => {
-    const snapshot = buildCursorUsageSnapshot(
-      {
-        used: 32000,
-        size: 128000,
-      },
-      {
-        toolCalls: new Map([
-          [
-            "tool-1",
-            {
-              toolCallId: "tool-1",
-              itemId: RuntimeItemId.makeUnsafe("cursor-tool-1"),
-              itemType: "command_execution",
-              title: "Run command",
-              status: "completed",
-              data: {},
-            },
-          ],
-        ]),
-      },
-    );
-
-    expect(snapshot).toEqual({
-      usedTokens: 32000,
-      maxTokens: 128000,
-      lastUsedTokens: 32000,
-      toolUses: 1,
-    });
-  });
-
-  it("fills Cursor max tokens from the current model when usage updates omit size", () => {
-    const snapshot = buildCursorUsageSnapshot(
-      {
-        used: 32000,
-      },
-      undefined,
-      200000,
-    );
-
-    expect(snapshot).toEqual({
-      usedTokens: 32000,
-      maxTokens: 200000,
-      lastUsedTokens: 32000,
-    });
-  });
-
-  it("emits token-only Cursor usage details from prompt completion metadata", () => {
-    const snapshot = buildCursorTurnUsageSnapshot(
-      {
-        usage: {
-          totalTokens: 1472,
-          inputTokens: 1024,
-          cachedReadTokens: 256,
-          outputTokens: 128,
-          thoughtTokens: 64,
-        },
-      },
-      undefined,
-      undefined,
-      200000,
-    );
-
-    expect(snapshot).toEqual({
-      usedTokens: 1472,
-      lastUsedTokens: 1472,
-      lastInputTokens: 1024,
-      lastCachedInputTokens: 256,
-      lastOutputTokens: 128,
-      lastReasoningOutputTokens: 64,
-    });
-  });
-
-  it("merges Cursor prompt completion token totals with live context usage", () => {
-    const snapshot = buildCursorTurnUsageSnapshot(
-      {
-        usage: {
-          totalTokens: 1472,
-          inputTokens: 1024,
-          outputTokens: 128,
-        },
-      },
-      undefined,
-      {
-        usedTokens: 32000,
-        maxTokens: 128000,
-        lastUsedTokens: 32000,
-      },
-      200000,
-    );
-
-    expect(snapshot).toEqual({
-      usedTokens: 32000,
-      maxTokens: 128000,
-      lastUsedTokens: 1472,
-      lastInputTokens: 1024,
-      lastOutputTokens: 128,
     });
   });
 });

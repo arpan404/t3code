@@ -217,6 +217,79 @@ const HIGH_ONLY_CURSOR_MODELS: ReadonlyArray<ServerProviderModel> = [
   },
 ];
 
+const CODEX_MAX_CURSOR_MODELS: ReadonlyArray<ServerProviderModel> = [
+  {
+    slug: "gpt-5.1-codex-max-low",
+    name: "GPT-5.1 Codex Max Low",
+    isCustom: false,
+    capabilities: null,
+    cursorMetadata: {
+      familySlug: "gpt-5.1-codex-max",
+      familyName: "GPT-5.1 Codex Max",
+      reasoningEffort: "low",
+      fastMode: false,
+      thinking: false,
+      maxMode: false,
+    },
+  },
+  {
+    slug: "gpt-5.1-codex-max-medium",
+    name: "GPT-5.1 Codex Max",
+    isCustom: false,
+    capabilities: null,
+    cursorMetadata: {
+      familySlug: "gpt-5.1-codex-max",
+      familyName: "GPT-5.1 Codex Max",
+      reasoningEffort: "medium",
+      fastMode: false,
+      thinking: false,
+      maxMode: false,
+    },
+  },
+  {
+    slug: "gpt-5.1-codex-max-high",
+    name: "GPT-5.1 Codex Max High",
+    isCustom: false,
+    capabilities: null,
+    cursorMetadata: {
+      familySlug: "gpt-5.1-codex-max",
+      familyName: "GPT-5.1 Codex Max",
+      reasoningEffort: "high",
+      fastMode: false,
+      thinking: false,
+      maxMode: false,
+    },
+  },
+  {
+    slug: "gpt-5.1-codex-max-high-fast",
+    name: "GPT-5.1 Codex Max High Fast",
+    isCustom: false,
+    capabilities: null,
+    cursorMetadata: {
+      familySlug: "gpt-5.1-codex-max",
+      familyName: "GPT-5.1 Codex Max",
+      reasoningEffort: "high",
+      fastMode: true,
+      thinking: false,
+      maxMode: false,
+    },
+  },
+  {
+    slug: "gpt-5.1-codex-max-xhigh",
+    name: "GPT-5.1 Codex Max Extra High",
+    isCustom: false,
+    capabilities: null,
+    cursorMetadata: {
+      familySlug: "gpt-5.1-codex-max",
+      familyName: "GPT-5.1 Codex Max",
+      reasoningEffort: "xhigh",
+      fastMode: false,
+      thinking: false,
+      maxMode: false,
+    },
+  },
+];
+
 const FAST_ONLY_CURSOR_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
     slug: "composer-2-fast",
@@ -441,6 +514,40 @@ describe("cursorModelSelector", () => {
         options: { reasoningEffort: "xhigh" },
       }),
       "gpt-5.3-codex-xhigh",
+    );
+  });
+
+  it("treats Codex Max as the family name for max-only Cursor families", () => {
+    const family = buildCursorSelectorFamilies(CODEX_MAX_CURSOR_MODELS)[0];
+
+    assert.deepEqual(family, {
+      familySlug: "gpt-5.1-codex-max",
+      familyName: "GPT-5.1 Codex Max",
+      models: CODEX_MAX_CURSOR_MODELS,
+      reasoningEffortOptions: ["low", "medium", "high", "xhigh"],
+      supportsFastMode: true,
+      supportsThinkingToggle: false,
+      supportsMaxMode: false,
+    });
+
+    assert.deepEqual(
+      readCursorSelectedTraits({
+        family,
+        model: "gpt-5.1-codex-max-medium",
+      }),
+      {
+        reasoningEffort: "medium",
+        fastMode: false,
+      },
+    );
+
+    assert.equal(
+      resolveExactCursorModelSelection({
+        models: CODEX_MAX_CURSOR_MODELS,
+        model: "gpt-5.1-codex-max",
+        options: { reasoningEffort: "high", fastMode: true },
+      }),
+      "gpt-5.1-codex-max-high-fast",
     );
   });
 

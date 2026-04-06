@@ -19,7 +19,6 @@ import {
   type RuntimeItemStatus,
   type UserInputQuestion,
 } from "@t3tools/contracts";
-import { inferModelContextWindowTokens } from "@t3tools/shared/model";
 import { Effect, FileSystem, Layer, PubSub, Stream } from "effect";
 
 import {
@@ -83,11 +82,6 @@ import {
   selectCursorPermissionOption,
   streamKindFromUpdateKind,
 } from "./CursorAdapterToolHelpers.ts";
-import {
-  type CursorUsageSnapshot,
-  buildCursorTurnUsageSnapshot,
-  buildCursorUsageSnapshot,
-} from "./CursorAdapterUsageParsing.ts";
 import { asObject, asTrimmedNonEmptyString as asString } from "../unknown.ts";
 
 const PROVIDER = "cursor" as const;
@@ -151,8 +145,6 @@ type CursorSessionContext = {
   readonly turns: Array<TurnSnapshot>;
   readonly replayTurns: Array<TranscriptReplayTurn>;
   activeTurn: TurnSnapshot | undefined;
-  lastUsageSnapshot?: CursorUsageSnapshot;
-  lastUsageTurnId?: TurnId;
   pendingBootstrapReset: boolean;
   stopping: boolean;
   startPromise: Promise<ProviderSession> | undefined;
@@ -541,12 +533,6 @@ export const CursorAdapterLive = Layer.effect(
     const currentCursorModelConfigValue = (context: CursorSessionContext) =>
       findCursorConfigOption(context.metadata.configOptions, { category: "model", id: "model" })
         ?.currentValue ?? context.metadata.models?.currentModelId;
-
-    const currentCursorContextWindowTokens = (context: CursorSessionContext) =>
-      inferModelContextWindowTokens(
-        PROVIDER,
-        currentCursorModelConfigValue(context) ?? context.session.model,
-      );
 
     const availableCursorModeIds = (context: CursorSessionContext) => {
       const modeOption = findCursorConfigOption(context.metadata.configOptions, {
@@ -972,37 +958,12 @@ export const CursorAdapterLive = Layer.effect(
             readonly type: "completed";
             readonly stopReason?: string | null;
             readonly errorMessage?: string;
-            readonly usage?: unknown;
           }
         | { readonly type: "aborted"; readonly reason: string },
     ) => {
       if (!context.activeTurn || context.activeTurn.id !== turnId) {
         return;
       }
-
-      const turnUsageSnapshot = buildCursorTurnUsageSnapshot(
-        outcome.type === "completed" ? outcome.usage : undefined,
-        context.activeTurn,
-        context.lastUsageTurnId === turnId ? context.lastUsageSnapshot : undefined,
-        currentCursorContextWindowTokens(context),
-      );
-      const finalUsageSnapshot =
-        turnUsageSnapshot ??
-        (context.lastUsageTurnId === turnId && context.lastUsageSnapshot
-          ? context.lastUsageSnapshot
-          : undefined);
-      const finalizedUsageSnapshot =
-        finalUsageSnapshot !== undefined
-          ? {
-              ...finalUsageSnapshot,
-              ...(context.activeTurn.toolCalls.size > 0
-                ? { toolUses: context.activeTurn.toolCalls.size }
-                : {}),
-              ...(Date.now() - context.activeTurn.startedAtMs > 0
-                ? { durationMs: Math.round(Date.now() - context.activeTurn.startedAtMs) }
-                : {}),
-            }
-          : undefined;
 
       completeActiveContentItems(context, turnId);
       context.turns.push(context.activeTurn);
@@ -1021,18 +982,6 @@ export const CursorAdapterLive = Layer.effect(
           ? { lastError: outcome.errorMessage }
           : {}),
       });
-
-      if (finalizedUsageSnapshot) {
-        context.lastUsageSnapshot = finalizedUsageSnapshot;
-        context.lastUsageTurnId = turnId;
-        emit({
-          ...baseEvent(context, { turnId }),
-          type: "thread.token-usage.updated",
-          payload: {
-            usage: finalizedUsageSnapshot,
-          },
-        });
-      }
 
       if (outcome.type === "completed") {
         emit({
@@ -1171,35 +1120,6 @@ export const CursorAdapterLive = Layer.effect(
           rawMethod: "session/update",
           rawPayload: params,
           rawSource: "cursor.acp.notification",
-        });
-        return;
-      }
-
-      if (updateKind === "usage_update") {
-        const usage = buildCursorUsageSnapshot(
-          update,
-          context.activeTurn,
-          currentCursorContextWindowTokens(context),
-        );
-        if (!usage) {
-          return;
-        }
-        context.lastUsageSnapshot = usage;
-        if (context.activeTurn) {
-          context.lastUsageTurnId = context.activeTurn.id;
-        } else {
-          delete context.lastUsageTurnId;
-        }
-        emit({
-          ...baseEvent(context, {
-            ...(context.activeTurn ? { turnId: context.activeTurn.id } : {}),
-            rawMethod: "session/update",
-            rawPayload: params,
-          }),
-          type: "thread.token-usage.updated",
-          payload: {
-            usage,
-          },
         });
         return;
       }
@@ -1983,7 +1903,6 @@ export const CursorAdapterLive = Layer.effect(
               settleTurn(context, turnId, {
                 type: "completed",
                 stopReason,
-                usage: result,
               });
             })
             .catch((error) => {
@@ -2416,10 +2335,6 @@ export function makeCursorAdapterLive() {
   return CursorAdapterLive;
 }
 
-export {
-  buildCursorUsageSnapshot,
-  buildCursorTurnUsageSnapshot,
-} from "./CursorAdapterUsageParsing.ts";
 export {
   classifyCursorToolItemType,
   describePermissionRequest,

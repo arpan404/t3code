@@ -135,6 +135,50 @@ describe("CursorProvider", () => {
     });
   });
 
+  it("treats Codex Max variants as a distinct Cursor family", () => {
+    const parsed = parseCursorModelsOutput(
+      [
+        "gpt-5.1-codex-max-low - GPT-5.1 Codex Max Low",
+        "gpt-5.1-codex-max-low-fast - GPT-5.1 Codex Max Low Fast",
+        "gpt-5.1-codex-max-medium - GPT-5.1 Codex Max",
+        "gpt-5.1-codex-max-medium-fast - GPT-5.1 Codex Max Medium Fast",
+        "gpt-5.1-codex-max-high - GPT-5.1 Codex Max High",
+        "gpt-5.1-codex-max-high-fast - GPT-5.1 Codex Max High Fast",
+        "gpt-5.1-codex-max-xhigh - GPT-5.1 Codex Max Extra High",
+        "gpt-5.1-codex-max-xhigh-fast - GPT-5.1 Codex Max Extra High Fast",
+      ].join("\n"),
+    );
+
+    assert.deepEqual(parsed[0]?.capabilities, {
+      reasoningEffortLevels: [
+        { value: "xhigh", label: "Extra High", isDefault: false },
+        { value: "high", label: "High", isDefault: false },
+        { value: "medium", label: "Medium", isDefault: true },
+        { value: "low", label: "Low", isDefault: false },
+      ],
+      supportsFastMode: true,
+      supportsThinkingToggle: false,
+      contextWindowOptions: [],
+      promptInjectedEffortLevels: [],
+    });
+    assert.deepEqual(parsed[2]?.cursorMetadata, {
+      familySlug: "gpt-5.1-codex-max",
+      familyName: "GPT-5.1 Codex Max",
+      reasoningEffort: "medium",
+      fastMode: false,
+      thinking: false,
+      maxMode: false,
+    });
+    assert.deepEqual(parsed[7]?.cursorMetadata, {
+      familySlug: "gpt-5.1-codex-max",
+      familyName: "GPT-5.1 Codex Max",
+      reasoningEffort: "xhigh",
+      fastMode: true,
+      thinking: false,
+      maxMode: false,
+    });
+  });
+
   it("keeps explicit Spark Preview effort variants in provider capabilities", () => {
     const parsed = parseCursorModelsOutput(
       [

@@ -159,6 +159,10 @@ type ParsedCursorVariant = {
   readonly maxMode: boolean;
 };
 
+function shouldTreatCursorMaxAsFamily(familySlug: string, familyName: string): boolean {
+  return /-codex-max$/i.test(familySlug) && /\bcodex max\b/i.test(familyName);
+}
+
 function parseRawCursorModelsOutput(output: string): ReadonlyArray<ServerProviderModel> {
   const seen = new Set<string>();
   const models: ServerProviderModel[] = [];
@@ -228,7 +232,7 @@ function parseCursorVariant(model: ServerProviderModel): ParsedCursorVariant {
     break;
   }
 
-  if (familySlug.endsWith("-max")) {
+  if (familySlug.endsWith("-max") && !shouldTreatCursorMaxAsFamily(familySlug, familyName)) {
     maxMode = true;
     familySlug = familySlug.slice(0, -"-max".length);
     familyName = familyName.replace(/\s+max$/i, "").trim();

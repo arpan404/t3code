@@ -30,7 +30,7 @@ import {
   resolveDesktopUpdateButtonAction,
 } from "../../components/desktopUpdate.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
-import { TraitsPicker } from "../chat/TraitsPicker";
+import { CursorTraitsPicker, TraitsPicker } from "../chat/TraitsPicker";
 import { resolveAndPersistPreferredEditor } from "../../editorPreferences";
 import { isElectron } from "../../env";
 import { useTheme } from "../../hooks/useTheme";
@@ -599,6 +599,8 @@ export function GeneralSettingsPanel() {
   const textGenProvider = textGenerationModelSelection.provider;
   const textGenModel = textGenerationModelSelection.model;
   const textGenModelOptions = textGenerationModelSelection.options;
+  const textGenModels =
+    serverProviders.find((provider) => provider.provider === textGenProvider)?.models ?? [];
   const gitModelOptionsByProvider = getCustomModelOptionsByProvider(
     settings,
     serverProviders,
@@ -1048,35 +1050,55 @@ export function GeneralSettingsPanel() {
                   });
                 }}
               />
-              <TraitsPicker
-                provider={textGenProvider}
-                models={
-                  serverProviders.find((provider) => provider.provider === textGenProvider)
-                    ?.models ?? []
-                }
-                model={textGenModel}
-                prompt=""
-                onPromptChange={() => {}}
-                modelOptions={textGenModelOptions}
-                allowPromptInjectedEffort={false}
-                triggerVariant="outline"
-                triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
-                onModelOptionsChange={(nextOptions) => {
-                  updateSettings({
-                    textGenerationModelSelection: resolveAppModelSelectionState(
-                      {
-                        ...settings,
-                        textGenerationModelSelection: {
-                          provider: textGenProvider,
-                          model: textGenModel,
-                          ...(nextOptions ? { options: nextOptions } : {}),
+              {textGenProvider === "cursor" ? (
+                <CursorTraitsPicker
+                  models={textGenModels}
+                  model={textGenModel}
+                  triggerVariant="outline"
+                  triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
+                  onModelChange={(nextModel) => {
+                    updateSettings({
+                      textGenerationModelSelection: resolveAppModelSelectionState(
+                        {
+                          ...settings,
+                          textGenerationModelSelection: {
+                            provider: "cursor",
+                            model: nextModel,
+                          },
                         },
-                      },
-                      serverProviders,
-                    ),
-                  });
-                }}
-              />
+                        serverProviders,
+                      ),
+                    });
+                  }}
+                />
+              ) : (
+                <TraitsPicker
+                  provider={textGenProvider}
+                  models={textGenModels}
+                  model={textGenModel}
+                  prompt=""
+                  onPromptChange={() => {}}
+                  modelOptions={textGenModelOptions}
+                  allowPromptInjectedEffort={false}
+                  triggerVariant="outline"
+                  triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
+                  onModelOptionsChange={(nextOptions) => {
+                    updateSettings({
+                      textGenerationModelSelection: resolveAppModelSelectionState(
+                        {
+                          ...settings,
+                          textGenerationModelSelection: {
+                            provider: textGenProvider,
+                            model: textGenModel,
+                            ...(nextOptions ? { options: nextOptions } : {}),
+                          },
+                        },
+                        serverProviders,
+                      ),
+                    });
+                  }}
+                />
+              )}
             </div>
           }
         />

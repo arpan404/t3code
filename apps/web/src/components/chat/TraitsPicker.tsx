@@ -53,6 +53,16 @@ type TraitsPersistence =
       onModelOptionsChange: (nextOptions: ProviderOptions | undefined) => void;
     };
 
+type CursorTraitsPersistence =
+  | {
+      threadId: ThreadId;
+      onModelChange?: never;
+    }
+  | {
+      threadId?: undefined;
+      onModelChange: (nextModelSlug: string) => void;
+    };
+
 const ULTRATHINK_PROMPT_PREFIX = "Ultrathink:\n";
 const CURSOR_REASONING_LABELS: Record<CursorSelectorReasoningEffort, string> = {
   low: "Low",
@@ -281,26 +291,36 @@ export function shouldRenderTraitsPicker(input: {
   });
 }
 
-export const CursorTraitsMenuContent = memo(function CursorTraitsMenuContent(props: {
-  threadId: ThreadId;
-  models: ReadonlyArray<ServerProviderModel>;
-  model: string | null | undefined;
-}) {
+export const CursorTraitsMenuContent = memo(function CursorTraitsMenuContent(
+  props: {
+    models: ReadonlyArray<ServerProviderModel>;
+    model: string | null | undefined;
+  } & CursorTraitsPersistence,
+) {
   const setModelSelection = useComposerDraftStore((store) => store.setModelSelection);
   const setProviderModelOptions = useComposerDraftStore((store) => store.setProviderModelOptions);
   const setStickyModelSelection = useComposerDraftStore((store) => store.setStickyModelSelection);
   const family = resolveCursorSelectorFamily(props.models, props.model);
+  const threadId = "threadId" in props ? props.threadId : undefined;
+  const onModelChange = "onModelChange" in props ? props.onModelChange : undefined;
 
   const applySelection = useCallback(
     (nextModelSlug: string) => {
+      if (onModelChange) {
+        onModelChange(nextModelSlug);
+        return;
+      }
+      if (!threadId) {
+        return;
+      }
       const modelSelection = buildProviderModelSelection("cursor", nextModelSlug);
-      setModelSelection(props.threadId, modelSelection);
-      setProviderModelOptions(props.threadId, "cursor", undefined, {
+      setModelSelection(threadId, modelSelection);
+      setProviderModelOptions(threadId, "cursor", undefined, {
         persistSticky: true,
       });
       setStickyModelSelection(modelSelection);
     },
-    [props.threadId, setModelSelection, setProviderModelOptions, setStickyModelSelection],
+    [onModelChange, threadId, setModelSelection, setProviderModelOptions, setStickyModelSelection],
   );
 
   if (!family) {
@@ -443,11 +463,14 @@ export const CursorTraitsMenuContent = memo(function CursorTraitsMenuContent(pro
   );
 });
 
-export const CursorTraitsPicker = memo(function CursorTraitsPicker(props: {
-  threadId: ThreadId;
-  models: ReadonlyArray<ServerProviderModel>;
-  model: string | null | undefined;
-}) {
+export const CursorTraitsPicker = memo(function CursorTraitsPicker(
+  props: {
+    models: ReadonlyArray<ServerProviderModel>;
+    model: string | null | undefined;
+    triggerVariant?: VariantProps<typeof buttonVariants>["variant"];
+    triggerClassName?: string;
+  } & CursorTraitsPersistence,
+) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const family = resolveCursorSelectorFamily(props.models, props.model);
 
@@ -471,8 +494,11 @@ export const CursorTraitsPicker = memo(function CursorTraitsPicker(props: {
         render={
           <Button
             size="sm"
-            variant="ghost"
-            className="min-w-0 max-w-40 shrink justify-start overflow-hidden whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:max-w-48 sm:px-3 [&_svg]:mx-0"
+            variant={props.triggerVariant ?? "ghost"}
+            className={cn(
+              "min-w-0 max-w-40 shrink justify-start overflow-hidden whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:max-w-48 sm:px-3 [&_svg]:mx-0",
+              props.triggerClassName,
+            )}
           />
         }
       >
@@ -482,11 +508,7 @@ export const CursorTraitsPicker = memo(function CursorTraitsPicker(props: {
         </span>
       </MenuTrigger>
       <MenuPopup align="start">
-        <CursorTraitsMenuContent
-          threadId={props.threadId}
-          models={props.models}
-          model={props.model}
-        />
+        <CursorTraitsMenuContent {...props} models={props.models} model={props.model} />
       </MenuPopup>
     </Menu>
   );
