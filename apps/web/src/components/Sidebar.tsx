@@ -13,6 +13,7 @@ import {
 import { ProjectFavicon } from "./ProjectFavicon";
 import { autoAnimate } from "@formkit/auto-animate";
 import {
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -280,7 +281,7 @@ interface SidebarThreadRowProps {
   pr: ThreadPr | null;
 }
 
-function SidebarThreadRow(props: SidebarThreadRowProps) {
+const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowProps) {
   const thread = useSidebarThreadSummaryById(props.threadId);
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[props.threadId]);
   const runningTerminalIds = useTerminalStateStore(
@@ -548,7 +549,7 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
       </SidebarMenuSubButton>
     </SidebarMenuSubItem>
   );
-}
+});
 
 type SortableProjectHandleProps = Pick<
   ReturnType<typeof useSortable>,

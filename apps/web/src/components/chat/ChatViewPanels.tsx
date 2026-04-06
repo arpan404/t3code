@@ -5,7 +5,6 @@ import { cn } from "~/lib/utils";
 
 import { InAppBrowser, type InAppBrowserMode } from "../InAppBrowser";
 import PlanSidebar from "../PlanSidebar";
-import ThreadTerminalDrawer from "../ThreadTerminalDrawer";
 import { Button } from "../ui/button";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
 
@@ -102,14 +101,10 @@ export function ChatViewPanels({
   browserPanel,
   expandedImageOverlay,
   planSidebarProps,
-  terminalDrawerKey,
-  terminalDrawerProps,
 }: {
   browserPanel: BrowserPanelProps | null;
   expandedImageOverlay: ExpandedImageOverlayProps | null;
   planSidebarProps: ComponentProps<typeof PlanSidebar> | null;
-  terminalDrawerKey: string | null;
-  terminalDrawerProps: ComponentProps<typeof ThreadTerminalDrawer> | null;
 }) {
   return (
     <>
@@ -144,9 +139,6 @@ export function ChatViewPanels({
             <InAppBrowser {...browserPanel.inAppBrowserProps} />
           </div>
         </>
-      ) : null}
-      {terminalDrawerProps ? (
-        <ThreadTerminalDrawer key={terminalDrawerKey ?? undefined} {...terminalDrawerProps} />
       ) : null}
       {expandedImageOverlay ? <ExpandedImageOverlay {...expandedImageOverlay} /> : null}
     </>

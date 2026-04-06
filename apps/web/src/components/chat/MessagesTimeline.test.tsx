@@ -198,7 +198,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:30.000Z"
         expandedWorkGroups={{ "work-group:tool-after-intent": true }}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -247,7 +246,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:30.000Z"
         expandedWorkGroups={{}}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -291,7 +289,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:30.000Z"
         expandedWorkGroups={{ "work-group:image-view-tool": true }}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -390,7 +387,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:33.000Z"
         expandedWorkGroups={{
           "work-group:work-tool-1": true,
           "work-group:thinking-1": true,
@@ -481,7 +477,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:31.000Z"
         expandedWorkGroups={{ "work-group:tool-after-empty": true }}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -530,7 +525,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:33.000Z"
         expandedWorkGroups={{ "work-group:tool-after-intent": true }}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -586,7 +580,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:40.000Z"
         expandedWorkGroups={{ "work-group:image-view-tool": true }}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -638,7 +631,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:40.000Z"
         expandedWorkGroups={{ "work-group:live-work-tool-1": true }}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -700,7 +692,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:40.000Z"
         expandedWorkGroups={{ "work-group:tool-after-intent": true }}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -748,7 +739,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:33.000Z"
         expandedWorkGroups={{ "work-group:thinking-accumulated": true }}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -810,7 +800,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:33.000Z"
         expandedWorkGroups={{ "work-group:image-view-tool": true }}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -884,7 +873,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:40.000Z"
         expandedWorkGroups={{}}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -946,7 +934,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:35.000Z"
         expandedWorkGroups={{ "work-group:tool-after-intent": true }}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -995,7 +982,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:33.000Z"
         expandedWorkGroups={{ "work-group:thinking-outline": true }}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -1060,7 +1046,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:34.000Z"
         expandedWorkGroups={{}}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -1160,7 +1145,6 @@ describe("MessagesTimeline", () => {
             ],
           ])
         }
-        nowIso="2026-03-17T19:12:35.000Z"
         expandedWorkGroups={{}}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -1222,7 +1206,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:35.000Z"
         expandedWorkGroups={{ "work-group:tool-after-intent": true }}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -1280,7 +1263,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:35.000Z"
         expandedWorkGroups={{ "work-group:image-view-tool": true }}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -1332,7 +1314,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:35.000Z"
         expandedWorkGroups={{}}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -1408,7 +1389,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:35.000Z"
         expandedWorkGroups={{
           "work-group:tool-burst-1": true,
           "work-group:tool-burst-2": true,
@@ -1495,7 +1475,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:35.000Z"
         expandedWorkGroups={{}}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -1546,7 +1525,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId="assistant-summary-row"
         completionSummary="Worked for 2m 20s"
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:35.000Z"
         expandedWorkGroups={{}}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -1593,7 +1571,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:35.000Z"
         expandedWorkGroups={{}}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -1639,7 +1616,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:35.000Z"
         expandedWorkGroups={{}}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -1678,7 +1654,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:35.000Z"
         expandedWorkGroups={{}}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}
@@ -1746,7 +1721,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:35.000Z"
         expandedWorkGroups={{
           "work-group:tool-burst-primary-1": true,
         }}
@@ -1821,7 +1795,6 @@ describe("MessagesTimeline", () => {
         completionDividerBeforeEntryId={null}
         completionSummary={null}
         turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:33.000Z"
         expandedWorkGroups={{ "work-group:thinking-second": true }}
         onToggleWorkGroup={() => {}}
         onOpenTurnDiff={() => {}}

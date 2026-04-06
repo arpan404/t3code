@@ -1,11 +1,11 @@
 import { ChevronDownIcon } from "lucide-react";
-import type { ComponentProps, Ref } from "react";
+import { memo, type ComponentProps, type Ref } from "react";
 
 import { MessagesTimeline } from "./MessagesTimeline";
 
 type MessagesContainerProps = ComponentProps<"div">;
 
-export function ChatMessagesPane({
+export const ChatMessagesPane = memo(function ChatMessagesPane({
   messagesContainerRef,
   messagesTimelineProps,
   onMessagesClickCapture,
@@ -69,4 +69,4 @@ export function ChatMessagesPane({
       )}
     </div>
   );
-}
+});

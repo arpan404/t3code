@@ -165,6 +165,7 @@ import { ChatConversationExtras } from "./chat/ChatConversationExtras";
 import { ChatMessagesPane } from "./chat/ChatMessagesPane";
 import { ContextWindowMeter } from "./chat/ContextWindowMeter";
 import { ChatViewPanels } from "./chat/ChatViewPanels";
+import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import { buildExpandedImagePreview, type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NewThreadLanding } from "./chat/NewThreadLanding";
 import { AVAILABLE_PROVIDER_OPTIONS, ProviderModelPicker } from "./chat/ProviderModelPicker";
@@ -364,7 +365,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   // When set, the thread-change reset effect will open the sidebar instead of closing it.
   // Used by "Implement in a new thread" to carry the sidebar-open intent across navigation.
   const planSidebarOpenOnNextThreadRef = useRef(false);
-  const [nowTick, setNowTick] = useState(() => Date.now());
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
   const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
   const [pullRequestDialogState, setPullRequestDialogState] =
@@ -882,7 +882,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     threadError: activeThread?.error,
   });
   const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
-  const nowIso = new Date(nowTick).toISOString();
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
     activeLatestTurn,
     activeThread?.session ?? null,
@@ -3092,16 +3091,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
       : "local";
 
   useEffect(() => {
-    if (phase !== "running") return;
-    const timer = window.setInterval(() => {
-      setNowTick(Date.now());
-    }, 1000);
-    return () => {
-      window.clearInterval(timer);
-    };
-  }, [phase]);
-
-  useEffect(() => {
     if (!activeThreadId) return;
     const previous = terminalOpenByThreadRef.current[activeThreadId] ?? false;
     const current = Boolean(terminalState.terminalOpen);
@@ -4741,7 +4730,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     completionDividerBeforeEntryId,
     completionSummary,
     turnDiffSummaryByAssistantMessageId,
-    nowIso,
     expandedWorkGroups,
     onToggleWorkGroup,
     onOpenTurnDiff,
@@ -5392,11 +5380,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
           browserPanel={browserPanel}
           expandedImageOverlay={expandedImageOverlay}
           planSidebarProps={planSidebarProps}
-          terminalDrawerKey={terminalState.terminalOpen && activeProject ? activeThread.id : null}
-          terminalDrawerProps={terminalDrawerProps}
         />
       </div>
       {/* end horizontal flex container */}
+
+      {terminalDrawerProps ? (
+        <ThreadTerminalDrawer
+          key={terminalState.terminalOpen && activeProject ? activeThread.id : undefined}
+          {...terminalDrawerProps}
+        />
+      ) : null}
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { type MessageId, type TurnId } from "@ace/contracts";
-import { memo, useCallback, useMemo, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { deriveTimelineEntries } from "../../session-logic";
 import { type TurnDiffSummary } from "../../types";
 import { summarizeTurnDiffStats } from "../../lib/turnDiffTree";
@@ -54,7 +54,6 @@ interface MessagesTimelineProps {
   completionDividerBeforeEntryId: string | null;
   completionSummary: string | null;
   turnDiffSummaryByAssistantMessageId: Map<MessageId, TurnDiffSummary>;
-  nowIso: string;
   expandedWorkGroups: Record<string, boolean>;
   onToggleWorkGroup: (groupId: string) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
@@ -79,7 +78,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   completionDividerBeforeEntryId,
   completionSummary,
   turnDiffSummaryByAssistantMessageId,
-  nowIso,
   expandedWorkGroups,
   onToggleWorkGroup,
   onOpenTurnDiff,
@@ -446,13 +444,16 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                 <span className="h-1 w-1 rounded-full bg-muted-foreground/25 animate-pulse [animation-delay:400ms]" />
               </span>
               <span>
-                {row.createdAt
-                  ? row.mode === "silent-thinking"
-                    ? `Thought for ${formatWorkingTimer(row.createdAt, nowIso) ?? "0s"}`
-                    : `Working for ${formatWorkingTimer(row.createdAt, nowIso) ?? "0s"}`
-                  : row.mode === "silent-thinking"
-                    ? "Thought in progress..."
-                    : "Working..."}
+                {row.createdAt ? (
+                  <WorkingTimer
+                    createdAt={row.createdAt}
+                    label={row.mode === "silent-thinking" ? "Thought for" : "Working for"}
+                  />
+                ) : row.mode === "silent-thinking" ? (
+                  "Thought in progress..."
+                ) : (
+                  "Working..."
+                )}
               </span>
             </div>
             {row.intentText && (
@@ -599,28 +600,42 @@ export function deriveFirstUnvirtualizedTimelineRowIndex(
   return Math.min(firstCurrentTurnRowIndex, firstTailRowIndex);
 }
 
-function formatWorkingTimer(startIso: string, endIso: string): string | null {
-  const startedAtMs = Date.parse(startIso);
-  const endedAtMs = Date.parse(endIso);
-  if (!Number.isFinite(startedAtMs) || !Number.isFinite(endedAtMs)) {
-    return null;
-  }
-
-  const elapsedSeconds = Math.max(0, Math.floor((endedAtMs - startedAtMs) / 1000));
-  if (elapsedSeconds < 60) {
-    return `${elapsedSeconds}s`;
-  }
-
+function formatElapsedSeconds(elapsedSeconds: number): string {
+  if (elapsedSeconds < 60) return `${elapsedSeconds}s`;
   const hours = Math.floor(elapsedSeconds / 3600);
   const minutes = Math.floor((elapsedSeconds % 3600) / 60);
   const seconds = elapsedSeconds % 60;
-
-  if (hours > 0) {
-    return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
-  }
-
+  if (hours > 0) return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
   return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
 }
+
+/** Self-contained timer that re-renders only itself every second. */
+const WorkingTimer = memo(function WorkingTimer({
+  createdAt,
+  label,
+}: {
+  createdAt: string;
+  label: string;
+}) {
+  const startedAtMs = Date.parse(createdAt);
+  const [elapsed, setElapsed] = useState(() =>
+    Number.isFinite(startedAtMs) ? Math.max(0, Math.floor((Date.now() - startedAtMs) / 1000)) : 0,
+  );
+
+  useEffect(() => {
+    if (!Number.isFinite(startedAtMs)) return;
+    const timer = window.setInterval(() => {
+      setElapsed(Math.max(0, Math.floor((Date.now() - startedAtMs) / 1000)));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [startedAtMs]);
+
+  return (
+    <>
+      {label} {formatElapsedSeconds(elapsed)}
+    </>
+  );
+});
 
 function buildTimelineRows(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
