@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ServerProviderModel } from "@t3tools/contracts";
-import { getComposerProviderState } from "./composerProviderRegistry";
+import { getComposerProviderState, renderProviderTraitsPicker } from "./composerProviderRegistry";
 
 const CODEX_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
@@ -102,6 +102,36 @@ const CLAUDE_MODELS_WITH_CONTEXT_WINDOW: ReadonlyArray<ServerProviderModel> = [
       supportsThinkingToggle: true,
       contextWindowOptions: [],
       promptInjectedEffortLevels: [],
+    },
+  },
+];
+
+const CURSOR_MODELS: ReadonlyArray<ServerProviderModel> = [
+  {
+    slug: "claude-4.6-opus-high",
+    name: "Opus 4.6 High",
+    isCustom: false,
+    capabilities: null,
+    cursorMetadata: {
+      familySlug: "claude-4.6-opus",
+      familyName: "Opus 4.6",
+      reasoningEffort: "high",
+      fastMode: false,
+      thinking: false,
+      maxMode: false,
+    },
+  },
+  {
+    slug: "claude-4.6-opus-fast",
+    name: "Opus 4.6 Fast",
+    isCustom: false,
+    capabilities: null,
+    cursorMetadata: {
+      familySlug: "claude-4.6-opus",
+      familyName: "Opus 4.6",
+      fastMode: true,
+      thinking: false,
+      maxMode: false,
     },
   },
 ];
@@ -415,5 +445,55 @@ describe("getComposerProviderState", () => {
     });
 
     expect(state.modelOptionsForDispatch).not.toHaveProperty("fastMode");
+  });
+
+  it("clears Cursor dispatch options so selection is driven by the exact model slug", () => {
+    const state = getComposerProviderState({
+      provider: "cursor",
+      model: "claude-4.6-opus-fast",
+      models: CURSOR_MODELS,
+      prompt: "",
+      modelOptions: {
+        cursor: {
+          reasoningEffort: "high",
+          fastMode: true,
+        },
+      },
+    });
+
+    expect(state).toEqual({
+      provider: "cursor",
+      promptEffort: null,
+      modelOptionsForDispatch: undefined,
+    });
+  });
+});
+
+describe("renderProviderTraitsPicker", () => {
+  it("returns null when the selected provider model exposes no visible traits", () => {
+    const result = renderProviderTraitsPicker({
+      provider: "codex",
+      threadId: "thread-1" as never,
+      model: "gpt-5.4-lite",
+      models: [
+        {
+          slug: "gpt-5.4-lite",
+          name: "GPT-5.4 Lite",
+          isCustom: false,
+          capabilities: {
+            reasoningEffortLevels: [],
+            supportsFastMode: false,
+            supportsThinkingToggle: false,
+            contextWindowOptions: [],
+            promptInjectedEffortLevels: [],
+          },
+        },
+      ],
+      modelOptions: undefined,
+      prompt: "",
+      onPromptChange: () => {},
+    });
+
+    expect(result).toBeNull();
   });
 });

@@ -52,6 +52,70 @@ const TEST_PROVIDERS: ReadonlyArray<ServerProvider> = [
     ],
   },
   {
+    provider: "cursor",
+    enabled: true,
+    installed: true,
+    version: "1.0.0",
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: new Date().toISOString(),
+    models: [
+      {
+        slug: "claude-4.6-opus-high",
+        name: "Opus 4.6 High",
+        isCustom: false,
+        capabilities: null,
+        cursorMetadata: {
+          familySlug: "claude-4.6-opus",
+          familyName: "Opus 4.6",
+          reasoningEffort: "high",
+          fastMode: false,
+          thinking: false,
+          maxMode: false,
+        },
+      },
+      {
+        slug: "claude-4.6-opus-max",
+        name: "Opus 4.6 Max",
+        isCustom: false,
+        capabilities: null,
+        cursorMetadata: {
+          familySlug: "claude-4.6-opus",
+          familyName: "Opus 4.6",
+          fastMode: false,
+          thinking: false,
+          maxMode: true,
+        },
+      },
+      {
+        slug: "claude-4.6-opus-fast",
+        name: "Opus 4.6 Fast",
+        isCustom: false,
+        capabilities: null,
+        cursorMetadata: {
+          familySlug: "claude-4.6-opus",
+          familyName: "Opus 4.6",
+          fastMode: true,
+          thinking: false,
+          maxMode: false,
+        },
+      },
+      {
+        slug: "gpt-5.4",
+        name: "GPT-5.4",
+        isCustom: false,
+        capabilities: null,
+        cursorMetadata: {
+          familySlug: "gpt-5.4",
+          familyName: "GPT-5.4",
+          fastMode: false,
+          thinking: false,
+          maxMode: false,
+        },
+      },
+    ],
+  },
+  {
     provider: "claudeAgent",
     enabled: true,
     installed: true,
@@ -356,6 +420,23 @@ describe("ProviderModelPicker", () => {
         "claudeAgent",
         "claude-sonnet-4-6",
       );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("dispatches an exact Cursor model slug when a family is selected", async () => {
+    const mounted = await mountPicker({
+      provider: "cursor",
+      model: "gpt-5.4",
+      lockedProvider: "cursor",
+    });
+
+    try {
+      await page.getByRole("button").click();
+      await page.getByRole("menuitemradio", { name: "Opus 4.6" }).click();
+
+      expect(mounted.onProviderModelChange).toHaveBeenCalledWith("cursor", "claude-4.6-opus-max");
     } finally {
       await mounted.cleanup();
     }

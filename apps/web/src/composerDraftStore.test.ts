@@ -1,10 +1,13 @@
 import * as Schema from "effect/Schema";
 import {
+  DEFAULT_SERVER_SETTINGS,
   ProjectId,
   ThreadId,
   type ModelSelection,
   type ProviderModelOptions,
+  type ServerProvider,
 } from "@t3tools/contracts";
+import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -12,6 +15,7 @@ import {
   clearPromotedDraftThread,
   clearPromotedDraftThreads,
   type ComposerImageAttachment,
+  deriveEffectiveComposerModelState,
   useComposerDraftStore,
 } from "./composerDraftStore";
 import { removeLocalStorageItem, setLocalStorageItem } from "./hooks/useLocalStorage";
@@ -80,7 +84,7 @@ function resetComposerDraftStore() {
 }
 
 function modelSelection(
-  provider: "codex" | "claudeAgent",
+  provider: "codex" | "claudeAgent" | "cursor",
   model: string,
   options?: ModelSelection["options"],
 ): ModelSelection {
@@ -94,6 +98,45 @@ function modelSelection(
 function providerModelOptions(options: ProviderModelOptions): ProviderModelOptions {
   return options;
 }
+
+const CURSOR_PROVIDER: ServerProvider = {
+  provider: "cursor",
+  enabled: true,
+  installed: true,
+  version: "0.1.0",
+  status: "ready",
+  auth: { status: "authenticated" },
+  checkedAt: "2026-01-01T00:00:00.000Z",
+  models: [
+    {
+      slug: "claude-4.6-opus-high",
+      name: "Opus 4.6 High",
+      isCustom: false,
+      capabilities: null,
+      cursorMetadata: {
+        familySlug: "claude-4.6-opus",
+        familyName: "Opus 4.6",
+        reasoningEffort: "high",
+        fastMode: false,
+        thinking: false,
+        maxMode: false,
+      },
+    },
+    {
+      slug: "claude-4.6-opus-fast",
+      name: "Opus 4.6 Fast",
+      isCustom: false,
+      capabilities: null,
+      cursorMetadata: {
+        familySlug: "claude-4.6-opus",
+        familyName: "Opus 4.6",
+        fastMode: true,
+        thinking: false,
+        maxMode: false,
+      },
+    },
+  ],
+};
 
 describe("composerDraftStore addImages", () => {
   const threadId = ThreadId.makeUnsafe("thread-dedupe");
@@ -442,6 +485,98 @@ describe("composerDraftStore terminal contexts", () => {
     expect(mergedState.draftsByThreadId[threadId]).toBeUndefined();
     expect(mergedState.draftThreadsByThreadId).toEqual({});
     expect(mergedState.projectDraftThreadIdByProjectId).toEqual({});
+  });
+});
+
+describe("composerDraftStore persisted cursor state", () => {
+  const threadId = ThreadId.makeUnsafe("thread-persisted-cursor");
+
+  beforeEach(() => {
+    resetComposerDraftStore();
+  });
+
+  it("rehydrates persisted cursor providers without dropping the active selection", () => {
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => ReturnType<typeof useComposerDraftStore.getState>;
+      };
+    };
+    const mergedState = persistApi.getOptions().merge(
+      {
+        draftsByThreadId: {
+          [threadId]: {
+            prompt: "",
+            attachments: [],
+            modelSelectionByProvider: {
+              cursor: modelSelection("cursor", "claude-4.6-opus-high", {
+                reasoningEffort: "high",
+              }),
+            },
+            activeProvider: "cursor",
+          },
+        },
+        draftThreadsByThreadId: {},
+        projectDraftThreadIdByProjectId: {},
+        stickyModelSelectionByProvider: {
+          cursor: modelSelection("cursor", "claude-4.6-opus-high", {
+            reasoningEffort: "high",
+          }),
+        },
+        stickyActiveProvider: "cursor",
+      },
+      useComposerDraftStore.getInitialState(),
+    );
+
+    expect(mergedState.draftsByThreadId[threadId]?.modelSelectionByProvider.cursor).toEqual(
+      modelSelection("cursor", "claude-4.6-opus-high", {
+        reasoningEffort: "high",
+      }),
+    );
+    expect(mergedState.draftsByThreadId[threadId]?.activeProvider).toBe("cursor");
+    expect(mergedState.stickyActiveProvider).toBe("cursor");
+  });
+
+  it("migrates legacy cursor selections with provider options intact", () => {
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => ReturnType<typeof useComposerDraftStore.getState>;
+      };
+    };
+    const mergedState = persistApi.getOptions().merge(
+      {
+        draftsByThreadId: {
+          [threadId]: {
+            prompt: "",
+            attachments: [],
+            provider: "cursor",
+            model: "claude-4.6-opus",
+            modelOptions: {
+              cursor: {
+                reasoningEffort: "high",
+                fastMode: false,
+              },
+            },
+          },
+        },
+        draftThreadsByThreadId: {},
+        projectDraftThreadIdByProjectId: {},
+      },
+      useComposerDraftStore.getInitialState(),
+    );
+
+    expect(mergedState.draftsByThreadId[threadId]?.modelSelectionByProvider.cursor).toEqual(
+      modelSelection("cursor", "claude-4.6-opus", {
+        reasoningEffort: "high",
+        fastMode: false,
+      }),
+    );
+    expect(mergedState.draftsByThreadId[threadId]?.activeProvider).toBe("cursor");
   });
 });
 
@@ -1011,6 +1146,61 @@ describe("composerDraftStore provider-scoped option updates", () => {
     expect(draft?.modelSelectionByProvider.claudeAgent?.options).toEqual({ effort: "max" });
     expect(draft?.activeProvider).toBe("codex");
   });
+
+  it("stores cursor traits without changing the active selection", () => {
+    const store = useComposerDraftStore.getState();
+    store.setModelSelection(
+      threadId,
+      modelSelection("codex", "gpt-5.3-codex", {
+        reasoningEffort: "medium",
+      }),
+    );
+    store.setProviderModelOptions(threadId, "cursor", {
+      reasoningEffort: "xhigh",
+      fastMode: true,
+    });
+
+    const draft = useComposerDraftStore.getState().draftsByThreadId[threadId];
+    expect(draft?.modelSelectionByProvider.codex).toEqual(
+      modelSelection("codex", "gpt-5.3-codex", { reasoningEffort: "medium" }),
+    );
+    expect(draft?.modelSelectionByProvider.cursor).toEqual(
+      modelSelection("cursor", "auto", {
+        reasoningEffort: "xhigh",
+        fastMode: true,
+      }),
+    );
+    expect(draft?.activeProvider).toBe("codex");
+  });
+});
+
+describe("composerDraftStore cursor selections", () => {
+  const threadId = ThreadId.makeUnsafe("thread-cursor");
+
+  beforeEach(() => {
+    resetComposerDraftStore();
+  });
+
+  it("preserves cursor options on explicit model selections", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setModelSelection(
+      threadId,
+      modelSelection("cursor", "gpt-5.4-mini", {
+        reasoningEffort: "high",
+        fastMode: false,
+      }),
+    );
+
+    expect(
+      useComposerDraftStore.getState().draftsByThreadId[threadId]?.modelSelectionByProvider.cursor,
+    ).toEqual(
+      modelSelection("cursor", "gpt-5.4-mini", {
+        reasoningEffort: "high",
+        fastMode: false,
+      }),
+    );
+  });
 });
 
 describe("composerDraftStore runtime and interaction settings", () => {
@@ -1049,6 +1239,38 @@ describe("composerDraftStore runtime and interaction settings", () => {
     store.setInteractionMode(threadId, null);
 
     expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toBeUndefined();
+  });
+});
+
+describe("deriveEffectiveComposerModelState", () => {
+  it("resolves Cursor family selections to exact model slugs", () => {
+    const result = deriveEffectiveComposerModelState({
+      draft: {
+        modelSelectionByProvider: {
+          cursor: {
+            provider: "cursor",
+            model: "claude-4.6-opus",
+            options: {
+              reasoningEffort: "high",
+            },
+          },
+        },
+        activeProvider: "cursor",
+      },
+      providers: [CURSOR_PROVIDER],
+      selectedProvider: "cursor",
+      threadModelSelection: null,
+      projectModelSelection: null,
+      settings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        ...DEFAULT_CLIENT_SETTINGS,
+      },
+    });
+
+    expect(result.selectedModel).toBe("claude-4.6-opus-high");
+    expect(result.modelOptions?.cursor).toEqual({
+      reasoningEffort: "high",
+    });
   });
 });
 
