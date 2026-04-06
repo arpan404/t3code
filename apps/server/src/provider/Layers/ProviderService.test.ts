@@ -12,6 +12,7 @@ import type {
 import {
   ApprovalRequestId,
   EventId,
+  MessageId,
   type ProviderKind,
   ProviderSessionStartInput,
   ThreadId,
@@ -45,11 +46,13 @@ import {
 } from "../../persistence/Layers/Sqlite.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { AnalyticsService } from "../../telemetry/Services/AnalyticsService.ts";
+import { ProjectionThreadMessageRepository } from "../../persistence/Services/ProjectionThreadMessages.ts";
 
 const defaultServerSettingsLayer = ServerSettingsService.layerTest();
 
 const asRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.makeUnsafe(value);
 const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
+const asMessageId = (value: string): MessageId => MessageId.makeUnsafe(value);
 const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
 const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
 
@@ -232,6 +235,40 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
 
 const sleep = (ms: number) =>
   Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+
+const seedProjectionConversation = (
+  threadId: ThreadId,
+  input?: {
+    readonly prompt?: string;
+    readonly response?: string;
+  },
+) =>
+  Effect.gen(function* () {
+    const repository = yield* ProjectionThreadMessageRepository;
+    const turnId = asTurnId(`${String(threadId)}-turn-1`);
+    yield* repository.upsert({
+      messageId: asMessageId(`${String(threadId)}-msg-user-1`),
+      threadId,
+      turnId,
+      role: "user",
+      text: input?.prompt ?? "Original prompt",
+      attachments: [],
+      isStreaming: false,
+      createdAt: "2026-04-06T00:00:00.000Z",
+      updatedAt: "2026-04-06T00:00:00.000Z",
+    });
+    yield* repository.upsert({
+      messageId: asMessageId(`${String(threadId)}-msg-assistant-1`),
+      threadId,
+      turnId,
+      role: "assistant",
+      text: input?.response ?? "Original answer",
+      attachments: [],
+      isStreaming: false,
+      createdAt: "2026-04-06T00:00:01.000Z",
+      updatedAt: "2026-04-06T00:00:01.000Z",
+    });
+  });
 
 const hasMetricSnapshot = (
   snapshots: ReadonlyArray<Metric.Metric.Snapshot>,
@@ -768,6 +805,90 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
+  it.effect(
+    "recovers stale cursor sessions for sendTurn using persisted resume cursor and replay turns",
+    () => {
+      const cursor = makeFakeCodexAdapter("cursor");
+      const registry: typeof ProviderAdapterRegistry.Service = {
+        getByProvider: (provider) =>
+          provider === "cursor"
+            ? Effect.succeed(cursor.adapter)
+            : Effect.fail(new ProviderUnsupportedError({ provider })),
+        listProviders: () => Effect.succeed(["cursor"]),
+      };
+      const providerAdapterLayer = Layer.succeed(ProviderAdapterRegistry, registry);
+      const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
+        Layer.provide(SqlitePersistenceMemory),
+      );
+      const projectionMessageRepositoryLayer = ProjectionThreadMessageRepositoryLive.pipe(
+        Layer.provide(SqlitePersistenceMemory),
+      );
+      const directoryLayer = ProviderSessionDirectoryLive.pipe(
+        Layer.provide(runtimeRepositoryLayer),
+      );
+      const providerLayer = makeProviderServiceLive().pipe(
+        Layer.provide(providerAdapterLayer),
+        Layer.provide(directoryLayer),
+        Layer.provide(projectionMessageRepositoryLayer),
+        Layer.provide(defaultServerSettingsLayer),
+        Layer.provide(AnalyticsService.layerTest),
+      );
+      const testLayer = Layer.mergeAll(
+        providerLayer,
+        projectionMessageRepositoryLayer,
+        directoryLayer,
+        runtimeRepositoryLayer,
+      );
+
+      return Effect.gen(function* () {
+        const provider = yield* ProviderService;
+        const initial = yield* provider.startSession(asThreadId("thread-cursor-send-turn"), {
+          provider: "cursor",
+          threadId: asThreadId("thread-cursor-send-turn"),
+          cwd: "/tmp/project-cursor-send-turn",
+          runtimeMode: "full-access",
+        });
+
+        yield* seedProjectionConversation(initial.threadId);
+        yield* cursor.stopAll();
+        cursor.startSession.mockClear();
+        cursor.sendTurn.mockClear();
+
+        yield* provider.sendTurn({
+          threadId: initial.threadId,
+          input: "resume with cursor",
+          attachments: [],
+        });
+
+        assert.equal(cursor.startSession.mock.calls.length, 1);
+        const resumedStartInput = cursor.startSession.mock.calls[0]?.[0];
+        assert.equal(typeof resumedStartInput === "object" && resumedStartInput !== null, true);
+        if (resumedStartInput && typeof resumedStartInput === "object") {
+          const startPayload = resumedStartInput as {
+            provider?: string;
+            cwd?: string;
+            resumeCursor?: unknown;
+            replayTurns?: unknown;
+            threadId?: string;
+          };
+          assert.equal(startPayload.provider, "cursor");
+          assert.equal(startPayload.cwd, "/tmp/project-cursor-send-turn");
+          assert.deepEqual(startPayload.resumeCursor, initial.resumeCursor);
+          assert.deepEqual(startPayload.replayTurns, [
+            {
+              prompt: "Original prompt",
+              attachmentNames: [],
+              assistantResponse: "Original answer",
+            },
+          ]);
+          assert.equal(startPayload.threadId, initial.threadId);
+        }
+
+        assert.equal(cursor.sendTurn.mock.calls.length, 1);
+      }).pipe(Effect.provide(testLayer));
+    },
+  );
+
   it.effect("lists no sessions after adapter runtime clears", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService;
@@ -929,6 +1050,112 @@ routing.layer("ProviderServiceLive routing", (it) => {
 
       fs.rmSync(tempDir, { recursive: true, force: true });
     }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "reuses persisted cursor resume cursor and local replay turns when startSession is called after a restart",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-service-cursor-start-"));
+        const dbPath = path.join(tempDir, "orchestration.sqlite");
+        const persistenceLayer = makeSqlitePersistenceLive(dbPath);
+        const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
+          Layer.provide(persistenceLayer),
+        );
+        const projectionMessageRepositoryLayer = ProjectionThreadMessageRepositoryLive.pipe(
+          Layer.provide(persistenceLayer),
+        );
+
+        const firstCursor = makeFakeCodexAdapter("cursor");
+        const firstRegistry: typeof ProviderAdapterRegistry.Service = {
+          getByProvider: (provider) =>
+            provider === "cursor"
+              ? Effect.succeed(firstCursor.adapter)
+              : Effect.fail(new ProviderUnsupportedError({ provider })),
+          listProviders: () => Effect.succeed(["cursor"]),
+        };
+        const firstDirectoryLayer = ProviderSessionDirectoryLive.pipe(
+          Layer.provide(runtimeRepositoryLayer),
+        );
+        const firstProviderLayer = makeProviderServiceLive().pipe(
+          Layer.provide(Layer.succeed(ProviderAdapterRegistry, firstRegistry)),
+          Layer.provide(firstDirectoryLayer),
+          Layer.provide(projectionMessageRepositoryLayer),
+          Layer.provide(defaultServerSettingsLayer),
+          Layer.provide(AnalyticsService.layerTest),
+        );
+
+        const initial = yield* Effect.gen(function* () {
+          const provider = yield* ProviderService;
+          return yield* provider.startSession(asThreadId("thread-cursor-start"), {
+            provider: "cursor",
+            threadId: asThreadId("thread-cursor-start"),
+            cwd: "/tmp/project-cursor-start",
+            runtimeMode: "full-access",
+          });
+        }).pipe(Effect.provide(firstProviderLayer));
+
+        yield* seedProjectionConversation(initial.threadId).pipe(
+          Effect.provide(projectionMessageRepositoryLayer),
+        );
+
+        const secondCursor = makeFakeCodexAdapter("cursor");
+        const secondRegistry: typeof ProviderAdapterRegistry.Service = {
+          getByProvider: (provider) =>
+            provider === "cursor"
+              ? Effect.succeed(secondCursor.adapter)
+              : Effect.fail(new ProviderUnsupportedError({ provider })),
+          listProviders: () => Effect.succeed(["cursor"]),
+        };
+        const secondDirectoryLayer = ProviderSessionDirectoryLive.pipe(
+          Layer.provide(runtimeRepositoryLayer),
+        );
+        const secondProviderLayer = makeProviderServiceLive().pipe(
+          Layer.provide(Layer.succeed(ProviderAdapterRegistry, secondRegistry)),
+          Layer.provide(secondDirectoryLayer),
+          Layer.provide(projectionMessageRepositoryLayer),
+          Layer.provide(defaultServerSettingsLayer),
+          Layer.provide(AnalyticsService.layerTest),
+        );
+
+        secondCursor.startSession.mockClear();
+
+        yield* Effect.gen(function* () {
+          const provider = yield* ProviderService;
+          yield* provider.startSession(initial.threadId, {
+            provider: "cursor",
+            threadId: initial.threadId,
+            cwd: "/tmp/project-cursor-start",
+            runtimeMode: "full-access",
+          });
+        }).pipe(Effect.provide(secondProviderLayer));
+
+        assert.equal(secondCursor.startSession.mock.calls.length, 1);
+        const resumedStartInput = secondCursor.startSession.mock.calls[0]?.[0];
+        assert.equal(typeof resumedStartInput === "object" && resumedStartInput !== null, true);
+        if (resumedStartInput && typeof resumedStartInput === "object") {
+          const startPayload = resumedStartInput as {
+            provider?: string;
+            cwd?: string;
+            resumeCursor?: unknown;
+            replayTurns?: unknown;
+            threadId?: string;
+          };
+          assert.equal(startPayload.provider, "cursor");
+          assert.equal(startPayload.cwd, "/tmp/project-cursor-start");
+          assert.deepEqual(startPayload.resumeCursor, initial.resumeCursor);
+          assert.deepEqual(startPayload.replayTurns, [
+            {
+              prompt: "Original prompt",
+              attachmentNames: [],
+              assistantResponse: "Original answer",
+            },
+          ]);
+          assert.equal(startPayload.threadId, initial.threadId);
+        }
+
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
 

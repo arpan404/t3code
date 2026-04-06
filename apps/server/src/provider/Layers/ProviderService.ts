@@ -150,6 +150,16 @@ function readPersistedCwd(
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+function readPersistedResumeCursor(
+  binding: ProviderRuntimeBinding | undefined,
+  provider: ProviderKind,
+): unknown | undefined {
+  if (binding?.provider !== provider) {
+    return undefined;
+  }
+  return binding.resumeCursor ?? undefined;
+}
+
 const makeProviderService = Effect.fn("makeProviderService")(function* (
   options?: ProviderServiceLiveOptions,
 ) {
@@ -167,6 +177,24 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const directory = yield* ProviderSessionDirectory;
   const projectionThreadMessageRepository = yield* ProjectionThreadMessageRepository;
   const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
+
+  const loadLocalReplayTurns = Effect.fn("loadLocalReplayTurns")(function* (input: {
+    readonly provider: ProviderKind;
+    readonly threadId: ThreadId;
+    readonly persistedBinding?: ProviderRuntimeBinding | undefined;
+  }) {
+    if (
+      !usesLocalTranscriptAuthority(input.provider) ||
+      input.persistedBinding?.provider !== input.provider
+    ) {
+      return [] as const;
+    }
+    return projectionMessagesToReplayTurns(
+      yield* projectionThreadMessageRepository.listByThreadId({
+        threadId: input.threadId,
+      }),
+    );
+  });
 
   const publishRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
     Effect.succeed(event).pipe(
@@ -247,22 +275,22 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
       const persistedCwd = readPersistedCwd(input.binding.runtimePayload);
       const persistedModelSelection = readPersistedModelSelection(input.binding.runtimePayload);
-      const replayTurns = localTranscriptAuthority
-        ? projectionMessagesToReplayTurns(
-            yield* projectionThreadMessageRepository.listByThreadId({
-              threadId: input.binding.threadId,
-            }),
-          )
-        : [];
+      const persistedResumeCursor = readPersistedResumeCursor(
+        input.binding,
+        input.binding.provider,
+      );
+      const replayTurns = yield* loadLocalReplayTurns({
+        provider: input.binding.provider,
+        threadId: input.binding.threadId,
+        persistedBinding: input.binding,
+      });
 
       const resumed = yield* adapter.startSession({
         threadId: input.binding.threadId,
         provider: input.binding.provider,
         ...(persistedCwd ? { cwd: persistedCwd } : {}),
         ...(persistedModelSelection ? { modelSelection: persistedModelSelection } : {}),
-        ...(!localTranscriptAuthority && hasResumeCursor
-          ? { resumeCursor: input.binding.resumeCursor }
-          : {}),
+        ...(persistedResumeCursor !== undefined ? { resumeCursor: persistedResumeCursor } : {}),
         ...(replayTurns.length > 0 ? { replayTurns } : {}),
         runtimeMode: input.binding.runtimeMode ?? "full-access",
       });
@@ -276,7 +304,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       yield* upsertSessionBinding(resumed, input.binding.threadId);
       yield* analytics.record("provider.session.recovered", {
         provider: resumed.provider,
-        strategy: localTranscriptAuthority ? "rebuild-local-transcript" : "resume-thread",
+        strategy:
+          persistedResumeCursor !== undefined ? "resume-thread" : "rebuild-local-transcript",
         hasResumeCursor: resumed.resumeCursor !== undefined,
       });
       return { adapter, session: resumed } as const;
@@ -354,24 +383,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           );
         }
         const persistedBinding = Option.getOrUndefined(yield* directory.getBinding(threadId));
-        const localTranscriptAuthority = usesLocalTranscriptAuthority(input.provider);
-        const shouldPreferLocalTranscript =
-          localTranscriptAuthority &&
-          input.resumeCursor === undefined &&
-          persistedBinding?.provider === input.provider;
-        const effectiveResumeCursor = shouldPreferLocalTranscript
-          ? undefined
-          : (input.resumeCursor ??
-            (persistedBinding?.provider === input.provider
-              ? persistedBinding.resumeCursor
-              : undefined));
-        const replayTurns = shouldPreferLocalTranscript
-          ? projectionMessagesToReplayTurns(
-              yield* projectionThreadMessageRepository.listByThreadId({
-                threadId,
-              }),
-            )
-          : [];
+        const persistedResumeCursor = readPersistedResumeCursor(persistedBinding, input.provider);
+        const effectiveResumeCursor = input.resumeCursor ?? persistedResumeCursor;
+        const replayTurns = yield* loadLocalReplayTurns({
+          provider: input.provider,
+          threadId,
+          persistedBinding,
+        });
         const adapter = yield* registry.getByProvider(input.provider);
         const session = yield* adapter.startSession({
           ...input,
