@@ -60,13 +60,44 @@ describe("CursorAdapterSessionMetadata", () => {
     assert.deepEqual(
       parseCursorSessionModelState({
         currentModelId: "gpt-5-mini[]",
-        availableModels: [{ modelId: "gpt-5-mini[]", name: "GPT-5 mini" }, { bad: true }],
+        availableModels: [
+          { modelId: "gpt-5-mini[]", name: "GPT-5 mini (current, default)" },
+          { bad: true },
+        ],
       }),
       {
         currentModelId: "gpt-5-mini[]",
         availableModels: [{ modelId: "gpt-5-mini[]", name: "GPT-5 mini" }],
       },
     );
+  });
+
+  it("strips Cursor current/default suffixes from config option labels", () => {
+    const configOptions = parseCursorConfigOptions([
+      {
+        id: "model",
+        name: "Model",
+        category: "model",
+        currentValue: "composer-2-fast[]",
+        options: [
+          { value: "composer-2-fast[]", name: "Composer 2 Fast (current, default)" },
+          { value: "gpt-5.1-codex-max[]", name: "GPT-5.1 Codex Max (default)" },
+        ],
+      },
+    ]);
+
+    assert.deepEqual(configOptions, [
+      {
+        id: "model",
+        name: "Model",
+        category: "model",
+        currentValue: "composer-2-fast[]",
+        options: [
+          { value: "composer-2-fast[]", name: "Composer 2 Fast" },
+          { value: "gpt-5.1-codex-max[]", name: "GPT-5.1 Codex Max" },
+        ],
+      },
+    ]);
   });
 
   it("builds metadata by merging config options with explicit session state", () => {

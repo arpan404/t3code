@@ -107,6 +107,26 @@ export const EMPTY_CURSOR_SESSION_METADATA: CursorSessionMetadata = {
   availableCommands: [],
 };
 
+function sanitizeCursorDisplayLabel(value: string): string {
+  const normalized = value.trim().replace(/\s+/g, " ");
+  const suffixMatch = /\s+\(([^()]+)\)$/.exec(normalized);
+  if (!suffixMatch) {
+    return normalized;
+  }
+
+  const statuses = (suffixMatch[1] ?? "")
+    .split(",")
+    .map((entry) => entry.trim().toLowerCase())
+    .filter((entry) => entry.length > 0);
+  if (statuses.length === 0) {
+    return normalized;
+  }
+
+  return statuses.every((entry) => entry === "current" || entry === "default")
+    ? normalized.slice(0, suffixMatch.index).trim()
+    : normalized;
+}
+
 function parseCursorPromptCapabilities(value: unknown): CursorPromptCapabilities {
   const record = asObject(value);
   return {
@@ -213,7 +233,7 @@ export function parseCursorSessionModelState(value: unknown): CursorSessionModel
       const normalized: { modelId: string; name?: string } = { modelId };
       const name = asString(entry.name);
       if (name) {
-        normalized.name = name;
+        normalized.name = sanitizeCursorDisplayLabel(name);
       }
       availableModels.push(normalized);
     }
@@ -242,7 +262,8 @@ function parseCursorConfigOptionValues(
       continue;
     }
     const optionValue = asString(entry.value);
-    const name = asString(entry.name) ?? optionValue;
+    const rawName = asString(entry.name);
+    const name = rawName ? sanitizeCursorDisplayLabel(rawName) : optionValue;
     if (!optionValue || !name) {
       continue;
     }
