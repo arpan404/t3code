@@ -7,10 +7,17 @@ import {
 import { isClaudeUltrathinkPrompt, resolveEffort } from "@t3tools/shared/model";
 import type { ReactNode } from "react";
 import { getProviderModelCapabilities } from "../../providerModels";
-import { TraitsMenuContent, TraitsPicker } from "./TraitsPicker";
+import {
+  CursorTraitsMenuContent,
+  CursorTraitsPicker,
+  shouldRenderTraitsPicker,
+  TraitsMenuContent,
+  TraitsPicker,
+} from "./TraitsPicker";
 import {
   normalizeClaudeModelOptionsWithCapabilities,
   normalizeCodexModelOptionsWithCapabilities,
+  normalizeCursorModelOptionsWithCapabilities,
 } from "@t3tools/shared/model";
 
 export type ComposerProviderStateInput = {
@@ -72,7 +79,9 @@ function getProviderStateFromCapabilities(
   const normalizedOptions =
     provider === "codex"
       ? normalizeCodexModelOptionsWithCapabilities(caps, providerOptions)
-      : normalizeClaudeModelOptionsWithCapabilities(caps, providerOptions);
+      : provider === "cursor"
+        ? normalizeCursorModelOptionsWithCapabilities(caps, providerOptions)
+        : normalizeClaudeModelOptionsWithCapabilities(caps, providerOptions);
 
   // Ultrathink styling (driven by capabilities data, not provider identity)
   const ultrathinkActive =
@@ -155,6 +164,19 @@ const composerProviderRegistry: Record<ProviderKind, ProviderRegistryEntry> = {
       />
     ),
   },
+  cursor: {
+    getState: (input) => ({
+      ...getProviderStateFromCapabilities(input),
+      promptEffort: null,
+      modelOptionsForDispatch: undefined,
+    }),
+    renderTraitsMenuContent: ({ threadId, model, models }) => (
+      <CursorTraitsMenuContent threadId={threadId} model={model} models={models} />
+    ),
+    renderTraitsPicker: ({ threadId, model, models }) => (
+      <CursorTraitsPicker threadId={threadId} model={model} models={models} />
+    ),
+  },
 };
 
 export function getComposerProviderState(input: ComposerProviderStateInput): ComposerProviderState {
@@ -189,6 +211,18 @@ export function renderProviderTraitsPicker(input: {
   prompt: string;
   onPromptChange: (prompt: string) => void;
 }): ReactNode {
+  if (
+    !shouldRenderTraitsPicker({
+      provider: input.provider,
+      models: input.models,
+      model: input.model,
+      modelOptions: input.modelOptions,
+      prompt: input.prompt,
+    })
+  ) {
+    return null;
+  }
+
   return composerProviderRegistry[input.provider].renderTraitsPicker({
     threadId: input.threadId,
     model: input.model,

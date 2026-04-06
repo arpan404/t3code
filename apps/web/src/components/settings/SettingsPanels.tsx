@@ -112,6 +112,12 @@ const PROVIDER_SETTINGS: readonly InstallProviderSettings[] = [
     binaryPlaceholder: "Claude binary path",
     binaryDescription: "Path to the Claude binary",
   },
+  {
+    provider: "cursor",
+    title: "Cursor",
+    binaryPlaceholder: "Cursor Agent binary path",
+    binaryDescription: "Path to the Cursor Agent binary",
+  },
 ] as const;
 
 const PROVIDER_STATUS_STYLES = {
@@ -537,12 +543,18 @@ export function GeneralSettingsPanel() {
         DEFAULT_UNIFIED_SETTINGS.providers.claudeAgent.binaryPath ||
       settings.providers.claudeAgent.customModels.length > 0,
     ),
+    cursor: Boolean(
+      settings.providers.cursor.binaryPath !==
+        DEFAULT_UNIFIED_SETTINGS.providers.cursor.binaryPath ||
+      settings.providers.cursor.customModels.length > 0,
+    ),
   });
   const [customModelInputByProvider, setCustomModelInputByProvider] = useState<
     Record<ProviderKind, string>
   >({
     codex: "",
     claudeAgent: "",
+    cursor: "",
   });
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
     Partial<Record<ProviderKind, string | null>>
@@ -1385,7 +1397,9 @@ export function GeneralSettingsPanel() {
                           placeholder={
                             providerCard.provider === "codex"
                               ? "gpt-6.7-codex-ultra-preview"
-                              : "claude-sonnet-5-0"
+                              : providerCard.provider === "claudeAgent"
+                                ? "claude-sonnet-5-0"
+                                : "claude-4-sonnet"
                           }
                           spellCheck={false}
                         />

@@ -1,6 +1,6 @@
 import { type ProviderKind, type ServerProvider } from "@t3tools/contracts";
 import { resolveSelectableModel } from "@t3tools/shared/model";
-import { memo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import type { VariantProps } from "class-variance-authority";
 import { type ProviderPickerKind, PROVIDER_OPTIONS } from "../../session-logic";
 import { ChevronDownIcon } from "lucide-react";
@@ -21,6 +21,12 @@ import {
 import { ClaudeAI, CursorIcon, Gemini, Icon, OpenAI, OpenCodeIcon } from "../Icons";
 import { cn } from "~/lib/utils";
 import { getProviderSnapshot } from "../../providerModels";
+import {
+  buildCursorSelectorFamilies,
+  pickCursorModelFromTraits,
+  resolveCursorSelectorFamily,
+  resolveExactCursorModelSelection,
+} from "../../cursorModelSelector";
 
 function isAvailableProviderOption(option: (typeof PROVIDER_OPTIONS)[number]): option is {
   value: ProviderKind;
@@ -42,6 +48,58 @@ const COMING_SOON_PROVIDER_OPTIONS = [
   { id: "opencode", label: "OpenCode", icon: OpenCodeIcon },
   { id: "gemini", label: "Gemini", icon: Gemini },
 ] as const;
+
+const CursorModelMenuContent = memo(function CursorModelMenuContent(props: {
+  models: ReadonlyArray<NonNullable<ServerProvider["models"]>[number]>;
+  selectedModel: string;
+  onModelChange: (value: string) => void;
+}) {
+  const families = useMemo(() => buildCursorSelectorFamilies(props.models), [props.models]);
+  const selectedExactModel = useMemo(
+    () =>
+      resolveExactCursorModelSelection({
+        models: props.models,
+        model: props.selectedModel,
+      }) ?? props.selectedModel,
+    [props.models, props.selectedModel],
+  );
+  const selectedFamily =
+    resolveCursorSelectorFamily(props.models, selectedExactModel) ?? families[0] ?? null;
+
+  if (families.length === 0 || !selectedFamily) {
+    return <MenuItem disabled>No Cursor models available.</MenuItem>;
+  }
+
+  const applyFamilySelection = (familySlug: string) => {
+    const family = families.find((candidate) => candidate.familySlug === familySlug);
+    if (!family) {
+      return;
+    }
+    const nextModel =
+      familySlug === selectedFamily.familySlug
+        ? (props.models.find((model) => model.slug === selectedExactModel) ?? null)
+        : pickCursorModelFromTraits({ family, selections: {} });
+    if (!nextModel) {
+      return;
+    }
+    props.onModelChange(nextModel.slug);
+  };
+
+  return (
+    <MenuGroup>
+      <MenuRadioGroup
+        value={selectedFamily.familySlug}
+        onValueChange={(value) => applyFamilySelection(value)}
+      >
+        {families.map((family) => (
+          <MenuRadioItem key={`cursor-family:${family.familySlug}`} value={family.familySlug}>
+            {family.familyName}
+          </MenuRadioItem>
+        ))}
+      </MenuRadioGroup>
+    </MenuGroup>
+  );
+});
 
 function providerIconClassName(
   provider: ProviderKind | ProviderPickerKind,
@@ -66,8 +124,32 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const activeProvider = props.lockedProvider ?? props.provider;
   const selectedProviderOptions = props.modelOptionsByProvider[activeProvider];
+  const cursorModels = useMemo(
+    () => (props.providers ? (getProviderSnapshot(props.providers, "cursor")?.models ?? []) : []),
+    [props.providers],
+  );
+  const selectedCursorModel = useMemo(
+    () =>
+      activeProvider === "cursor"
+        ? resolveExactCursorModelSelection({
+            models: cursorModels,
+            model: props.model,
+          })
+        : null,
+    [activeProvider, cursorModels, props.model],
+  );
+  const selectedCursorFamily = useMemo(
+    () =>
+      activeProvider === "cursor" && selectedCursorModel
+        ? resolveCursorSelectorFamily(cursorModels, selectedCursorModel)
+        : null,
+    [activeProvider, cursorModels, selectedCursorModel],
+  );
   const selectedModelLabel =
-    selectedProviderOptions.find((option) => option.slug === props.model)?.name ?? props.model;
+    activeProvider === "cursor"
+      ? (selectedCursorFamily?.familyName ?? props.model)
+      : (selectedProviderOptions.find((option) => option.slug === props.model)?.name ??
+        props.model);
   const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[activeProvider];
   const handleModelChange = (provider: ProviderKind, value: string) => {
     if (props.disabled) return;
@@ -128,22 +210,30 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       </MenuTrigger>
       <MenuPopup align="start">
         {props.lockedProvider !== null ? (
-          <MenuGroup>
-            <MenuRadioGroup
-              value={props.model}
-              onValueChange={(value) => handleModelChange(props.lockedProvider!, value)}
-            >
-              {props.modelOptionsByProvider[props.lockedProvider].map((modelOption) => (
-                <MenuRadioItem
-                  key={`${props.lockedProvider}:${modelOption.slug}`}
-                  value={modelOption.slug}
-                  onClick={() => setIsMenuOpen(false)}
-                >
-                  {modelOption.name}
-                </MenuRadioItem>
-              ))}
-            </MenuRadioGroup>
-          </MenuGroup>
+          props.lockedProvider === "cursor" ? (
+            <CursorModelMenuContent
+              models={cursorModels}
+              selectedModel={props.model}
+              onModelChange={(value) => handleModelChange("cursor", value)}
+            />
+          ) : (
+            <MenuGroup>
+              <MenuRadioGroup
+                value={props.model}
+                onValueChange={(value) => handleModelChange(props.lockedProvider!, value)}
+              >
+                {props.modelOptionsByProvider[props.lockedProvider].map((modelOption) => (
+                  <MenuRadioItem
+                    key={`${props.lockedProvider}:${modelOption.slug}`}
+                    value={modelOption.slug}
+                    onClick={() => setIsMenuOpen(false)}
+                  >
+                    {modelOption.name}
+                  </MenuRadioItem>
+                ))}
+              </MenuRadioGroup>
+            </MenuGroup>
+          )
         ) : (
           <>
             {AVAILABLE_PROVIDER_OPTIONS.map((option) => {
@@ -186,22 +276,30 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                     {option.label}
                   </MenuSubTrigger>
                   <MenuSubPopup className="[--available-height:min(24rem,70vh)]" sideOffset={4}>
-                    <MenuGroup>
-                      <MenuRadioGroup
-                        value={props.provider === option.value ? props.model : ""}
-                        onValueChange={(value) => handleModelChange(option.value, value)}
-                      >
-                        {props.modelOptionsByProvider[option.value].map((modelOption) => (
-                          <MenuRadioItem
-                            key={`${option.value}:${modelOption.slug}`}
-                            value={modelOption.slug}
-                            onClick={() => setIsMenuOpen(false)}
-                          >
-                            {modelOption.name}
-                          </MenuRadioItem>
-                        ))}
-                      </MenuRadioGroup>
-                    </MenuGroup>
+                    {option.value === "cursor" ? (
+                      <CursorModelMenuContent
+                        models={cursorModels}
+                        selectedModel={props.provider === "cursor" ? props.model : ""}
+                        onModelChange={(value) => handleModelChange("cursor", value)}
+                      />
+                    ) : (
+                      <MenuGroup>
+                        <MenuRadioGroup
+                          value={props.provider === option.value ? props.model : ""}
+                          onValueChange={(value) => handleModelChange(option.value, value)}
+                        >
+                          {props.modelOptionsByProvider[option.value].map((modelOption) => (
+                            <MenuRadioItem
+                              key={`${option.value}:${modelOption.slug}`}
+                              value={modelOption.slug}
+                              onClick={() => setIsMenuOpen(false)}
+                            >
+                              {modelOption.name}
+                            </MenuRadioItem>
+                          ))}
+                        </MenuRadioGroup>
+                      </MenuGroup>
+                    )}
                   </MenuSubPopup>
                 </MenuSub>
               );

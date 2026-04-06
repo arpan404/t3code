@@ -81,9 +81,9 @@ function updateProject(
   return changed ? next : projects;
 }
 
-function normalizeModelSelection<T extends { provider: "codex" | "claudeAgent"; model: string }>(
-  selection: T,
-): T {
+function normalizeModelSelection<
+  T extends { provider: "codex" | "claudeAgent" | "cursor"; model: string },
+>(selection: T): T {
   return {
     ...selection,
     model: resolveModelSlugForProvider(selection.provider, selection.model),
