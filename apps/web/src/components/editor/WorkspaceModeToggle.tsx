@@ -21,13 +21,13 @@ export const WorkspaceModeToggle = memo(function WorkspaceModeToggle(props: {
     <div
       role="radiogroup"
       aria-label="Switch workspace mode"
-      className="relative flex items-center rounded-full border border-border/70 bg-background/92 p-[3px] shadow-xs/5 supports-[backdrop-filter]:bg-background/78 supports-[backdrop-filter]:backdrop-blur-md"
+      className="relative flex items-center rounded-full border border-border/35 bg-muted/25 p-[3px] supports-[backdrop-filter]:bg-muted/15 supports-[backdrop-filter]:backdrop-blur-lg"
     >
       {/* Animated sliding pill */}
       <div
         aria-hidden
         className={cn(
-          "absolute inset-y-[3px] w-[calc(50%-1.5px)] rounded-full bg-primary/12 shadow-sm transition-[left] duration-200 ease-[cubic-bezier(0.25,0.1,0.25,1)]",
+          "absolute inset-y-[3px] w-[calc(50%-1.5px)] rounded-full bg-primary/8 shadow-sm shadow-primary/5 transition-[left] duration-200 ease-[cubic-bezier(0.25,0.1,0.25,1)]",
           props.mode === "chat" ? "left-[3px]" : "left-[calc(50%+1.5px)]",
         )}
       />
@@ -44,7 +44,7 @@ export const WorkspaceModeToggle = memo(function WorkspaceModeToggle(props: {
                   "relative z-10 flex size-[26px] items-center justify-center rounded-full transition-colors duration-150",
                   props.mode === value
                     ? "text-primary"
-                    : "text-muted-foreground hover:text-foreground",
+                    : "text-muted-foreground/50 hover:text-foreground/70",
                 )}
                 onClick={() => {
                   if (value !== props.mode) {

@@ -4869,7 +4869,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       {/* Persistent top bar — always visible regardless of workspace mode */}
       <header
         className={cn(
-          "border-b border-border/50 bg-background/95 px-3 sm:px-5 supports-[backdrop-filter]:bg-background/80 supports-[backdrop-filter]:backdrop-blur-lg",
+          "border-b border-border/30 bg-background/95 px-3 sm:px-5 supports-[backdrop-filter]:bg-background/80 supports-[backdrop-filter]:backdrop-blur-xl",
           isElectron ? "drag-region flex h-13 items-center" : "py-2.5 sm:py-3",
         )}
       >
@@ -4977,7 +4977,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 >
                   <div
                     className={cn(
-                      "group rounded-[22px] p-px transition-colors duration-200",
+                      "group rounded-2xl p-px transition-colors duration-200",
                       composerProviderState.composerFrameClassName,
                     )}
                     onDragEnter={onComposerDragEnter}
@@ -4987,20 +4987,20 @@ export default function ChatView({ threadId }: ChatViewProps) {
                   >
                     <div
                       className={cn(
-                        "rounded-4xl border bg-card shadow-sm transition-colors duration-200 has-focus-visible:border-ring/40",
-                        isDragOverComposer ? "border-primary/70 bg-accent/30" : "border-border/70",
+                        "rounded-2xl border bg-card/80 shadow-sm transition-all duration-200 has-focus-visible:border-ring/30 has-focus-visible:shadow-ring/5 has-focus-visible:shadow-md",
+                        isDragOverComposer ? "border-primary/50 bg-accent/20" : "border-border/50",
                         composerProviderState.composerSurfaceClassName,
                       )}
                     >
                       {activePendingApproval ? (
-                        <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
+                        <div className="rounded-t-[15px] border-b border-border/40 bg-muted/15">
                           <ComposerPendingApprovalPanel
                             approval={activePendingApproval}
                             pendingCount={pendingApprovals.length}
                           />
                         </div>
                       ) : pendingUserInputs.length > 0 ? (
-                        <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
+                        <div className="rounded-t-[15px] border-b border-border/40 bg-muted/15">
                           <ComposerPendingUserInputPanel
                             pendingUserInputs={pendingUserInputs}
                             respondingRequestIds={respondingRequestIds}
@@ -5011,7 +5011,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                           />
                         </div>
                       ) : showPlanFollowUpPrompt && activeProposedPlan ? (
-                        <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
+                        <div className="rounded-t-[15px] border-b border-border/40 bg-muted/15">
                           <ComposerPlanFollowUpBanner
                             key={activeProposedPlan.id}
                             planTitle={proposedPlanTitle(activeProposedPlan.planMarkdown) ?? null}
@@ -5153,7 +5153,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
                       {/* Bottom toolbar */}
                       {activePendingApproval ? (
-                        <div className="flex items-center justify-end gap-2 px-2.5 pb-2.5 sm:px-3 sm:pb-3">
+                        <div className="flex items-center justify-end gap-2 px-2.5 pb-2 sm:px-3 sm:pb-2.5">
                           <ComposerPendingApprovalActions
                             requestId={activePendingApproval.requestId}
                             isResponding={respondingRequestIds.includes(
@@ -5170,7 +5170,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                             isComposerFooterCompact ? "true" : "false"
                           }
                           className={cn(
-                            "flex min-w-0 flex-nowrap items-center justify-between gap-2 overflow-hidden px-2.5 pb-2.5 sm:px-3 sm:pb-3",
+                            "flex min-w-0 flex-nowrap items-center justify-between overflow-hidden px-2.5 pb-2 sm:px-3 sm:pb-2.5",
                             isComposerFooterCompact ? "gap-1.5" : "gap-2 sm:gap-0",
                           )}
                         >
@@ -5219,7 +5219,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                   <>
                                     <Separator
                                       orientation="vertical"
-                                      className="mx-0.5 hidden h-4 sm:block"
+                                      className="mx-0.5 hidden h-3.5 bg-border/30 sm:block"
                                     />
                                     {providerTraitsPicker}
                                   </>
@@ -5227,12 +5227,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
                                 <Separator
                                   orientation="vertical"
-                                  className="mx-0.5 hidden h-4 sm:block"
+                                  className="mx-0.5 hidden h-3.5 bg-border/30 sm:block"
                                 />
 
                                 <Button
                                   variant="ghost"
-                                  className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+                                  className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/60 transition-colors duration-150 hover:text-foreground/70 sm:px-2.5"
                                   size="sm"
                                   type="button"
                                   onClick={toggleInteractionMode}
@@ -5254,12 +5254,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
                                 <Separator
                                   orientation="vertical"
-                                  className="mx-0.5 hidden h-4 sm:block"
+                                  className="mx-0.5 hidden h-3.5 bg-border/30 sm:block"
                                 />
 
                                 <Button
                                   variant="ghost"
-                                  className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+                                  className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/60 transition-colors duration-150 hover:text-foreground/70 sm:px-2.5"
                                   size="sm"
                                   type="button"
                                   onClick={() =>
@@ -5285,15 +5285,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                   <>
                                     <Separator
                                       orientation="vertical"
-                                      className="mx-0.5 hidden h-4 sm:block"
+                                      className="mx-0.5 hidden h-3.5 bg-border/30 sm:block"
                                     />
                                     <Button
                                       variant="ghost"
                                       className={cn(
-                                        "shrink-0 whitespace-nowrap px-2 sm:px-3",
+                                        "shrink-0 whitespace-nowrap px-2 sm:px-2.5",
                                         planSidebarOpen
-                                          ? "text-blue-400 hover:text-blue-300"
-                                          : "text-muted-foreground/70 hover:text-foreground/80",
+                                          ? "text-primary/80 hover:text-primary"
+                                          : "text-muted-foreground/60 hover:text-foreground/70",
                                       )}
                                       size="sm"
                                       type="button"

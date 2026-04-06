@@ -120,7 +120,7 @@ export const ChatHeader = memo(function ChatHeader({
         <TooltipTrigger
           render={
             <Toggle
-              className="shrink-0 rounded-xl"
+              className="shrink-0 rounded-lg"
               pressed={browserOpen}
               onPressedChange={(pressed) => {
                 if (!pressed) {
@@ -135,8 +135,8 @@ export const ChatHeader = memo(function ChatHeader({
               <span className="relative flex items-center justify-center">
                 <GlobeIcon className="size-3" />
                 {browserOpen && browserDevToolsOpen ? (
-                  <span className="absolute -top-1 -right-1 flex size-3 items-center justify-center rounded-full border border-background bg-amber-500 text-amber-950 shadow-sm">
-                    <BugIcon className="size-2" />
+                  <span className="absolute -top-1 -right-1 flex size-2.5 items-center justify-center rounded-full border border-background bg-amber-500 text-amber-950">
+                    <BugIcon className="size-1.5" />
                   </span>
                 ) : null}
               </span>
@@ -160,7 +160,7 @@ export const ChatHeader = memo(function ChatHeader({
       <TooltipTrigger
         render={
           <Toggle
-            className="shrink-0 rounded-xl"
+            className="shrink-0 rounded-lg"
             pressed={terminalOpen}
             onPressedChange={onToggleTerminal}
             aria-label="Toggle terminal drawer"
@@ -184,7 +184,7 @@ export const ChatHeader = memo(function ChatHeader({
       <TooltipTrigger
         render={
           <Toggle
-            className="shrink-0 rounded-xl"
+            className="shrink-0 rounded-lg"
             pressed={diffOpen}
             onPressedChange={onToggleDiff}
             aria-label="Toggle diff panel"
@@ -207,20 +207,20 @@ export const ChatHeader = memo(function ChatHeader({
   ]);
 
   return (
-    <div className="flex min-w-0 flex-1 items-center gap-3">
+    <div className="flex min-w-0 flex-1 items-center gap-2.5">
       <div className="flex min-w-0 flex-1 items-center gap-2.5 overflow-hidden sm:gap-3">
         <SidebarTrigger className="size-7 shrink-0 md:hidden" />
         {workspaceMode === "editor" ? (
           <span
-            className="min-w-0 truncate text-[13px] leading-none font-medium text-foreground/90"
+            className="min-w-0 truncate text-[13px] leading-none font-medium tracking-tight text-foreground/80"
             title={workspaceName ?? activeProjectName}
           >
             {workspaceName ?? activeProjectName ?? "Workspace"}
           </span>
         ) : (
-          <div className="flex min-w-0 items-center gap-2.5">
+          <div className="flex min-w-0 items-center gap-2">
             <h2
-              className="min-w-0 shrink truncate text-[13px] leading-none font-medium text-foreground/90"
+              className="min-w-0 shrink truncate text-[13px] leading-none font-medium tracking-tight text-foreground/80"
               title={activeThreadTitle}
             >
               {activeThreadTitle}
@@ -237,7 +237,7 @@ export const ChatHeader = memo(function ChatHeader({
                   <Badge
                     variant="outline"
                     size="sm"
-                    className="min-w-0 max-w-48 shrink overflow-hidden text-muted-foreground/85"
+                    className="min-w-0 max-w-48 shrink overflow-hidden border-border/30 bg-muted/30 text-muted-foreground/60"
                   >
                     <span className="min-w-0 truncate">{activeProjectName}</span>
                   </Badge>
